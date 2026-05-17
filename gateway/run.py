@@ -3523,13 +3523,19 @@ class GatewayRunner:
                     self.adapters[platform] = adapter
                     self._sync_voice_mode_state_to_adapter(adapter)
                     connected_count += 1
-                    self._update_platform_runtime_status(
-                        platform.value,
-                        platform_state="connected",
-                        error_code=None,
-                        error_message=None,
-                    )
-                    logger.info("✓ %s connected", platform.value)
+                    if getattr(adapter, "manages_own_state", False):
+                        logger.info(
+                            "[%s] adapter started; runtime state managed by adapter",
+                            platform.value,
+                        )
+                    else:
+                        self._update_platform_runtime_status(
+                            platform.value,
+                            platform_state="connected",
+                            error_code=None,
+                            error_message=None,
+                        )
+                        logger.info("✓ %s connected", platform.value)
                 else:
                     logger.warning("✗ %s failed to connect", platform.value)
                     # Defensive cleanup: a failed connect() may have
@@ -4796,13 +4802,19 @@ class GatewayRunner:
                         self._sync_voice_mode_state_to_adapter(adapter)
                         self.delivery_router.adapters = self.adapters
                         del self._failed_platforms[platform]
-                        self._update_platform_runtime_status(
-                            platform.value,
-                            platform_state="connected",
-                            error_code=None,
-                            error_message=None,
-                        )
-                        logger.info("✓ %s reconnected successfully", platform.value)
+                        if getattr(adapter, "manages_own_state", False):
+                            logger.info(
+                                "[%s] adapter reconnected; runtime state managed by adapter",
+                                platform.value,
+                            )
+                        else:
+                            self._update_platform_runtime_status(
+                                platform.value,
+                                platform_state="connected",
+                                error_code=None,
+                                error_message=None,
+                            )
+                            logger.info("✓ %s reconnected successfully", platform.value)
 
                         # Rebuild channel directory with the new adapter
                         try:

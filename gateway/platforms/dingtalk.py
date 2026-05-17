@@ -181,6 +181,8 @@ class DingTalkAdapter(BasePlatformAdapter):
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.DINGTALK)
 
+        self.manages_own_state = True
+
         extra = config.extra or {}
         self._client_id: str = extra.get("client_id") or os.getenv(
             "DINGTALK_CLIENT_ID", ""
@@ -198,6 +200,7 @@ class DingTalkAdapter(BasePlatformAdapter):
 
         self._stream_client: Any = None
         self._stream_task: Optional[asyncio.Task] = None
+        self._stream_connected_since_start = False
         self._http_client: Optional["httpx.AsyncClient"] = None
         self._card_sdk: Optional[Any] = None
         self._robot_sdk: Optional[Any] = None
@@ -262,6 +265,14 @@ class DingTalkAdapter(BasePlatformAdapter):
                 self._client_id, self._client_secret
             )
             self._stream_client = dingtalk_stream.DingTalkStreamClient(credential)
+            if hasattr(self._stream_client, "on_connect"):
+                self._stream_client.on_connect(self._on_stream_connected)
+            else:
+                logger.warning(
+                    "[%s] DingTalk stream client has no on_connect hook; "
+                    "connected state will not be written until SDK exposes a connect callback",
+                    self.name,
+                )
 
             # Initialize card SDK if available and configured
             if CARD_SDK_AVAILABLE and self._card_template_id:
@@ -290,35 +301,165 @@ class DingTalkAdapter(BasePlatformAdapter):
                 dingtalk_stream.ChatbotMessage.TOPIC, handler
             )
 
+            # Ensure the internal lifecycle flag is active before starting the loop.
+            self._running = True
+
             self._stream_task = asyncio.create_task(self._run_stream())
-            self._mark_connected()
-            logger.info("[%s] Connected via Stream Mode", self.name)
+            logger.info("[%s] DingTalk Stream task started", self.name)
             return True
         except Exception as e:
             logger.error("[%s] Failed to connect: %s", self.name, e)
             return False
 
+    def _on_stream_connected(self) -> None:
+        """Called by DingTalk SDK after the stream handshake succeeds."""
+        self._stream_connected_since_start = True
+        logger.info("[%s] DingTalk stream connected", self.name)
+        self._write_runtime_status_safe(
+            "dingtalk_stream_connected",
+            platform_state="connected",
+            error_code=None,
+            error_message=None,
+        )
+
+    @staticmethod
+    def _is_stream_websocket_connected(websocket: Any) -> bool:
+        """Best-effort check for dingtalk-stream's active WebSocket object."""
+        closed = getattr(websocket, "closed", None)
+        if closed is True:
+            return False
+        open_attr = getattr(websocket, "open", None)
+        if open_attr is True:
+            return True
+        state = getattr(websocket, "state", None)
+        state_name = getattr(state, "name", "")
+        if state_name == "OPEN":
+            return True
+        state_value = getattr(state, "value", None)
+        # websockets.protocol.State.OPEN is value 1 in current websockets.
+        return state_value == 1
+
+    async def _connection_watchdog(self) -> None:
+        """Track DingTalk SDK WebSocket state and publish runtime status."""
+        while self._running and self._stream_client is not None:
+            websocket = getattr(self._stream_client, "websocket", None)
+            connected = (
+                websocket is not None
+                and self._is_stream_websocket_connected(websocket)
+            )
+            if connected:
+                if not self._stream_connected_since_start:
+                    self._on_stream_connected()
+            elif self._stream_connected_since_start:
+                self._stream_connected_since_start = False
+                logger.warning("[%s] DingTalk stream websocket disconnected", self.name)
+                self._write_runtime_status_safe(
+                    "dingtalk_stream_watchdog_disconnected",
+                    platform_state="disconnected",
+                    error_code="WebSocketDisconnected",
+                    error_message="DingTalk stream websocket is not open",
+                )
+            await asyncio.sleep(2.0)
+
     async def _run_stream(self) -> None:
-        """Run the async stream client with auto-reconnection."""
-        backoff_idx = 0
+        """Run DingTalk Stream with callback-driven status and exponential reconnect."""
+        backoff = 2.0
+        max_backoff = 60.0
+        had_disconnect = False
+
         while self._running:
+            self._stream_connected_since_start = False
+            watchdog_task: Optional[asyncio.Task] = None
+
             try:
-                logger.debug("[%s] Starting stream client...", self.name)
+                logger.info("[%s] Starting DingTalk stream client", self.name)
+
+                # Do NOT write connected here.
+                # Connected state is written only by _on_stream_connected().
+                watchdog_task = asyncio.create_task(self._connection_watchdog())
                 await self._stream_client.start()
-            except asyncio.CancelledError:
-                return
-            except Exception as e:
+
                 if not self._running:
                     return
-                logger.warning("[%s] Stream client error: %s", self.name, e)
+
+                raise RuntimeError("DingTalk stream exited unexpectedly")
+
+            except asyncio.CancelledError:
+                return
+
+            except (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError) as exc:
+                if not self._running:
+                    return
+
+                if not had_disconnect:
+                    logger.error(
+                        "[%s] DingTalk stream disconnected: %s",
+                        self.name,
+                        exc,
+                        exc_info=True,
+                    )
+                else:
+                    logger.warning(
+                        "[%s] DingTalk stream retry failed: %s",
+                        self.name,
+                        exc,
+                    )
+
+                self._write_runtime_status_safe(
+                    "dingtalk_stream_disconnected",
+                    platform_state="disconnected",
+                    error_code=exc.__class__.__name__,
+                    error_message=str(exc),
+                )
+                had_disconnect = True
+
+            except Exception as exc:
+                if not self._running:
+                    return
+
+                if not had_disconnect:
+                    logger.error(
+                        "[%s] DingTalk stream crashed: %s",
+                        self.name,
+                        exc,
+                        exc_info=True,
+                    )
+                else:
+                    logger.warning(
+                        "[%s] DingTalk stream retry crashed: %s",
+                        self.name,
+                        exc,
+                    )
+
+                self._write_runtime_status_safe(
+                    "dingtalk_stream_disconnected",
+                    platform_state="disconnected",
+                    error_code=exc.__class__.__name__,
+                    error_message=str(exc),
+                )
+                had_disconnect = True
+
+            finally:
+                if watchdog_task is not None and not watchdog_task.done():
+                    watchdog_task.cancel()
+                    try:
+                        await watchdog_task
+                    except asyncio.CancelledError:
+                        pass
 
             if not self._running:
                 return
 
-            delay = RECONNECT_BACKOFF[min(backoff_idx, len(RECONNECT_BACKOFF) - 1)]
-            logger.info("[%s] Reconnecting in %ds...", self.name, delay)
-            await asyncio.sleep(delay)
-            backoff_idx += 1
+            if self._stream_connected_since_start:
+                backoff = 2.0
+
+            logger.info(
+                "[%s] DingTalk stream reconnecting in %.1fs",
+                self.name,
+                backoff,
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
 
     async def disconnect(self) -> None:
         """Disconnect from DingTalk."""
