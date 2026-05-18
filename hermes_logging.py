@@ -26,7 +26,7 @@ Session context:
 import logging
 import os
 import threading
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -200,12 +200,10 @@ def setup_logging(
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Read config defaults (best-effort — config may not be loaded yet).
-    cfg_level, cfg_max_size, cfg_backup = _read_logging_config()
+    cfg_level, _cfg_max_size, _cfg_backup = _read_logging_config()
 
     level_name = (log_level or cfg_level or "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
-    max_bytes = (max_size_mb or cfg_max_size or 5) * 1024 * 1024
-    backups = backup_count or cfg_backup or 3
 
     # Lazy import to avoid circular dependency at module load time.
     from agent.redact import RedactingFormatter
@@ -213,33 +211,30 @@ def setup_logging(
     root = logging.getLogger()
 
     # --- agent.log (INFO+) — the main activity log -------------------------
-    _add_rotating_handler(
+    _add_timed_rotating_handler(
         root,
         log_dir / "agent.log",
         level=level,
-        max_bytes=max_bytes,
-        backup_count=backups,
+        backup_count=30,
         formatter=RedactingFormatter(_LOG_FORMAT),
     )
 
     # --- errors.log (WARNING+) — quick triage log --------------------------
-    _add_rotating_handler(
+    _add_timed_rotating_handler(
         root,
         log_dir / "errors.log",
         level=logging.WARNING,
-        max_bytes=2 * 1024 * 1024,
-        backup_count=2,
+        backup_count=30,
         formatter=RedactingFormatter(_LOG_FORMAT),
     )
 
     # --- gateway.log (INFO+, gateway component only) ------------------------
     if mode == "gateway":
-        _add_rotating_handler(
+        _add_timed_rotating_handler(
             root,
             log_dir / "gateway.log",
             level=logging.INFO,
-            max_bytes=5 * 1024 * 1024,
-            backup_count=3,
+            backup_count=30,
             formatter=RedactingFormatter(_LOG_FORMAT),
             log_filter=_ComponentFilter(COMPONENT_PREFIXES["gateway"]),
         )
@@ -270,7 +265,7 @@ def setup_verbose_logging() -> None:
 
     # Avoid adding duplicate stream handlers.
     for h in root.handlers:
-        if isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler):
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, TimedRotatingFileHandler):
             if getattr(h, "_hermes_verbose", False):
                 return
 
@@ -295,14 +290,14 @@ def setup_verbose_logging() -> None:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-class _ManagedRotatingFileHandler(RotatingFileHandler):
-    """RotatingFileHandler that ensures group-writable perms in managed mode.
+class _ManagedTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """TimedRotatingFileHandler that ensures group-writable perms in managed mode.
 
     In managed mode (NixOS), the stateDir uses setgid (2770) so new files
-    inherit the hermes group. However, both _open() (initial creation) and
-    doRollover() create files via open(), which uses the process umask —
-    typically 0022, producing 0644. This subclass applies chmod 0660 after
-    both operations so the gateway and interactive users can share log files.
+    inherit the hermes group. However, both _open() and doRollover() create
+    files via open(), which uses the process umask — typically 0022,
+    producing 0644. This subclass applies chmod 0660 after both operations
+    so the gateway and interactive users can share log files.
     """
 
     def __init__(self, *args, **kwargs):
@@ -327,17 +322,16 @@ class _ManagedRotatingFileHandler(RotatingFileHandler):
         self._chmod_if_managed()
 
 
-def _add_rotating_handler(
+def _add_timed_rotating_handler(
     logger: logging.Logger,
     path: Path,
     *,
     level: int,
-    max_bytes: int,
     backup_count: int,
     formatter: logging.Formatter,
     log_filter: Optional[logging.Filter] = None,
 ) -> None:
-    """Add a ``RotatingFileHandler`` to *logger*, skipping if one already
+    """Add a daily ``TimedRotatingFileHandler`` to *logger*, skipping if one already
     exists for the same resolved file path (idempotent).
 
     Parameters
@@ -349,14 +343,17 @@ def _add_rotating_handler(
     resolved = path.resolve()
     for existing in logger.handlers:
         if (
-            isinstance(existing, RotatingFileHandler)
+            isinstance(existing, TimedRotatingFileHandler)
             and Path(getattr(existing, "baseFilename", "")).resolve() == resolved
         ):
             return  # already attached
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    handler = _ManagedRotatingFileHandler(
-        str(path), maxBytes=max_bytes, backupCount=backup_count,
+    handler = _ManagedTimedRotatingFileHandler(
+        str(path),
+        when="midnight",
+        interval=1,
+        backupCount=backup_count,
         encoding="utf-8",
     )
     handler.setLevel(level)
