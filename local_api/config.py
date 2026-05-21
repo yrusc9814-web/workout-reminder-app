@@ -71,3 +71,12 @@ ALLOWED_SYNC_STATUSES = frozenset({
 
 # Allowed sync_logs sync_result values
 ALLOWED_SYNC_RESULTS = frozenset({"success", "skipped", "failed", "drift_detected"})
+
+# Phase 6 - Sync Engine Configuration
+SYNC_SCAN_INTERVAL      = 30
+SYNC_TIMEOUT_SECONDS    = 300
+SYNC_RETRY_BASE         = 30
+SYNC_RETRY_FACTOR       = 3
+SYNC_RETRY_MAX_GAP      = 270
+SYNC_BATCH_SIZE         = 10
+SYNC_JITTER_ENABLED     = True

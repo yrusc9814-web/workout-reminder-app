@@ -9,6 +9,7 @@ from typing import Optional
 
 from ..database import get_db
 from ..config import ALLOWED_SYNC_TARGETS, ALLOWED_SYNC_STATUSES
+from .state_transition_validator import validate_transition_or_raise
 
 logger = logging.getLogger("local_api.sync_state_service")
 
@@ -231,3 +232,47 @@ def delete_sync_state(sync_id: str) -> bool:
     cursor = conn.execute("DELETE FROM sync_state WHERE sync_id = ?", (sync_id,))
     conn.commit()
     return cursor.rowcount > 0
+
+
+def transition_sync_state(
+    sync_id: str,
+    to_sync_status: str,
+    *,
+    trigger: str = "engine",
+) -> Optional[dict]:
+    """Execute state transition after M2 v4 validation.
+
+    Does not write sync_log and does not manage attempt numbers.
+    """
+    conn = get_db()
+    existing = conn.execute(
+        "SELECT * FROM sync_state WHERE sync_id = ?", (sync_id,)
+    ).fetchone()
+    if existing is None:
+        return None
+
+    if to_sync_status not in ALLOWED_SYNC_STATUSES:
+        raise ValueError(f"Invalid sync_status: {to_sync_status}")
+
+    current_status = existing["sync_status"]
+    validate_transition_or_raise(
+        current_status,
+        to_sync_status,
+        trigger=trigger,
+        has_external_id=existing["external_id"] is not None,
+    )
+
+    if current_status == to_sync_status:
+        return dict(existing)
+
+    now = _iso_now()
+    conn.execute(
+        "UPDATE sync_state SET sync_status = ?, updated_at = ? WHERE sync_id = ?",
+        (to_sync_status, now, sync_id),
+    )
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT * FROM sync_state WHERE sync_id = ?", (sync_id,)
+    ).fetchone()
+    return dict(row)

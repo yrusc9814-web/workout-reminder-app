@@ -1,0 +1,249 @@
+"""Phase 6 sync engine scanner."""
+
+from __future__ import annotations
+
+import random
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from . import config
+from .database import get_db
+from .services.sync_log_service import create_sync_log
+from .services.sync_state_service import transition_sync_state
+
+
+@dataclass
+class ScanResult:
+    pending_picked: int = 0
+    retry_triggered: int = 0
+    stale_triggered: int = 0
+    timeout_detected: int = 0
+    completed: int = 0
+    failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+def _now() -> datetime:
+    return datetime.now(ZoneInfo("Asia/Shanghai"))
+
+
+def _parse_iso(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+    return parsed
+
+
+class SyncEngine:
+    def __init__(self):
+        self._running = False
+        self._stop_event = None
+        self._loop_thread = None
+        self._batch_size = config.SYNC_BATCH_SIZE
+
+    def scan_once(self) -> ScanResult:
+        """Run one priority-ordered scan cycle."""
+        self._batch_size = config.SYNC_BATCH_SIZE
+        result = ScanResult()
+
+        if self._handle_timeouts(result):
+            return result
+        if self._handle_failed(result):
+            return result
+        if self._handle_stale(result):
+            return result
+        self._handle_pending(result)
+        return result
+
+    def start(self) -> None:
+        if self._running:
+            return
+
+        self._stop_event = threading.Event()
+        self._running = True
+        self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._loop_thread.start()
+
+    def stop(self) -> None:
+        if not self._running:
+            return
+
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._loop_thread is not None:
+            self._loop_thread.join(timeout=config.SYNC_SCAN_INTERVAL + 1)
+        self._running = False
+        self._loop_thread = None
+        self._stop_event = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def _run_loop(self) -> None:
+        while self._stop_event is not None and not self._stop_event.is_set():
+            self.scan_once()
+            self._stop_event.wait(config.SYNC_SCAN_INTERVAL)
+        self._running = False
+
+    def _handle_timeouts(self, result: ScanResult) -> bool:
+        conn = get_db()
+        rows = conn.execute(
+            """SELECT * FROM sync_state
+               WHERE sync_status = 'in_progress'
+               ORDER BY updated_at ASC
+               LIMIT ?""",
+            (self._batch_size,),
+        ).fetchall()
+
+        now = _now()
+        processed = False
+        for row in rows:
+            try:
+                elapsed = (now - _parse_iso(row["updated_at"])).total_seconds()
+                if elapsed <= config.SYNC_TIMEOUT_SECONDS:
+                    continue
+
+                current_attempt = self._max_attempt(row["sync_id"]) + 1
+                target_status = "failed_permanent" if current_attempt >= 4 else "failed"
+                transition_sync_state(row["sync_id"], target_status, trigger="engine")
+                create_sync_log(
+                    sync_id=row["sync_id"],
+                    local_task_id=row["task_id"],
+                    sync_target=row["sync_target"],
+                    sync_attempt=current_attempt,
+                    sync_result="failed",
+                    error_code="timeout",
+                    error_message="Sync attempt timed out",
+                    triggered_by="sync_engine",
+                )
+                result.timeout_detected += 1
+                result.failed += 1
+                processed = True
+            except Exception as exc:
+                result.errors.append(f"{row['sync_id']}: {exc}")
+                processed = True
+
+        return processed
+
+    def _handle_failed(self, result: ScanResult) -> bool:
+        conn = get_db()
+        rows = conn.execute(
+            """SELECT * FROM sync_state
+               WHERE sync_status = 'failed'
+               ORDER BY updated_at ASC
+               LIMIT ?""",
+            (self._batch_size,),
+        ).fetchall()
+
+        processed = False
+        for row in rows:
+            try:
+                max_attempt = self._max_attempt(row["sync_id"])
+                if max_attempt >= 4:
+                    transition_sync_state(
+                        row["sync_id"],
+                        "failed_permanent",
+                        trigger="engine",
+                    )
+                    create_sync_log(
+                        sync_id=row["sync_id"],
+                        local_task_id=row["task_id"],
+                        sync_target=row["sync_target"],
+                        sync_attempt=max_attempt,
+                        sync_result="failed",
+                        error_code="retry_cap",
+                        error_message="Retry cap reached",
+                        triggered_by="sync_engine",
+                    )
+                    result.failed += 1
+                    processed = True
+                    continue
+
+                latest_log = self._latest_log(row["sync_id"])
+                if latest_log is None:
+                    continue
+
+                elapsed = (_now() - _parse_iso(latest_log["created_at"])).total_seconds()
+                if elapsed < self._backoff_interval(max_attempt):
+                    continue
+
+                transition_sync_state(row["sync_id"], "in_progress", trigger="engine")
+                result.retry_triggered += 1
+                processed = True
+            except Exception as exc:
+                result.errors.append(f"{row['sync_id']}: {exc}")
+                processed = True
+
+        return processed
+
+    def _handle_stale(self, result: ScanResult) -> bool:
+        conn = get_db()
+        rows = conn.execute(
+            """SELECT * FROM sync_state
+               WHERE sync_status = 'stale'
+               ORDER BY updated_at ASC
+               LIMIT ?""",
+            (self._batch_size,),
+        ).fetchall()
+
+        processed = False
+        for row in rows:
+            try:
+                transition_sync_state(row["sync_id"], "pending", trigger="engine")
+                result.stale_triggered += 1
+                processed = True
+            except Exception as exc:
+                result.errors.append(f"{row['sync_id']}: {exc}")
+                processed = True
+
+        return processed
+
+    def _handle_pending(self, result: ScanResult) -> bool:
+        conn = get_db()
+        rows = conn.execute(
+            """SELECT * FROM sync_state
+               WHERE sync_status = 'pending'
+               ORDER BY updated_at ASC
+               LIMIT ?""",
+            (self._batch_size,),
+        ).fetchall()
+
+        processed = False
+        for row in rows:
+            try:
+                transition_sync_state(row["sync_id"], "in_progress", trigger="engine")
+                result.pending_picked += 1
+                processed = True
+            except Exception as exc:
+                result.errors.append(f"{row['sync_id']}: {exc}")
+                processed = True
+
+        return processed
+
+    def _max_attempt(self, sync_id: str) -> int:
+        conn = get_db()
+        row = conn.execute(
+            "SELECT COALESCE(MAX(sync_attempt), 0) AS max_attempt FROM sync_logs WHERE sync_id = ?",
+            (sync_id,),
+        ).fetchone()
+        return int(row["max_attempt"])
+
+    def _latest_log(self, sync_id: str):
+        conn = get_db()
+        return conn.execute(
+            """SELECT * FROM sync_logs
+               WHERE sync_id = ?
+               ORDER BY created_at DESC
+               LIMIT 1""",
+            (sync_id,),
+        ).fetchone()
+
+    def _backoff_interval(self, attempt: int) -> float:
+        interval = config.SYNC_RETRY_BASE * (config.SYNC_RETRY_FACTOR ** max(attempt - 1, 0))
+        interval = min(interval, config.SYNC_RETRY_MAX_GAP)
+        if config.SYNC_JITTER_ENABLED:
+            interval *= random.uniform(0.8, 1.2)
+        return interval
