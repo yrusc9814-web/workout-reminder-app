@@ -81,12 +81,16 @@ def create_sync_state(
         """INSERT INTO sync_state (
             sync_id, task_id, sync_target, sync_key, payload_hash,
             sync_status, sync_version, external_id,
-            last_synced_at, last_sync_trigger, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            last_synced_at, last_sync_trigger,
+            started_at, locked_at,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             sync_id, task_id, sync_target, sync_key, payload_hash,
             sync_status, 1, external_id,
-            None, None, now, now,
+            None, None,
+            None, None,
+            now, now,
         ),
     )
     conn.commit()
@@ -243,6 +247,9 @@ def transition_sync_state(
     """Execute state transition after M2 v4 validation.
 
     Does not write sync_log and does not manage attempt numbers.
+    When transitioning to in_progress:
+      - started_at is set only on the very first entry (when NULL in DB)
+      - locked_at is set on every entry to in_progress
     """
     conn = get_db()
     existing = conn.execute(
@@ -266,9 +273,22 @@ def transition_sync_state(
         return dict(existing)
 
     now = _iso_now()
+    updates = ["sync_status = ?", "updated_at = ?"]
+    params = [to_sync_status, now]
+
+    if to_sync_status == "in_progress":
+        # started_at: only set on the very first entry to in_progress
+        if existing["started_at"] is None:
+            updates.append("started_at = ?")
+            params.append(now)
+        # locked_at: update every time we enter in_progress
+        updates.append("locked_at = ?")
+        params.append(now)
+
+    params.append(sync_id)
     conn.execute(
-        "UPDATE sync_state SET sync_status = ?, updated_at = ? WHERE sync_id = ?",
-        (to_sync_status, now, sync_id),
+        f"UPDATE sync_state SET {', '.join(updates)} WHERE sync_id = ?",
+        params,
     )
     conn.commit()
 

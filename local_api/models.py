@@ -183,3 +183,23 @@ class SystemStatusResponse(BaseModel):
     api_version: str
     db_connected: bool
     task_count: int
+
+
+# ── Sync Engine Models ─────────────────────────────────────────────────────
+
+
+class SyncEngineStatusResponse(BaseModel):
+    running: bool
+    status: str
+    scan_count: int
+    last_scan_at: Optional[str] = None
+    queued_pending: int
+
+
+class SyncEngineStatsResponse(BaseModel):
+    total_scans: int
+    total_processed: int
+    success_count: int
+    failed_count: int
+    success_rate: float
+    failure_distribution: dict[str, int]

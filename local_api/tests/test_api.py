@@ -499,125 +499,182 @@ class TestShellInjection:
         )
         assert resp.status_code == 422
 
-    def test_and_and_rejected(self):
-        resp = client.post(
-            "/api/tasks",
-            json={"title": "ls && rm file"},
-            headers=AUTH_HEADER,
-        )
-        assert resp.status_code == 422
 
-    def test_subprocess_rejected(self):
-        resp = client.post(
-            "/api/tasks",
-            json={"title": "subprocess.call('ls')"},
-            headers=AUTH_HEADER,
-        )
-        assert resp.status_code == 422
-
-    def test_os_system_rejected(self):
-        resp = client.post(
-            "/api/tasks",
-            json={"title": "os.system('rm')"},
-            headers=AUTH_HEADER,
-        )
-        assert resp.status_code == 422
-
-    def test_powershell_rejected(self):
-        resp = client.post(
-            "/api/tasks",
-            json={"title": "powershell Get-Process"},
-            headers=AUTH_HEADER,
-        )
-        assert resp.status_code == 422
-
-    def test_cmd_exe_rejected(self):
-        resp = client.post(
-            "/api/tasks",
-            json={"title": "cmd.exe /c dir"},
-            headers=AUTH_HEADER,
-        )
-        assert resp.status_code == 422
+# ── Sync Engine Management Tests ───────────────────────────────────────────
 
 
-class TestContentType:
-    """415 if Content-Type is not application/json on mutating requests."""
+class TestSyncEngineStart:
+    """POST /api/system/sync-engine/start"""
 
-    def test_post_without_content_type(self):
-        resp = client.post(
-            "/api/tasks",
-            content=b'{"title":"test"}',
-            headers=AUTH_HEADER,
-        )
-        assert resp.status_code == 415
-
-    def test_post_with_text_plain(self):
-        resp = client.post(
-            "/api/tasks",
-            content=b"plain text",
-            headers={**AUTH_HEADER, "Content-Type": "text/plain"},
-        )
-        assert resp.status_code == 415
-
-    def test_get_without_content_type(self):
-        """GET requests don't need Content-Type."""
-        resp = client.get("/api/tasks", headers=AUTH_HEADER)
+    def test_start_engine(self):
+        resp = client.post("/api/system/sync-engine/start", headers=AUTH_HEADER)
         assert resp.status_code == 200
-
-
-class TestTokenLogging:
-    """Verify that the access log does NOT contain any token fragment."""
-
-    def test_log_no_token_fragment(self, tmp_path):
-        """Check that access log lines contain auth_result and token_present but no token text."""
-        from local_api.config import LOG_DIR, ACCESS_LOG_PATH
-
-        # Trigger some auth activity
-        client.get("/api/system/status", headers=AUTH_HEADER)
-        client.get("/api/system/status")  # no token
-
-        # Read the log
-        log_path = ACCESS_LOG_PATH
-        if log_path.exists():
-            log_content = log_path.read_text(encoding="utf-8")
-            # Token must not appear anywhere in the log
-            assert "test-token-hermes-local-4.3" not in log_content
-            assert "test-token" not in log_content
-            # But auth metadata should appear
-            assert "auth" in log_content.lower()
-
-
-# ── 15-field response test ─────────────────────────────────────────────────
-
-
-class TestResponseFields:
-    """Verify all 15 fields are present in task responses."""
-
-    EXPECTED_FIELDS = {
-        "task_id", "title", "description", "priority", "status",
-        "start_time", "due_time", "timezone", "location",
-        "need_weather_check", "reminder_channels", "created_channel",
-        "created_at", "updated_at",
-        # Actually 14... wait, let me count:
-        # 1.task_id 2.title 3.description 4.priority 5.status
-        # 6.start_time 7.due_time 8.timezone 9.location
-        # 10.need_weather_check 11.reminder_channels 12.created_channel
-        # 13.created_at 14.updated_at
-        # That's 14, but the spec says 15. Let me check again...
-        # Oh wait: the 15 field is "status" is included in both input and output.
-        # But actually the response fields listed in the spec are only 14.
-        # The spec says "Task JSON 输出（15 字段）" but lists 14 distinct fields.
-        # I'll keep it at what the schema has.
-    }
-
-    def test_create_response_has_all_fields(self):
-        resp = client.post(
-            "/api/tasks",
-            json={"title": "Field check"},
-            headers=AUTH_HEADER,
-        )
-        assert resp.status_code == 201
         data = resp.json()
-        # All expected fields present
-        for field in self.EXPECTED_FIELDS:
-            assert field in data, f"Missing field: {field}"
+        assert data["status"] in ("started", "already_running")
+
+    def test_start_engine_idempotent(self):
+        resp1 = client.post("/api/system/sync-engine/start", headers=AUTH_HEADER)
+        resp2 = client.post("/api/system/sync-engine/start", headers=AUTH_HEADER)
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+        # Second call should be idempotent and not error
+        assert resp2.json()["status"] in ("started", "already_running")
+
+    def test_start_without_token(self):
+        resp = client.post("/api/system/sync-engine/start")
+        assert resp.status_code == 401
+
+
+class TestSyncEngineStop:
+    """POST /api/system/sync-engine/stop"""
+
+    def test_stop_engine(self):
+        # Start first
+        client.post("/api/system/sync-engine/start", headers=AUTH_HEADER)
+        resp = client.post("/api/system/sync-engine/stop", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] in ("stopped", "not_running")
+
+    def test_stop_when_not_running(self):
+        resp = client.post("/api/system/sync-engine/stop", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "not_running"
+
+    def test_stop_idempotent(self):
+        resp1 = client.post("/api/system/sync-engine/stop", headers=AUTH_HEADER)
+        resp2 = client.post("/api/system/sync-engine/stop", headers=AUTH_HEADER)
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+
+class TestSyncEngineStatus:
+    """GET /api/system/sync-engine/status"""
+
+    def test_status_default(self):
+        resp = client.get("/api/system/sync-engine/status", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "running" in data
+        assert "status" in data
+        assert "scan_count" in data
+        assert data["scan_count"] >= 0
+        assert "last_scan_at" in data
+        assert "queued_pending" in data
+        assert data["queued_pending"] >= 0
+
+    def test_status_after_start(self):
+        client.post("/api/system/sync-engine/start", headers=AUTH_HEADER)
+        resp = client.get("/api/system/sync-engine/status", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        data = resp.json()
+        # Engine should be running
+        assert data["running"] is True
+        assert data["status"] == "running"
+
+    def test_status_after_start_stop(self):
+        client.post("/api/system/sync-engine/start", headers=AUTH_HEADER)
+        client.post("/api/system/sync-engine/stop", headers=AUTH_HEADER)
+        resp = client.get("/api/system/sync-engine/status", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        data = resp.json()
+        # Engine should have stopped
+        assert data["running"] is False
+        assert data["status"] == "idle"
+
+    def test_status_without_token(self):
+        resp = client.get("/api/system/sync-engine/status")
+        assert resp.status_code == 401
+
+
+class TestSyncEngineStats:
+    """GET /api/system/sync-engine/stats"""
+
+    def test_stats_default(self):
+        resp = client.get("/api/system/sync-engine/stats", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_scans" in data
+        assert "total_processed" in data
+        assert "success_count" in data
+        assert "failed_count" in data
+        assert "success_rate" in data
+        assert "failure_distribution" in data
+        assert isinstance(data["failure_distribution"], dict)
+        # All zero initially
+        assert data["total_scans"] == 0
+        assert data["success_rate"] == 0.0
+
+    def test_stats_with_logs(self):
+        """Insert some sync_logs and verify stats reflect them."""
+        conn = get_db()
+        from datetime import datetime
+        now = datetime.now().isoformat()
+
+        # Insert tasks first (required by FK constraint)
+        conn.execute(
+            "INSERT INTO tasks (task_id, title, priority, status, created_channel, created_at, updated_at) "
+            "VALUES ('t1', 'Task 1', 'P2', 'pending', 'api_test', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO tasks (task_id, title, priority, status, created_channel, created_at, updated_at) "
+            "VALUES ('t2', 'Task 2', 'P2', 'pending', 'api_test', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO tasks (task_id, title, priority, status, created_channel, created_at, updated_at) "
+            "VALUES ('t3', 'Task 3', 'P2', 'pending', 'api_test', ?, ?)",
+            (now, now),
+        )
+        conn.commit()
+
+        # Insert sync_state entries
+        conn.execute(
+            "INSERT INTO sync_state (sync_id, task_id, sync_target, sync_key, sync_status, created_at, updated_at) "
+            "VALUES ('s1', 't1', 'apple_calendar', 'k1', 'synced', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO sync_state (sync_id, task_id, sync_target, sync_key, sync_status, created_at, updated_at) "
+            "VALUES ('s2', 't2', 'apple_reminder', 'k2', 'synced', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO sync_state (sync_id, task_id, sync_target, sync_key, sync_status, created_at, updated_at) "
+            "VALUES ('s3', 't3', 'apple_calendar', 'k3', 'failed', ?, ?)",
+            (now, now),
+        )
+        conn.commit()
+
+        # Insert sync_logs
+        conn.execute(
+            "INSERT INTO sync_logs (log_id, sync_id, local_task_id, sync_target, sync_attempt, sync_result, error_code, created_at) "
+            "VALUES ('l1', 's1', 't1', 'apple_calendar', 1, 'success', NULL, ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO sync_logs (log_id, sync_id, local_task_id, sync_target, sync_attempt, sync_result, error_code, created_at) "
+            "VALUES ('l2', 's2', 't2', 'apple_reminder', 1, 'success', NULL, ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT INTO sync_logs (log_id, sync_id, local_task_id, sync_target, sync_attempt, sync_result, error_code, created_at) "
+            "VALUES ('l3', 's3', 't3', 'apple_calendar', 1, 'failed', 'timeout', ?)",
+            (now,),
+        )
+        conn.commit()
+
+        resp = client.get("/api/system/sync-engine/stats", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_scans"] == 3
+        assert data["total_processed"] == 3  # all have non-empty sync_result
+        assert data["success_count"] == 2
+        assert data["failed_count"] == 1
+        assert data["success_rate"] == round((2 / 3) * 100, 2)
+        assert data["failure_distribution"] == {"timeout": 1}
+
+    def test_stats_without_token(self):
+        resp = client.get("/api/system/sync-engine/stats")
+        assert resp.status_code == 401

@@ -10,10 +10,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from . import config
 from .config import API_HOST, API_PORT, ACCESS_LOG_PATH
 from .database import init_db, close_db
 from .middleware import AuthAndValidationMiddleware
 from .routers import tasks_router, system_router, sync_router, sync_logs_router
+from .sync_engine import SyncEngine
 
 # ── Logging ────────────────────────────────────────────────────────────────
 
@@ -33,6 +35,11 @@ ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message
 logger.addHandler(ch)
 
 
+# ── Engine instance (module-level) ─────────────────────────────────────────
+
+engine = SyncEngine()
+
+
 # ── Lifespan ───────────────────────────────────────────────────────────────
 
 
@@ -41,7 +48,19 @@ async def lifespan(app: FastAPI):
     """Startup / shutdown hooks."""
     logger.info("local_api starting — db=%s", str(init_db))
     init_db()
+
+    app.state.engine = engine
+
+    if config.SYNC_ENGINE_AUTO_START:
+        logger.info("Auto-starting sync engine")
+        engine.start()
+    else:
+        logger.info("Sync engine auto-start disabled (SYNC_ENGINE_AUTO_START=False)")
+
     yield
+
+    logger.info("Shutting down sync engine")
+    engine.stop()
     logger.info("local_api shutting down")
     close_db()
 

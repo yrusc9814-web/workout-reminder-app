@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import threading
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from . import config
 from .database import get_db
 from .services.sync_log_service import create_sync_log
 from .services.sync_state_service import transition_sync_state
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -42,6 +45,9 @@ class SyncEngine:
         self._stop_event = None
         self._loop_thread = None
         self._batch_size = config.SYNC_BATCH_SIZE
+        self._lock = threading.Lock()
+        self._scan_count = 0
+        self._last_scan_at = None
 
     def scan_once(self) -> ScanResult:
         """Run one priority-ordered scan cycle."""
@@ -58,33 +64,53 @@ class SyncEngine:
         return result
 
     def start(self) -> None:
-        if self._running:
-            return
-
-        self._stop_event = threading.Event()
-        self._running = True
-        self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._loop_thread.start()
+        with self._lock:
+            if self._running:
+                return
+            self._stop_event = threading.Event()
+            self._running = True
+            self._loop_thread = threading.Thread(target=self._run_loop, daemon=True)
+            self._loop_thread.start()
 
     def stop(self) -> None:
-        if not self._running:
-            return
-
-        if self._stop_event is not None:
-            self._stop_event.set()
+        with self._lock:
+            if not self._running:
+                return
+            if self._stop_event is not None:
+                self._stop_event.set()
+        # Join outside lock to avoid deadlock
         if self._loop_thread is not None:
             self._loop_thread.join(timeout=config.SYNC_SCAN_INTERVAL + 1)
-        self._running = False
-        self._loop_thread = None
-        self._stop_event = None
+        with self._lock:
+            self._running = False
+            self._loop_thread = None
+            self._stop_event = None
 
     @property
     def is_running(self) -> bool:
         return self._running
 
+    @property
+    def daemon(self) -> bool:
+        """Whether the engine runs a background loop (always True when active)."""
+        return self._running
+
+    @property
+    def scan_count(self) -> int:
+        return self._scan_count
+
+    @property
+    def last_scan_at(self):
+        return self._last_scan_at
+
     def _run_loop(self) -> None:
         while self._stop_event is not None and not self._stop_event.is_set():
-            self.scan_once()
+            try:
+                result = self.scan_once()
+                self._scan_count += 1
+                self._last_scan_at = _now().isoformat()
+            except Exception as exc:
+                logger.exception("SyncEngine scan_once failed: %s", exc)
             self._stop_event.wait(config.SYNC_SCAN_INTERVAL)
         self._running = False
 
@@ -102,7 +128,12 @@ class SyncEngine:
         processed = False
         for row in rows:
             try:
-                elapsed = (now - _parse_iso(row["updated_at"])).total_seconds()
+                # Use started_at for timeout calculation, fallback to updated_at
+                started = row["started_at"]
+                if started is None:
+                    started = row["updated_at"]
+                elapsed = (now - _parse_iso(started)).total_seconds()
+
                 if elapsed <= config.SYNC_TIMEOUT_SECONDS:
                     continue
 

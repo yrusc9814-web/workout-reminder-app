@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS sync_state (
     external_id         TEXT,
     last_synced_at      TEXT,
     last_sync_trigger   TEXT,
+    started_at          TEXT,
+    locked_at           TEXT,
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
@@ -83,6 +85,22 @@ CREATE INDEX IF NOT EXISTS idx_sync_logs_result ON sync_logs(sync_result);
 """
 
 
+_SYNC_STATE_MIGRATIONS = [
+    "ALTER TABLE sync_state ADD COLUMN started_at TEXT",
+    "ALTER TABLE sync_state ADD COLUMN locked_at TEXT",
+]
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Run schema migrations safely — handles existing columns gracefully."""
+    for ddl in _SYNC_STATE_MIGRATIONS:
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+    conn.commit()
+
+
 def get_db() -> sqlite3.Connection:
     """Return a thread-local SQLite connection with WAL mode enabled.
 
@@ -96,6 +114,7 @@ def get_db() -> sqlite3.Connection:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA_SQL)
+        _run_migrations(conn)
         conn.commit()
         _local.conn = conn
     return conn
@@ -105,6 +124,7 @@ def init_db() -> None:
     """Ensure the database and schema exist. Idempotent — safe to call multiple times."""
     conn = get_db()
     conn.executescript(SCHEMA_SQL)
+    _run_migrations(conn)
     conn.commit()
 
 
@@ -123,4 +143,5 @@ def reset_db() -> None:
     conn.execute("DROP TABLE IF EXISTS sync_state")
     conn.execute("DROP TABLE IF EXISTS tasks")
     conn.executescript(SCHEMA_SQL)
+    _run_migrations(conn)
     conn.commit()
