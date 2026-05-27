@@ -274,3 +274,81 @@ def test_start_stop_lifecycle():
 
     engine.stop()
     assert not engine.is_running
+
+
+# ── Phase 8A — Adapter integration tests ────────────────────────────────────
+
+from local_api.adapters.apple_adapter import MockAppleAdapter
+from local_api.adapters.weather_adapter import MockWeatherAdapter
+
+
+def _adapters():
+    """Helper to create the standard mock adapter set."""
+    return [MockAppleAdapter()]
+
+
+def test_pending_to_synced_through_adapter():
+    """Adapter push cycle transitions pending → in_progress → synced."""
+    sync = _sync("task_adapter_synced")
+    engine = SyncEngine(adapters=_adapters())
+
+    result = engine.scan_once()
+
+    assert result.pending_picked == 1
+    state = get_sync_state(sync["sync_id"])
+    assert state["sync_status"] == "synced"
+    logs = _logs(sync["sync_id"])
+    assert len(logs) == 1
+    assert logs[0]["sync_result"] == "success"
+
+
+def test_adapter_cycle_error_isolation():
+    """Error in one record does not affect another.
+
+    Uses PRAGMA foreign_keys=OFF to bypass FK CASCADE DELETE
+    when removing the task row (database.py schema not modified).
+    """
+    sync_orphan = _sync("task_adapter_orphan")
+    conn = get_db()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DELETE FROM tasks WHERE task_id = 'task_adapter_orphan'")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+    # Normal record
+    sync_ok = _sync("task_adapter_ok")
+
+    engine = SyncEngine(adapters=_adapters())
+    engine.scan_once()
+
+    # Good record should be synced
+    state_ok = get_sync_state(sync_ok["sync_id"])
+    assert state_ok["sync_status"] == "synced"
+
+    # Orphan should be failed_permanent (task_not_found)
+    state_orphan = get_sync_state(sync_orphan["sync_id"])
+    assert state_orphan is not None
+    assert state_orphan["sync_status"] == "failed_permanent"
+
+
+def test_route_adapter_returns_none_for_no_match():
+    """Direct test of _route_adapter: no adapter matches -> None."""
+    from local_api.sync_engine import SyncEngine
+
+    engine = SyncEngine(adapters=[MockAppleAdapter()])
+    # MockAppleAdapter matches apple_* targets
+    route = engine._route_adapter("whatever")
+    assert route is None
+
+
+def test_route_adapter_returns_apple_for_apple_targets():
+    """_route_adapter returns MockAppleAdapter for any apple_* target."""
+    engine = SyncEngine(adapters=[MockAppleAdapter()])
+
+    route_cal = engine._route_adapter("apple_calendar")
+    assert route_cal is not None
+    assert route_cal.target_name == "apple_calendar"
+
+    route_rem = engine._route_adapter("apple_reminder")
+    assert route_rem is not None
+    assert route_rem.target_name == "apple_calendar"

@@ -81,3 +81,7 @@ SYNC_RETRY_MAX_GAP      = 270
 SYNC_BATCH_SIZE         = 10
 SYNC_JITTER_ENABLED     = True
 SYNC_ENGINE_AUTO_START  = False
+
+# ====== Phase 8A — Adapter Configuration ======
+ADAPTER_ENABLED: bool = True
+ADAPTER_PUSH_TIMEOUT: int = 30

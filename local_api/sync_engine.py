@@ -7,12 +7,14 @@ import random
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from . import config
+from .adapters import SyncAdapter
 from .database import get_db
 from .services.sync_log_service import create_sync_log
-from .services.sync_state_service import transition_sync_state
+from .services.sync_state_service import get_sync_state, transition_sync_state
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,7 @@ def _parse_iso(value: str) -> datetime:
 
 
 class SyncEngine:
-    def __init__(self):
+    def __init__(self, adapters: Optional[list] = None):
         self._running = False
         self._stop_event = None
         self._loop_thread = None
@@ -48,6 +50,7 @@ class SyncEngine:
         self._lock = threading.Lock()
         self._scan_count = 0
         self._last_scan_at = None
+        self._adapters: list = adapters or []
 
     def scan_once(self) -> ScanResult:
         """Run one priority-ordered scan cycle."""
@@ -60,7 +63,9 @@ class SyncEngine:
             return result
         if self._handle_stale(result):
             return result
-        self._handle_pending(result)
+        pending_syncs = self._handle_pending(result)
+        if config.ADAPTER_ENABLED and pending_syncs and self._adapters:
+            self._adapter_push_cycle(pending_syncs)
         return result
 
     def start(self) -> None:
@@ -232,7 +237,7 @@ class SyncEngine:
 
         return processed
 
-    def _handle_pending(self, result: ScanResult) -> bool:
+    def _handle_pending(self, result: ScanResult) -> list[dict]:
         conn = get_db()
         rows = conn.execute(
             """SELECT * FROM sync_state
@@ -242,17 +247,163 @@ class SyncEngine:
             (self._batch_size,),
         ).fetchall()
 
-        processed = False
+        pending_syncs: list[dict] = []
         for row in rows:
             try:
                 transition_sync_state(row["sync_id"], "in_progress", trigger="engine")
                 result.pending_picked += 1
-                processed = True
+                pending_syncs.append(dict(row))
             except Exception as exc:
                 result.errors.append(f"{row['sync_id']}: {exc}")
-                processed = True
 
-        return processed
+        return pending_syncs
+
+    def _route_adapter(self, sync_target: str) -> Optional[SyncAdapter]:
+        """Find the first adapter that matches the sync_target.
+
+        Rules:
+        - 'apple_calendar' or 'apple_reminder' → MockAppleAdapter (target_name='apple_calendar')
+        - 'weather' → MockWeatherAdapter
+        """
+        for adapter in self._adapters:
+            if sync_target.startswith("apple_") and adapter.target_name == "apple_calendar":
+                return adapter
+            if adapter.target_name == sync_target:
+                return adapter
+        return None
+
+    def _adapter_push_cycle(self, pending_syncs: list[dict]) -> None:
+        """Execute adapter push for pending sync records.
+
+        State terminal guarantees:
+        - push success           → synced
+        - retryable error        → failed
+        - permanent error        → failed_permanent
+        - no adapter             → failed_permanent + log
+        - no task data           → failed_permanent + log
+        - any exception          → caught, logged, failed
+
+        Every record gets a sync_log entry and a terminal state.
+        """
+        for sync in pending_syncs:
+            sync_id = sync["sync_id"]
+            sync_target = sync.get("sync_target", "unknown")
+            task_id = sync.get("task_id")
+
+            try:
+                # 1. Route to adapter
+                adapter = self._route_adapter(sync_target)
+
+                if adapter is None:
+                    transition_sync_state(sync_id, "failed_permanent", trigger="engine")
+                    create_sync_log(
+                        sync_id=sync_id,
+                        local_task_id=task_id,
+                        sync_target=sync_target,
+                        sync_attempt=self._max_attempt(sync_id) + 1,
+                        sync_result="failed",
+                        error_code="adapter_not_found",
+                        error_message=f"No adapter configured for sync_target: {sync_target}",
+                        triggered_by="sync_engine",
+                    )
+                    continue
+
+                # 2. Validate config
+                valid, err_msg = adapter.validate_config()
+                if not valid:
+                    transition_sync_state(sync_id, "failed_permanent", trigger="engine")
+                    create_sync_log(
+                        sync_id=sync_id,
+                        local_task_id=task_id,
+                        sync_target=sync_target,
+                        sync_attempt=self._max_attempt(sync_id) + 1,
+                        sync_result="failed",
+                        error_code="adapter_config_invalid",
+                        error_message=err_msg or "Adapter config validation failed",
+                        triggered_by="sync_engine",
+                    )
+                    continue
+
+                # 3. Fetch task data
+                conn = get_db()
+                task_row = conn.execute(
+                    "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
+                ).fetchone()
+                if task_row is None:
+                    transition_sync_state(sync_id, "failed_permanent", trigger="engine")
+                    create_sync_log(
+                        sync_id=sync_id,
+                        local_task_id=task_id,
+                        sync_target=sync_target,
+                        sync_attempt=self._max_attempt(sync_id) + 1,
+                        sync_result="failed",
+                        error_code="task_not_found",
+                        error_message=f"Task not found: {task_id}",
+                        triggered_by="sync_engine",
+                    )
+                    continue
+
+                task_data = dict(task_row)
+
+                # 4. Execute push
+                attempt = self._max_attempt(sync_id) + 1
+                push_result = adapter.push(task_data, sync)
+
+                if push_result.success:
+                    transition_sync_state(sync_id, "synced", trigger="engine")
+                    create_sync_log(
+                        sync_id=sync_id,
+                        local_task_id=task_id,
+                        sync_target=sync_target,
+                        sync_attempt=attempt,
+                        sync_result="success",
+                        triggered_by="sync_engine",
+                    )
+                else:
+                    # Determine if the error is permanent or retryable
+                    permanent_errors = {"auth_failed", "adapter_config_invalid", "invalid_data"}
+                    if push_result.error_code in permanent_errors:
+                        target_status = "failed_permanent"
+                    else:
+                        target_status = "failed"
+
+                    transition_sync_state(sync_id, target_status, trigger="engine")
+                    create_sync_log(
+                        sync_id=sync_id,
+                        local_task_id=task_id,
+                        sync_target=sync_target,
+                        sync_attempt=attempt,
+                        sync_result="failed",
+                        error_code=push_result.error_code or "push_failed",
+                        error_message=push_result.error_message or "Push failed",
+                        triggered_by="sync_engine",
+                    )
+
+            except Exception as exc:
+                logger.exception("Adapter push cycle error for %s: %s", sync_id, exc)
+                try:
+                    # Check current state — don't roll back a successful transition
+                    current = get_sync_state(sync_id)
+                    if current and current["sync_status"] in ("synced", "failed_permanent"):
+                        # Already at terminal state — don't flip back
+                        logger.error(
+                            "Sync %s already at '%s' but subsequent op failed: %s",
+                            sync_id, current["sync_status"], exc,
+                        )
+                    else:
+                        transition_sync_state(sync_id, "failed", trigger="engine")
+                    create_sync_log(
+                        sync_id=sync_id,
+                        local_task_id=task_id,
+                        sync_target=sync_target,
+                        sync_attempt=self._max_attempt(sync_id) + 1,
+                        sync_result="failed",
+                        error_code="adapter_exception",
+                        error_message=str(exc),
+                        triggered_by="sync_engine",
+                    )
+                except Exception:
+                    logger.exception("Failed to record adapter exception for %s", sync_id)
 
     def _max_attempt(self, sync_id: str) -> int:
         conn = get_db()

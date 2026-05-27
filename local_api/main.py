@@ -17,6 +17,8 @@ from .middleware import AuthAndValidationMiddleware
 from .routers import tasks_router, system_router, sync_router, sync_logs_router
 from .sync_engine import SyncEngine
 
+from .adapters.apple_adapter import MockAppleAdapter
+
 # ── Logging ────────────────────────────────────────────────────────────────
 
 logger = logging.getLogger("local_api")
@@ -37,7 +39,8 @@ logger.addHandler(ch)
 
 # ── Engine instance (module-level) ─────────────────────────────────────────
 
-engine = SyncEngine()
+_adapters = [MockAppleAdapter()] if config.ADAPTER_ENABLED else []
+engine = SyncEngine(adapters=_adapters)
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────────
