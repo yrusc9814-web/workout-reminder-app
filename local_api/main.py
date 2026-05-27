@@ -22,6 +22,7 @@ from .routers import (
     sync_routes_router,
 )
 from .services.sync_service import SyncService
+from .scheduler.sync_scheduler import SyncScheduler
 from .sync_engine import SyncEngine
 
 from .adapters.apple_adapter import MockAppleAdapter
@@ -49,6 +50,7 @@ logger.addHandler(ch)
 _adapters = [MockAppleAdapter()] if config.ADAPTER_ENABLED else []
 engine = SyncEngine(adapters=_adapters)
 sync_service = SyncService(adapters=_adapters)
+scheduler = SyncScheduler(sync_service=sync_service)
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────────
@@ -62,6 +64,7 @@ async def lifespan(app: FastAPI):
 
     app.state.engine = engine
     app.state.sync_service = sync_service
+    app.state.scheduler = scheduler
 
     if config.SYNC_ENGINE_AUTO_START:
         logger.info("Auto-starting sync engine")
