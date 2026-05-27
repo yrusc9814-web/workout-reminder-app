@@ -14,7 +14,14 @@ from . import config
 from .config import API_HOST, API_PORT, ACCESS_LOG_PATH
 from .database import init_db, close_db
 from .middleware import AuthAndValidationMiddleware
-from .routers import tasks_router, system_router, sync_router, sync_logs_router
+from .routers import (
+    tasks_router,
+    system_router,
+    sync_router,
+    sync_logs_router,
+    sync_routes_router,
+)
+from .services.sync_service import SyncService
 from .sync_engine import SyncEngine
 
 from .adapters.apple_adapter import MockAppleAdapter
@@ -41,6 +48,7 @@ logger.addHandler(ch)
 
 _adapters = [MockAppleAdapter()] if config.ADAPTER_ENABLED else []
 engine = SyncEngine(adapters=_adapters)
+sync_service = SyncService(adapters=_adapters)
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────────
@@ -53,6 +61,7 @@ async def lifespan(app: FastAPI):
     init_db()
 
     app.state.engine = engine
+    app.state.sync_service = sync_service
 
     if config.SYNC_ENGINE_AUTO_START:
         logger.info("Auto-starting sync engine")
@@ -85,6 +94,7 @@ app.include_router(tasks_router)
 app.include_router(system_router)
 app.include_router(sync_router)
 app.include_router(sync_logs_router)
+app.include_router(sync_routes_router)
 
 
 # ── Health check without auth (for convenience during dev) ─────────────────
