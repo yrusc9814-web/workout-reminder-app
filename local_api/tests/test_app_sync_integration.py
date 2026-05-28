@@ -268,17 +268,19 @@ class TestSchedulerViaAppState:
 
 
 class TestHealthCheck:
-    """/health endpoint behavior."""
+    """/health is a public endpoint — no auth required."""
 
-    def test_health_requires_auth(self, client):
-        """Health endpoint is wrapped by auth middleware — returns 401 without token."""
+    def test_health_without_auth_returns_200(self, client):
+        """Health check is a public path, bypasses auth middleware."""
         resp = client.get("/health")
-        assert resp.status_code == 401
-
-    def test_health_returns_ok_with_auth(self, client):
-        """Health returns ok when authenticated."""
-        resp = client.get("/health", headers=AUTH_HEADER)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
         assert data["version"] == "4.4.0"
+
+    def test_health_with_auth_also_works(self, client):
+        """Health also works when auth token is provided."""
+        resp = client.get("/health", headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"

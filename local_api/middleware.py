@@ -18,6 +18,9 @@ from starlette.types import ASGIApp, Message
 from .config import API_TOKEN
 from .validators import check_forbidden_fields, check_status, deep_check_body
 
+# Paths that don't require authentication
+PUBLIC_PATHS = frozenset({"/health"})
+
 logger = logging.getLogger("local_api.middleware")
 
 # Known content types we accept
@@ -44,6 +47,10 @@ class AuthAndValidationMiddleware(BaseHTTPMiddleware):
         request_id = str(uuid.uuid4())[:8]
         request.state.request_id = request_id
         endpoint = f"{request.method} {request.url.path}"
+
+        # ── 0. Public path bypass ────────────────────────────────────────
+        if request.url.path in PUBLIC_PATHS:
+            return await call_next(request)
 
         # ── 1. Token validation ─────────────────────────────────────────
         auth_header: Optional[str] = request.headers.get("Authorization", "")
