@@ -70,7 +70,7 @@ async function loadHealth() {
 }
 
 async function loadToday() {
-  todayPlan = await api('/api/plans/today');
+  todayPlan = await api('/api/today');
   $('todayDate').textContent = todayPlan.date || isoToday;
   $('todayPlan').innerHTML = renderPlan(todayPlan);
   const enabled = Boolean(todayPlan && todayPlan.id);

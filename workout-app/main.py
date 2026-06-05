@@ -1,7 +1,8 @@
 from calendar import monthrange
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -20,7 +21,15 @@ from database import (
 )
 from seed import seed_database
 
-app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    seed_database()
+    yield
+
+
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -28,12 +37,6 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
-
-
-@app.on_event("startup")
-def startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    seed_database()
 
 
 class LogPayload(BaseModel):
@@ -57,11 +60,46 @@ def as_date(value) -> date:
     return date.fromisoformat(str(value)[:10])
 
 
+def parse_month_token(month: str) -> tuple[int, int]:
+    try:
+        parsed = datetime.strptime(month, "%Y-%m")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM") from exc
+    return parsed.year, parsed.month
+
+
+def resolve_year_month(year: Optional[int], month: Optional[str]) -> tuple[int, int]:
+    if month is None:
+        raise HTTPException(status_code=422, detail="month is required")
+
+    if "-" in month:
+        if year is not None:
+            raise HTTPException(status_code=422, detail="use either year+month or month=YYYY-MM")
+        return parse_month_token(month)
+
+    try:
+        month_num = int(month)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="month must be 1-12 or YYYY-MM") from exc
+
+    if not 1 <= month_num <= 12:
+        raise HTTPException(status_code=422, detail="month must be between 1 and 12")
+
+    if year is None:
+        raise HTTPException(status_code=422, detail="year is required when month is numeric")
+
+    return year, month_num
+
+
 def plan_item(plan: Optional[WorkoutPlan], day: date) -> dict:
     if not plan:
         return {
             "date": day.isoformat(),
-            "plan": None,
+            "id": None,
+            "title": None,
+            "theme": None,
+            "notes": None,
+            "items": [],
             "type": "rest",
             "is_training": False,
         }
@@ -129,6 +167,7 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/today")
 @app.get("/api/plans/today")
 def today(db: Session = Depends(get_db)) -> dict:
     day = date.today()
@@ -137,20 +176,27 @@ def today(db: Session = Depends(get_db)) -> dict:
 
 
 @app.get("/api/plans/month")
-def month(
-    year: int = Query(..., ge=1),
-    month: int = Query(..., ge=1, le=12),
+def month_view(
+    year: Optional[int] = Query(None, ge=1),
+    month: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> dict:
-    start = date(year, month, 1)
-    end = date(year, month, monthrange(year, month)[1])
+    year_value, month_value = resolve_year_month(year, month)
+    start = date(year_value, month_value, 1)
+    end = date(year_value, month_value, monthrange(year_value, month_value)[1])
     rows = range_rows(db, start, end)
     days = []
     current = start
     while current <= end:
         days.append(plan_item(rows.get(current), current))
         current += timedelta(days=1)
-    return {"year": year, "month": month, "days": days}
+    return {"year": year_value, "month": month_value, "days": days}
+
+
+@app.get("/api/plans/month/summary")
+def month_summary(month: str = Query(...), db: Session = Depends(get_db)) -> dict:
+    year, month_num = parse_month_token(month)
+    return month_view(year=year, month=str(month_num), db=db)
 
 
 @app.get("/api/plans/week")
@@ -209,18 +255,50 @@ def stats(db: Session = Depends(get_db)) -> dict:
     }
 
 
+@app.get("/api/stats/month")
+def stats_month(month: str = Query(...), db: Session = Depends(get_db)) -> dict:
+    year, month_num = parse_month_token(month)
+    start = date(year, month_num, 1)
+    end = date(year, month_num, monthrange(year, month_num)[1])
+    plans_query = db.query(WorkoutPlan).filter(
+        WorkoutPlan.plan_date >= start,
+        WorkoutPlan.plan_date <= end,
+    )
+    logs_query = db.query(WorkoutLog).filter(
+        WorkoutLog.log_date >= start,
+        WorkoutLog.log_date <= end,
+    )
+    total = plans_query.count()
+    training_days = plans_query.filter(WorkoutPlan.is_training_day == True).count()
+    completed = logs_query.filter(WorkoutLog.status == "completed").count()
+    skipped = logs_query.filter(WorkoutLog.status == "skipped").count()
+    postponed = logs_query.filter(WorkoutLog.status == "postponed").count()
+    return {
+        "month": month,
+        "plans": total,
+        "training_days": training_days,
+        "rest_days": total - training_days,
+        "completed": completed,
+        "skipped": skipped,
+        "postponed": postponed,
+    }
+
+
 @app.get("/api/calendar")
 def calendar_view(
     year: Optional[int] = Query(None, ge=1),
-    month: Optional[int] = Query(None, ge=1, le=12),
+    month: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> dict:
-    today_date = date.today()
-    year = year or today_date.year
-    month = month or today_date.month
+    if month is None:
+        today_date = date.today()
+        year_value = year or today_date.year
+        month_value = today_date.month
+    else:
+        year_value, month_value = resolve_year_month(year, month)
 
-    start = date(year, month, 1)
-    end = date(year, month, monthrange(year, month)[1])
+    start = date(year_value, month_value, 1)
+    end = date(year_value, month_value, monthrange(year_value, month_value)[1])
     rows = range_rows(db, start, end)
     days = []
     current = start
@@ -236,7 +314,13 @@ def calendar_view(
             }
         )
         current += timedelta(days=1)
-    return {"year": year, "month": month, "days": days}
+    return {"year": year_value, "month": month_value, "days": days}
+
+
+@app.get("/api/calendar/month")
+def calendar_month(month: str = Query(...), db: Session = Depends(get_db)) -> dict:
+    year, month_num = parse_month_token(month)
+    return calendar_view(year=year, month=str(month_num), db=db)
 
 
 @app.get("/api/settings")
@@ -273,6 +357,30 @@ def set_setting(payload: SettingPayload, db: Session = Depends(get_db)) -> dict:
 @app.post("/api/reminders/test")
 def test_reminder(payload: ReminderPayload) -> dict:
     return {
+        "enabled": False,
+        "mock": True,
+        "title": payload.title,
+        "message": payload.message,
+        "status": "not_sent",
+    }
+
+
+@app.post("/api/reminders/wechat/send")
+def send_wechat_reminder(payload: ReminderPayload) -> dict:
+    return {
+        "channel": "wechat",
+        "enabled": False,
+        "mock": True,
+        "title": payload.title,
+        "message": payload.message,
+        "status": "not_sent",
+    }
+
+
+@app.post("/api/reminders/dingtalk/send")
+def send_dingtalk_reminder(payload: ReminderPayload) -> dict:
+    return {
+        "channel": "dingtalk",
         "enabled": False,
         "mock": True,
         "title": payload.title,

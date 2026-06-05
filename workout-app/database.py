@@ -17,7 +17,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.sql import func
 
-DATABASE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workout.db")
+DATABASE_PATH = os.environ.get(
+    "WORKOUT_DB_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "workout.db"),
+)
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 engine = create_engine(
