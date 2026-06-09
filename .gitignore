@@ -17,6 +17,7 @@ __pycache__/model_tools.cpython-310.pyc
 __pycache__/web_tools.cpython-310.pyc
 logs/
 data/
+!workout-app/data/
 .pytest_cache/
 tmp/
 temp_vision_images/
@@ -30,6 +31,8 @@ run_datagen_sonnet.sh
 source-data/*
 run_datagen_megascience_glm4-6.sh
 data/*
+!workout-app/data/.gitkeep
+workout-app/data/reminder-log.json
 node_modules/
 browser-use/
 agent-browser/

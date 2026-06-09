@@ -36,6 +36,20 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8765
 | 12 | POST | `/api/wechat/notify` | 微信提醒 mock / disabled 返回 |
 | 13 | POST | `/api/dingtalk/notify` | 钉钉提醒 mock / disabled 返回 |
 
+## 4.1 本地定时提醒最小闭环
+
+本轮新增 `scripts/workout_reminder_tick.py`，用于本地定时任务一次性检查今日计划：
+
+- 默认读取 `http://127.0.0.1:3000/api/today`，支持 `WORKOUT_REMINDER_API_URL` 覆盖。
+- 默认写入 `data/reminder-log.json`，支持 `WORKOUT_REMINDER_LOG_PATH` 覆盖。
+- 训练日且同一 `date + plan_id` 未提醒过时，stdout 打印提醒并追加 JSON 日志。
+- 同日同计划重复运行不重复提醒。
+- 无训练计划 stdout 提示不提醒并 `exit 0`。
+- API 不可用、非 2xx、坏 JSON、日志损坏或写入失败时，stderr 输出 `ERROR:` 并 `exit 1`。
+- 详细定时器配置见 `docs/reminder-scheduler.md`。
+
+验证状态：新增 pytest 已覆盖提醒写入、重复去重、服务不可用、无训练、坏 JSON 与日志损坏。
+
 ## 5. 前端页面模块清单
 
 前端文件：
@@ -80,6 +94,10 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8765
 - `static/index.html`
 - `static/app.js`
 - `static/styles.css`
+- `data/.gitkeep`
+- `scripts/workout_reminder_tick.py`
+- `tests/test_workout_reminder_tick.py`
+- `docs/reminder-scheduler.md`
 - `workout.db`
 
 本次最小修复新增的归档文件：
