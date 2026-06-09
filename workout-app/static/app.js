@@ -1,11 +1,31 @@
 const apiCalls = new Set();
 let todayPlan = null;
+let latestLogByPlanId = new Map();
 
 const $ = (id) => document.getElementById(id);
 const today = new Date();
 const isoToday = today.toISOString().slice(0, 10);
 const year = today.getFullYear();
 const month = today.getMonth() + 1;
+
+const statusText = {
+  training: '训练日',
+  rest: '休息日',
+  completed: '已完成',
+  done: '已完成',
+  skipped: '跳过',
+  postponed: '延期',
+};
+
+const statLabels = {
+  total_plans: '计划总数',
+  training_days: '训练日',
+  rest_days: '休息日',
+  completed: '已完成',
+  skipped: '跳过',
+  postponed: '延期',
+  completion_rate: '完成率',
+};
 
 function recordApi(path) {
   apiCalls.add(path.replace(/([?&](date|year|month)=)[^&]+/g, '$1…'));
@@ -32,39 +52,103 @@ function escapeHtml(value) {
   }[ch]));
 }
 
-function planClass(day) {
+function planBaseClass(day) {
   return day?.is_training ? 'training' : 'rest';
+}
+
+function latestStatusForPlan(day) {
+  if (!day?.id) return planBaseClass(day);
+  return latestLogByPlanId.get(day.id)?.status || planBaseClass(day);
+}
+
+function badge(status) {
+  const text = statusText[status] || statusText[planBaseClass({ is_training: status === 'training' })] || status;
+  return `<span class="status-badge ${escapeHtml(status)}">${escapeHtml(text)}</span>`;
+}
+
+function exerciseDetail(item) {
+  if (item.duration_seconds) return `${item.duration_seconds} 秒`;
+  return `${item.sets || '-'} 组 × ${item.reps || '-'} 次`;
 }
 
 function renderPlan(day) {
   if (!day || !day.id) {
-    return `<div class="item rest"><strong>${escapeHtml(day?.date || '')}</strong> 休息日 / 暂无计划</div>`;
+    return `<article class="plan-card rest">
+      <div class="plan-top"><span class="status-badge rest">休息日</span></div>
+      <h3 class="plan-title">${escapeHtml(day?.date || isoToday)} 暂无计划</h3>
+      <p class="plan-meta">今天没有训练安排，保持轻量活动和恢复。</p>
+    </article>`;
   }
-  const items = (day.items || []).map((item) => {
-    const detail = item.duration_seconds
-      ? `${item.duration_seconds} 秒`
-      : `${item.sets || '-'} 组 × ${item.reps || '-'} 次`;
-    return `<li>${escapeHtml(item.name)}：${escapeHtml(detail)} <span class="muted-text">${escapeHtml(item.instructions || '')}</span></li>`;
-  }).join('');
-  return `<div class="item ${planClass(day)}">
-    <strong>${escapeHtml(day.date)}｜${escapeHtml(day.title || '训练')}</strong>
-    <div>${escapeHtml(day.theme || day.type || '')}</div>
-    ${day.notes ? `<div>${escapeHtml(day.notes)}</div>` : ''}
-    ${items ? `<ul>${items}</ul>` : ''}
+  const status = latestStatusForPlan(day);
+  const items = (day.items || []).map((item) => `
+    <li>
+      <span class="exercise-name">${escapeHtml(item.name)}</span>
+      <span class="exercise-dose">${escapeHtml(exerciseDetail(item))}</span>
+      <span class="exercise-instructions">${escapeHtml(item.instructions || '')}</span>
+    </li>
+  `).join('');
+  return `<article class="plan-card ${planBaseClass(day)} ${status}">
+    <div class="plan-top">
+      ${badge(status)}
+      <span class="pill neutral">${escapeHtml(day.date)}</span>
+    </div>
+    <h3 class="plan-title">${escapeHtml(day.title || (day.is_training ? '今日训练' : '恢复日'))}</h3>
+    <div class="plan-meta">${escapeHtml(day.theme || day.type || '')}</div>
+    ${day.notes ? `<p class="plan-meta">${escapeHtml(day.notes)}</p>` : ''}
+    ${items ? `<ul class="exercise-list">${items}</ul>` : '<p class="plan-meta">无动作清单，按恢复日处理。</p>'}
+  </article>`;
+}
+
+function renderWeekDay(day) {
+  const status = latestStatusForPlan(day);
+  const itemCount = (day.items || []).length;
+  return `<article class="week-day ${planBaseClass(day)} ${status}">
+    <div class="week-date">${escapeHtml(day.date)}</div>
+    ${badge(status)}
+    <div class="week-title">${escapeHtml(day.title || (day.is_training ? '训练' : '恢复'))}</div>
+    <div class="week-items">${day.is_training ? `${itemCount} 个动作` : '恢复 / 轻量活动'}</div>
+  </article>`;
+}
+
+function renderMonthRow(day) {
+  const status = latestStatusForPlan(day);
+  return `<div class="month-row ${planBaseClass(day)} ${status}">
+    <strong>${escapeHtml(day.date)}</strong>
+    ${badge(status)}
+    <span>${escapeHtml(day.title || (day.is_training ? '训练' : '休息'))}</span>
   </div>`;
+}
+
+function renderCalendarDay(day) {
+  const status = latestStatusForPlan(day);
+  return `<div class="day ${planBaseClass(day)} ${status}">
+    <span class="day-num">${escapeHtml(String(day.date).slice(-2))}</span>
+    ${badge(status)}
+    <span class="day-label">${escapeHtml(day.title || (day.is_training ? '训练' : '休息'))}</span>
+  </div>`;
+}
+
+function buildLatestLogMap(logs) {
+  latestLogByPlanId = new Map();
+  (logs || []).forEach((log) => {
+    if (!log.plan_id || !log.status) return;
+    if (!latestLogByPlanId.has(log.plan_id)) {
+      latestLogByPlanId.set(log.plan_id, log);
+    }
+  });
 }
 
 async function loadHealth() {
   const target = $('health');
   target.className = 'status pending';
-  target.textContent = '检测中...';
+  target.textContent = 'API 检测中';
   try {
     const data = await api('/api/health');
     target.className = 'status ok';
-    target.textContent = `正常：${data.status}`;
+    target.textContent = `API 正常：${data.status}`;
   } catch (error) {
     target.className = 'status error';
-    target.textContent = `异常：${error.message}`;
+    target.textContent = `API 异常：${error.message}`;
     throw error;
   }
 }
@@ -79,32 +163,24 @@ async function loadToday() {
 
 async function loadWeek() {
   const data = await api(`/api/plans/week?date=${isoToday}`);
-  $('weekPlan').innerHTML = (data.days || []).map(renderPlan).join('');
+  $('weekPlan').innerHTML = (data.days || []).map(renderWeekDay).join('') || '<div class="empty-state">暂无周计划</div>';
 }
 
 async function loadMonth() {
   const data = await api(`/api/plans/month?year=${year}&month=${month}`);
-  $('monthPlan').innerHTML = (data.days || []).map((day) => {
-    const label = day.id ? `${day.title || day.type}` : '无计划';
-    return `<div class="item ${planClass(day)}"><strong>${escapeHtml(day.date)}</strong> ${escapeHtml(label)}</div>`;
-  }).join('');
+  $('monthPlan').innerHTML = (data.days || []).map(renderMonthRow).join('') || '<div class="empty-state">暂无月计划</div>';
 }
 
 async function loadCalendar() {
   const data = await api(`/api/calendar?year=${year}&month=${month}`);
-  $('calendar').innerHTML = (data.days || []).map((day) => `
-    <div class="day ${planClass(day)}">
-      <strong>${escapeHtml(String(day.date).slice(-2))}</strong>
-      <div>${escapeHtml(day.title || (day.is_training ? '训练' : '休息'))}</div>
-    </div>
-  `).join('');
+  $('calendar').innerHTML = (data.days || []).map(renderCalendarDay).join('') || '<div class="empty-state">暂无月历</div>';
 }
 
 async function loadStats() {
   const data = await api('/api/stats');
   $('stats').innerHTML = Object.entries(data).map(([key, value]) => (
-    `<div><strong>${escapeHtml(key)}</strong>：${escapeHtml(value)}</div>`
-  )).join('');
+    `<div class="metric"><span>${escapeHtml(statLabels[key] || key)}</span><strong>${escapeHtml(value)}</strong></div>`
+  )).join('') || '<div class="empty-state">暂无统计</div>';
 }
 
 async function loadSettings() {
@@ -121,16 +197,21 @@ async function loadSettings() {
 
 async function loadLogs() {
   const data = await api('/api/logs');
-  $('logs').innerHTML = (data.logs || []).slice(0, 20).map((log) => (
-    `<div class="item"><strong>#${log.id}</strong> plan=${log.plan_id} ${escapeHtml(log.status)} ${escapeHtml(log.created_at || '')} ${escapeHtml(log.notes || '')}</div>`
-  )).join('') || '<div class="item">暂无日志</div>';
+  const logs = data.logs || [];
+  buildLatestLogMap(logs);
+  $('logs').innerHTML = logs.slice(0, 20).map((log) => (
+    `<div class="log-row ${escapeHtml(log.status || '')}">
+      <strong>#${log.id}</strong>
+      <span>${badge(log.status || 'rest')}</span>
+      <span>plan=${log.plan_id} · ${escapeHtml(log.created_at || '')} ${escapeHtml(log.notes || '')}</span>
+    </div>`
+  )).join('') || '<div class="empty-state">暂无日志</div>';
 }
 
 async function refreshAll() {
-  const results = await Promise.allSettled([
-    loadHealth(), loadToday(), loadWeek(), loadMonth(), loadCalendar(), loadStats(), loadSettings(), loadLogs(),
-  ]);
-  const failed = results.filter((r) => r.status === 'rejected');
+  const firstResults = await Promise.allSettled([loadHealth(), loadLogs(), loadStats(), loadSettings()]);
+  const secondResults = await Promise.allSettled([loadToday(), loadWeek(), loadMonth(), loadCalendar()]);
+  const failed = [...firstResults, ...secondResults].filter((r) => r.status === 'rejected');
   if (failed.length) {
     console.error('部分模块加载失败', failed.map((r) => r.reason));
   }
@@ -143,7 +224,8 @@ async function postAction(action) {
     method: 'POST',
     body: JSON.stringify({ plan_id: todayPlan.id, notes }),
   });
-  await Promise.all([loadStats(), loadLogs(), loadToday()]);
+  await Promise.all([loadLogs(), loadStats()]);
+  await Promise.all([loadToday(), loadWeek(), loadMonth(), loadCalendar()]);
 }
 
 $('refreshAll').addEventListener('click', refreshAll);

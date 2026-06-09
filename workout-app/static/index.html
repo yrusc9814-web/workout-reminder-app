@@ -3,89 +3,131 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Workout App 联调页</title>
+  <title>Workout Reminder App</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <header class="hero">
-    <div>
-      <p class="eyebrow">Workout App</p>
-      <h1>训练计划与打卡联调页</h1>
-      <p class="muted">仅调用当前已验证的真实后端 API；提醒测试为 mock/disabled，不连接微信或钉钉。</p>
-    </div>
-    <button id="refreshAll" type="button">刷新全部</button>
-  </header>
-
-  <main class="grid">
-    <section class="card" id="healthCard">
-      <h2>API 状态</h2>
-      <div id="health" class="status pending">待检测</div>
-    </section>
-
-    <section class="card wide">
-      <div class="section-head">
-        <h2>今日计划</h2>
-        <span id="todayDate" class="pill"></span>
+  <div class="app-shell">
+    <header class="hero dashboard-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Workout Reminder App</p>
+        <h1>本地个人运动提醒仪表盘</h1>
+        <p class="muted">查看今日训练、周计划、月历与打卡状态。微信 / 钉钉提醒仍为 mock，不会真实发送。</p>
       </div>
-      <div id="todayPlan" class="content-block"></div>
-      <div class="actions">
-        <button id="completeBtn" type="button">完成</button>
-        <button id="skipBtn" type="button">跳过</button>
-        <button id="postponeBtn" type="button">延期</button>
+      <div class="hero-actions">
+        <div id="health" class="status pending">API 待检测</div>
+        <button id="refreshAll" class="btn primary" type="button">刷新全部</button>
       </div>
-      <label class="note-label">操作备注 <input id="actionNotes" placeholder="可选" /></label>
-    </section>
+    </header>
 
-    <section class="card wide">
-      <h2>周计划</h2>
-      <div id="weekPlan" class="list"></div>
-    </section>
+    <main class="dashboard-grid">
+      <section class="card today-card" aria-labelledby="todayTitle">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Today</p>
+            <h2 id="todayTitle">今日计划</h2>
+          </div>
+          <span id="todayDate" class="pill neutral"></span>
+        </div>
+        <div id="todayPlan" class="today-plan content-block"></div>
+        <div class="action-panel" aria-label="今日计划操作">
+          <button id="completeBtn" class="btn success" type="button">✓ 完成</button>
+          <button id="skipBtn" class="btn warning" type="button">↷ 跳过</button>
+          <button id="postponeBtn" class="btn secondary" type="button">⏱ 延期</button>
+        </div>
+        <label class="note-label">操作备注
+          <input id="actionNotes" placeholder="可选，例如：今天状态不错" />
+        </label>
+      </section>
 
-    <section class="card wide">
-      <h2>月计划</h2>
-      <div id="monthPlan" class="list compact"></div>
-    </section>
+      <section class="card stats-card" aria-labelledby="statsTitle">
+        <div class="section-head compact-head">
+          <div>
+            <p class="section-kicker">Progress</p>
+            <h2 id="statsTitle">统计</h2>
+          </div>
+        </div>
+        <div id="stats" class="stats metric-grid"></div>
+      </section>
 
-    <section class="card wide">
-      <h2>月历</h2>
-      <div id="calendar" class="calendar"></div>
-    </section>
+      <section class="card wide" aria-labelledby="weekTitle">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">This week</p>
+            <h2 id="weekTitle">周计划</h2>
+          </div>
+          <span class="legend"><i class="dot training-dot"></i>训练 <i class="dot rest-dot"></i>休息</span>
+        </div>
+        <div id="weekPlan" class="week-list"></div>
+      </section>
 
-    <section class="card">
-      <h2>统计</h2>
-      <div id="stats" class="stats"></div>
-    </section>
+      <section class="card wide" aria-labelledby="calendarTitle">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Calendar</p>
+            <h2 id="calendarTitle">月历</h2>
+          </div>
+          <span class="legend"><i class="dot done-dot"></i>已完成 <i class="dot skipped-dot"></i>跳过 <i class="dot postponed-dot"></i>延期</span>
+        </div>
+        <div id="calendar" class="calendar"></div>
+      </section>
 
-    <section class="card">
-      <h2>设置读取/保存</h2>
-      <div id="settings" class="content-block"></div>
-      <div class="form-row">
-        <input id="settingKey" placeholder="key，例如 reminder_time" />
-        <input id="settingValue" placeholder="value，例如 07:30" />
-        <button id="saveSetting" type="button">保存设置</button>
-      </div>
-    </section>
+      <section class="card wide" aria-labelledby="monthTitle">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Month list</p>
+            <h2 id="monthTitle">月计划</h2>
+          </div>
+        </div>
+        <div id="monthPlan" class="month-list compact"></div>
+      </section>
 
-    <section class="card wide">
-      <h2>提醒测试</h2>
-      <p class="warning">mock/disabled：后端只返回 not_sent，不显示真实发送成功，不接微信/钉钉。</p>
-      <div class="form-row">
-        <input id="reminderTitle" placeholder="标题" value="训练提醒测试" />
-        <input id="reminderMessage" placeholder="消息" value="这是 mock 提醒，不会真实发送" />
-        <button id="testReminder" type="button">测试提醒</button>
-      </div>
-      <pre id="reminderResult"></pre>
-    </section>
+      <section class="card" aria-labelledby="settingsTitle">
+        <div class="section-head compact-head">
+          <div>
+            <p class="section-kicker">Settings</p>
+            <h2 id="settingsTitle">设置</h2>
+          </div>
+        </div>
+        <div id="settings" class="content-block settings-block"></div>
+        <div class="form-row stacked">
+          <input id="settingKey" placeholder="key，例如 reminder_time" />
+          <input id="settingValue" placeholder="value，例如 07:30" />
+          <button id="saveSetting" class="btn primary full" type="button">保存设置</button>
+        </div>
+      </section>
 
-    <section class="card wide">
-      <h2>最近操作日志</h2>
-      <div id="logs" class="list compact"></div>
-    </section>
-  </main>
+      <section class="card" aria-labelledby="reminderTitleText">
+        <div class="section-head compact-head">
+          <div>
+            <p class="section-kicker">Mock reminder</p>
+            <h2 id="reminderTitleText">提醒测试</h2>
+          </div>
+        </div>
+        <p class="warning-box">mock/disabled：后端只返回 not_sent，不显示真实发送成功，不接微信/钉钉。</p>
+        <div class="form-row stacked">
+          <input id="reminderTitle" placeholder="标题" value="训练提醒测试" />
+          <input id="reminderMessage" placeholder="消息" value="这是 mock 提醒，不会真实发送" />
+          <button id="testReminder" class="btn secondary full" type="button">测试提醒</button>
+        </div>
+        <pre id="reminderResult"></pre>
+      </section>
 
-  <footer>
-    <span>实际 API 调用记录：</span><code id="apiCalls"></code>
-  </footer>
+      <section class="card wide" aria-labelledby="logsTitle">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Activity</p>
+            <h2 id="logsTitle">最近操作日志</h2>
+          </div>
+        </div>
+        <div id="logs" class="log-list compact"></div>
+      </section>
+    </main>
+
+    <footer class="api-footer">
+      <span>实际 API 调用：</span><code id="apiCalls"></code>
+    </footer>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

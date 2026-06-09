@@ -25,7 +25,7 @@ python run.py
 
 | # | Method | Path | 说明 |
 |---|---|---|---|
-| 1 | GET | `/` | 静态前端联调页 |
+| 1 | GET | `/` | 静态本地个人运动提醒仪表盘 |
 | 2 | GET | `/api/health` | 健康检查 |
 | 3 | GET | `/api/today` | 今日计划 |
 | 4 | GET | `/api/plans/today` | 今日计划兼容路径 |
@@ -112,6 +112,7 @@ pytest 覆盖重点：
 - seed 幂等。
 - 2026-06/07/08 未来月份 seed、每周一/三/五训练日、`/api/plans/month?month=2026-06`、模拟未来训练日 `/api/today`。
 - 前端调用的接口路径与后端契约一致。
+- 首页前端已优化为本地个人运动提醒仪表盘，保留轻量 HTML/CSS/JS，无 React/Vue/Tailwind/Vite。
 - 本地定时提醒 tick：训练日写日志、重复不重复、无训练不提醒、服务/JSON/日志错误清晰失败。
 
 建议运行方式：

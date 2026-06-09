@@ -44,7 +44,7 @@ def test_root_returns_html(client):
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "训练计划与打卡联调页" in response.text
+    assert "本地个人运动提醒仪表盘" in response.text
 
 
 def test_today_endpoint_exists_and_returns_shape(client):
