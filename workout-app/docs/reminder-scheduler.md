@@ -40,9 +40,19 @@ python scripts/workout_reminder_tick.py
 
 可创建每日任务，操作配置为：
 
-- 程序：`python`
+- 程序：`python`，或当前环境的 Python 绝对路径，例如 `C:\Users\VIVI\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe`
 - 参数：`scripts/workout_reminder_tick.py`
 - 起始于：`D:\workout-reminder-app-github\workout-app`
+
+当前本机上线启用配置：
+
+- 任务名：`Workout Reminder App Daily Tick`
+- 触发器：每天 `08:30`
+- 程序：`C:\Users\VIVI\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe`
+- 参数：`scripts/workout_reminder_tick.py`
+- 起始于：`D:/workout-reminder-app-github/workout-app`
+- 权限：当前 Windows 用户交互登录、非最高权限运行
+- 说明：脚本不会启动后端服务；任务运行前需确保 `http://127.0.0.1:3000/api/today` 可访问。
 
 如需使用自定义 API 或日志路径，在任务的环境或包装脚本中设置：
 
