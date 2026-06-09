@@ -1,5 +1,6 @@
 import os
-from datetime import date, timedelta
+from calendar import monthrange
+from datetime import date
 
 from sqlalchemy import (
     Boolean,
@@ -134,6 +135,24 @@ TRAINING_DATES = {
     date(2026, 5, 29),
 }
 
+SEED_MONTHS = [(2026, 5), (2026, 6), (2026, 7), (2026, 8)]
+FUTURE_TRAINING_WEEKDAYS = {0, 2, 4}  # Monday, Wednesday, Friday
+
+
+def _future_training_dates():
+    training_dates = set()
+    for year, month in SEED_MONTHS:
+        if year == 2026 and month == 5:
+            continue
+        for day in range(1, monthrange(year, month)[1] + 1):
+            plan_date = date(year, month, day)
+            if plan_date.weekday() in FUTURE_TRAINING_WEEKDAYS:
+                training_dates.add(plan_date)
+    return training_dates
+
+
+TRAINING_DATES.update(_future_training_dates())
+
 TRAINING_EXERCISES = [
     {
         "sort_order": 1,
@@ -244,17 +263,17 @@ def _seed_plan(db, plan_date, is_training_day):
 def seed_database():
     db = SessionLocal()
     try:
-        start = date(2026, 5, 1)
-        for offset in range(31):
-            plan_date = start + timedelta(days=offset)
-            _seed_plan(db, plan_date, plan_date in TRAINING_DATES)
+        for year, month in SEED_MONTHS:
+            for day in range(1, monthrange(year, month)[1] + 1):
+                plan_date = date(year, month, day)
+                _seed_plan(db, plan_date, plan_date in TRAINING_DATES)
 
         setting = db.query(Setting).filter(Setting.key == "seed_month").one_or_none()
         if setting is None:
-            setting = Setting(key="seed_month", value="2026-05")
+            setting = Setting(key="seed_month", value="2026-05..2026-08")
             db.add(setting)
         else:
-            setting.value = "2026-05"
+            setting.value = "2026-05..2026-08"
 
         db.commit()
     except Exception:

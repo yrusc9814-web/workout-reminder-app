@@ -1,3 +1,4 @@
+from datetime import date
 import importlib
 import sys
 from pathlib import Path
@@ -229,6 +230,102 @@ def test_seed_database_is_idempotent(app_modules):
         db.close()
 
     assert after == before
+
+
+def test_seed_includes_future_months_without_changing_may(app_modules):
+    database, _main = app_modules
+
+    db = database.SessionLocal()
+    try:
+        may_training_dates = {
+            row.plan_date
+            for row in db.query(database.WorkoutPlan)
+            .filter(
+                database.WorkoutPlan.plan_date >= date(2026, 5, 1),
+                database.WorkoutPlan.plan_date <= date(2026, 5, 31),
+                database.WorkoutPlan.is_training_day == True,
+            )
+            .all()
+        }
+        assert may_training_dates == {
+            date(2026, 5, 1),
+            date(2026, 5, 4),
+            date(2026, 5, 6),
+            date(2026, 5, 8),
+            date(2026, 5, 11),
+            date(2026, 5, 13),
+            date(2026, 5, 15),
+            date(2026, 5, 18),
+            date(2026, 5, 20),
+            date(2026, 5, 22),
+            date(2026, 5, 25),
+            date(2026, 5, 27),
+            date(2026, 5, 29),
+        }
+
+        assert db.query(database.WorkoutPlan).count() == 123
+        assert (
+            db.query(database.WorkoutPlan)
+            .filter(database.WorkoutPlan.is_training_day == True)
+            .count()
+            == 53
+        )
+        assert db.query(database.WorkoutExercise).count() == 265
+
+        expected_training_days = {6: 13, 7: 14, 8: 13}
+        for month, expected_count in expected_training_days.items():
+            month_start = date(2026, month, 1)
+            month_end = date(2026, month, 30 if month in {6} else 31)
+            training_days = (
+                db.query(database.WorkoutPlan)
+                .filter(
+                    database.WorkoutPlan.plan_date >= month_start,
+                    database.WorkoutPlan.plan_date <= month_end,
+                    database.WorkoutPlan.is_training_day == True,
+                )
+                .all()
+            )
+            assert len(training_days) == expected_count
+            assert {row.plan_date.weekday() for row in training_days} <= {0, 2, 4}
+    finally:
+        db.close()
+
+
+def test_future_month_api_returns_seeded_june_plan(client):
+    response = client.get("/api/plans/month", params={"month": "2026-06"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["year"] == 2026
+    assert body["month"] == 6
+    assert len(body["days"]) == 30
+    training_days = [day for day in body["days"] if day["is_training"]]
+    assert len(training_days) == 13
+    assert training_days[0]["date"] == "2026-06-01"
+    assert training_days[0]["type"] == "training"
+    assert len(training_days[0]["items"]) == 5
+
+
+def test_today_returns_plan_on_mocked_future_training_day(app_modules, monkeypatch):
+    _database, main = app_modules
+
+    class MockDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 1)
+
+    monkeypatch.setattr(main, "date", MockDate)
+
+    with TestClient(main.app) as test_client:
+        response = test_client.get("/api/today")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["date"] == "2026-06-01"
+    assert body["is_training"] is True
+    assert body["type"] == "training"
+    assert body["id"] is not None
+    assert len(body["items"]) == 5
 
 
 def test_reminder_mock_endpoints_exist(client):

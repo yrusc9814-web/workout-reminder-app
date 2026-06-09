@@ -89,6 +89,24 @@ WORKOUT_DB_PATH=/tmp/workout-test.db
 
 Windows 下也可传本地绝对路径。
 
+
+## 种子训练计划范围
+
+当前 seed 会初始化并幂等更新 `2026-05` 到 `2026-08` 的每日计划：
+
+- `2026-05` 保留原有训练日数据，不改变既有 5 月安排。
+- `2026-06` / `2026-07` / `2026-08` 按周一、周三、周五生成训练日，其余为休息日。
+- 未来三个月训练日数量分别为：2026-06 共 13 天、2026-07 共 14 天、2026-08 共 13 天。
+- `WorkoutPlan.plan_date` 有唯一约束，seed 会按日期查找后更新；重复执行不会为同一天重复插入计划。
+
+服务启动时会自动执行 seed。如果本地已有 `workout.db`，直接重启服务即可把新增月份写入本地数据库；也可在项目目录手动执行：
+
+```bash
+python seed.py
+```
+
+如果使用了自定义数据库路径，执行 seed 时需带同一个 `WORKOUT_DB_PATH` 环境变量。
+
 ---
 
 ## 主要接口
@@ -113,6 +131,7 @@ Windows 下也可传本地绝对路径。
 兼容两种形式：
 
 - `GET /api/plans/month?year=2026&month=5`
+- `GET /api/plans/month?month=2026-06`
 - `GET /api/plans/month/summary?month=2026-05`
 
 ### 周计划
@@ -129,6 +148,7 @@ Windows 下也可传本地绝对路径。
 兼容两种形式：
 
 - `GET /api/calendar?year=2026&month=5`
+- `GET /api/calendar?month=2026-06`
 - `GET /api/calendar/month?month=2026-05`
 
 ### 设置
@@ -199,6 +219,25 @@ python scripts/workout_reminder_tick.py
 
 更多定时器配置示例见：`docs/reminder-scheduler.md`。
 
+
+## 桌面快捷方式（Windows）
+
+可选脚本：`scripts/create_desktop_shortcut.ps1`。它只在当前用户桌面创建标准 Internet Shortcut：`Workout Reminder App.url`，目标地址为：
+
+- `http://127.0.0.1:3000`
+
+脚本不需要管理员权限，不修改系统策略，不创建启动项，也不会提交快捷方式文件。脚本会校验既有 `.url` 的 `URL=` 目标：目标相同则幂等退出，目标不同或格式不符则拒绝覆盖，避免删除或覆盖无关文件。运行示例：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create_desktop_shortcut.ps1
+```
+
+快捷方式只负责打开前端地址；如果打不开，请先确认后端服务已启动：
+
+```bash
+cd D:/workout-reminder-app-github/workout-app && python -m uvicorn main:app --host 127.0.0.1 --port 3000
+```
+
 ---
 
 ## 测试
@@ -214,6 +253,7 @@ python scripts/workout_reminder_tick.py
 - complete / skip / postpone 一致性
 - 提醒 mock 接口存在
 - seed 幂等
+- 2026-06/07/08 未来月份计划、每周一/三/五训练日、`/api/today` 模拟未来训练日
 - 错误参数返回 422 / 404
 - 前端调用的接口路径与后端契约一致
 - 本地定时提醒 tick：训练日写日志、重复不重复、无训练不提醒、服务/JSON/日志错误清晰失败
