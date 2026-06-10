@@ -336,3 +336,52 @@ def test_reminder_mock_endpoints_exist(client):
     assert dingtalk.status_code == 200
     assert wechat.json()["status"] == "not_sent"
     assert dingtalk.json()["status"] == "not_sent"
+
+
+def june_training_plan(client):
+    month = client.get("/api/plans/month", params={"month": "2026-06"})
+    assert month.status_code == 200
+    return next(day for day in month.json()["days"] if day["is_training"])
+
+
+def test_training_items_include_video_links(client):
+    plan = june_training_plan(client)
+
+    assert plan["items"]
+    assert all(item["video_url"].startswith("https://") for item in plan["items"])
+
+
+def test_dingtalk_reminder_not_configured_returns_payload_with_video_links(client, monkeypatch):
+    monkeypatch.delenv("DINGTALK_WEBHOOK_URL", raising=False)
+    plan = june_training_plan(client)
+
+    response = client.post("/api/reminders/dingtalk/send", json={"plan_id": plan["id"]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["channel"] == "dingtalk"
+    assert body["status"] == "not_configured"
+    assert body["mock"] is False
+    assert body["sent"] is False
+    assert body["payload"]["title"] == plan["title"]
+    assert plan["title"] in body["payload"]["text"]
+    for item in plan["items"]:
+        assert item["video_url"] in body["payload"]["text"]
+
+
+def test_dingtalk_todo_not_configured_returns_payload_with_video_links(client, monkeypatch):
+    monkeypatch.delenv("DINGTALK_TODO_CREATE_URL", raising=False)
+    monkeypatch.delenv("DINGTALK_ACCESS_TOKEN", raising=False)
+    plan = june_training_plan(client)
+
+    response = client.post("/api/todos/dingtalk/create", json={"plan_id": plan["id"]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["channel"] == "dingtalk_todo"
+    assert body["status"] == "not_configured"
+    assert body["created"] is False
+    assert body["payload"]["subject"] == f"训练计划：{plan['title']}"
+    assert plan["title"] in body["payload"]["description"]
+    for item in plan["items"]:
+        assert item["video_url"] in body["payload"]["description"]

@@ -85,6 +85,7 @@ function renderPlan(day) {
       <span class="exercise-name">${escapeHtml(item.name)}</span>
       <span class="exercise-dose">${escapeHtml(exerciseDetail(item))}</span>
       <span class="exercise-instructions">${escapeHtml(item.instructions || '')}</span>
+      ${item.video_url ? `<a class="exercise-video" href="${escapeHtml(item.video_url)}" target="_blank" rel="noopener noreferrer">视频直达</a>` : ''}
     </li>
   `).join('');
   return `<article class="plan-card ${planBaseClass(day)} ${status}">
@@ -242,11 +243,21 @@ $('saveSetting').addEventListener('click', async () => {
   await loadSettings();
 });
 $('testReminder').addEventListener('click', async () => {
-  const data = await api('/api/reminders/test', {
-    method: 'POST',
-    body: JSON.stringify({ title: $('reminderTitle').value, message: $('reminderMessage').value }),
-  });
-  $('reminderResult').textContent = JSON.stringify({ note: 'mock/disabled，未真实发送', ...data }, null, 2);
+  if (!todayPlan?.id || !todayPlan?.is_training) {
+    $('reminderResult').textContent = '今天不是训练日或没有计划，不创建钉钉提醒/代办。';
+    return;
+  }
+  const [reminder, todo] = await Promise.all([
+    api('/api/reminders/dingtalk/send', {
+      method: 'POST',
+      body: JSON.stringify({ plan_id: todayPlan.id, title: $('reminderTitle').value, message: $('reminderMessage').value }),
+    }),
+    api('/api/todos/dingtalk/create', {
+      method: 'POST',
+      body: JSON.stringify({ plan_id: todayPlan.id }),
+    }),
+  ]);
+  $('reminderResult').textContent = JSON.stringify({ dingtalk_reminder: reminder, dingtalk_todo: todo }, null, 2);
 });
 
 refreshAll().catch((error) => console.error('初始化失败', error));

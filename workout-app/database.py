@@ -14,6 +14,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.sql import func
@@ -68,6 +70,7 @@ class WorkoutExercise(Base):
     sets = Column(Integer, nullable=False, default=1)
     duration_seconds = Column(Integer, nullable=True)
     reps = Column(Integer, nullable=True)
+    video_url = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -157,6 +160,7 @@ TRAINING_EXERCISES = [
     {
         "sort_order": 1,
         "name": "Supine pelvic clock",
+        "video_url": "https://www.youtube.com/results?search_query=supine+pelvic+clock+exercise",
         "description": "Small, slow pelvic tilts while lying down to improve hip awareness and gentle control.",
         "sets": 1,
         "duration_seconds": 180,
@@ -165,6 +169,7 @@ TRAINING_EXERCISES = [
     {
         "sort_order": 2,
         "name": "Supported bridge hold",
+        "video_url": "https://www.youtube.com/results?search_query=supported+bridge+hold+exercise",
         "description": "Gentle hip lift with short holds, stopping before strain or breath holding.",
         "sets": 2,
         "duration_seconds": 20,
@@ -173,6 +178,7 @@ TRAINING_EXERCISES = [
     {
         "sort_order": 3,
         "name": "Side-lying hip abduction",
+        "video_url": "https://www.youtube.com/results?search_query=side+lying+hip+abduction+exercise",
         "description": "Small-range side lift for hip stability with a relaxed pace and neutral pelvis.",
         "sets": 2,
         "duration_seconds": None,
@@ -181,6 +187,7 @@ TRAINING_EXERCISES = [
     {
         "sort_order": 4,
         "name": "Dead bug heel taps",
+        "video_url": "https://www.youtube.com/results?search_query=dead+bug+heel+taps+exercise",
         "description": "Alternating heel taps with steady breathing and light abdominal bracing.",
         "sets": 2,
         "duration_seconds": None,
@@ -189,6 +196,7 @@ TRAINING_EXERCISES = [
     {
         "sort_order": 5,
         "name": "Seated hip march",
+        "video_url": "https://www.youtube.com/results?search_query=seated+hip+march+exercise",
         "description": "Slow alternating knee lifts while seated, keeping the trunk quiet and effort easy.",
         "sets": 2,
         "duration_seconds": None,
@@ -205,8 +213,17 @@ def get_db():
         db.close()
 
 
+def ensure_schema_columns():
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("workout_exercises")}
+    if "video_url" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE workout_exercises ADD COLUMN video_url VARCHAR(500)"))
+
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
+    ensure_schema_columns()
 
 
 def _seed_plan(db, plan_date, is_training_day):
@@ -258,6 +275,7 @@ def _seed_plan(db, plan_date, is_training_day):
         exercise.sets = item["sets"]
         exercise.duration_seconds = item["duration_seconds"]
         exercise.reps = item["reps"]
+        exercise.video_url = item["video_url"]
 
 
 def seed_database():

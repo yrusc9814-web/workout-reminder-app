@@ -10,9 +10,10 @@
 - 训练日志记录（完成 / 跳过 / 延期）
 - 月度统计与总统计
 - 设置读写
-- 微信 / 钉钉提醒 mock 接口（不真实发送）
+- 钉钉真实提醒 / 钉钉代办接口（未配置凭据时返回 not_configured）；保留微信 mock 兼容接口
 - 本地定时提醒 tick 脚本（一次性检查今日训练并写本地去重日志）
 - 静态本地个人运动提醒仪表盘
+- 训练动作视频直达链接
 
 项目目录：`workout-app/`
 
@@ -182,11 +183,12 @@ python seed.py
 
 ### 提醒 mock 接口
 
-这些接口只返回 mock 结果，不真实发消息：
+微信接口只返回 mock；钉钉接口在未配置凭据时返回 `not_configured`，配置凭据后会真实调用钉钉：
 
 - `POST /api/reminders/test`
 - `POST /api/reminders/wechat/send`
 - `POST /api/reminders/dingtalk/send`
+- `POST /api/todos/dingtalk/create`
 
 示例：
 
@@ -197,11 +199,13 @@ python seed.py
 }
 ```
 
-返回中的 `status` 固定为：
+未配置钉钉凭据时返回：
 
 ```json
-{"status": "not_sent"}
+{"status": "not_configured", "sent": false}
 ```
+
+钉钉提醒读取 `DINGTALK_WEBHOOK_URL`。钉钉代办读取 `DINGTALK_TODO_CREATE_URL` 和 `DINGTALK_ACCESS_TOKEN`。
 
 ---
 
@@ -296,7 +300,7 @@ PY
 
 页面上的“完成 / 跳过 / 延期”按钮会调用对应日志接口。
 
-提醒测试按钮只调用 mock 接口，不连接真实微信/钉钉。
+提醒测试按钮会调用钉钉提醒和钉钉代办接口；无凭据时显示 not_configured，不会伪装成功。
 
 ---
 
@@ -304,8 +308,9 @@ PY
 
 - 当前种子数据主要覆盖 `2026-05`
 - 今天若不在种子计划月份内，`/api/today` 会返回空计划结构，而不是报错
-- 微信 / 钉钉提醒仍是 mock，不具备真实发送能力
-- 本地定时提醒脚本只做 stdout 提醒与本地日志去重；不会启动服务，也不会真实发送外部消息
+- 微信提醒仍是 mock，不具备真实发送能力
+- 钉钉提醒/代办需要配置凭据；未配置时返回 not_configured
+- 本地定时提醒脚本会在训练日首次触发时调用本地钉钉提醒/代办接口，并保留本地日志去重；脚本不会启动服务
 
 ---
 

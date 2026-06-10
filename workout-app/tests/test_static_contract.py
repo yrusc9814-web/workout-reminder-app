@@ -17,7 +17,8 @@ def test_frontend_calls_existing_backend_endpoints():
         "/api/settings",
         "/api/logs",
         "/api/logs/${action}",
-        "/api/reminders/test",
+        "/api/reminders/dingtalk/send",
+        "/api/todos/dingtalk/create",
     ]
 
     for endpoint in expected:

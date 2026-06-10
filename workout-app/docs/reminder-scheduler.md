@@ -1,19 +1,21 @@
 # 本地定时提醒最小闭环
 
-本项目新增 `scripts/workout_reminder_tick.py` 作为一次性本地提醒 tick 脚本。它只使用 Python 标准库，不接入真实微信 / 钉钉，不修改业务 API。
+本项目新增 `scripts/workout_reminder_tick.py` 作为一次性本地提醒 tick 脚本。它只使用 Python 标准库；训练日首次触发时调用本地钉钉提醒和钉钉代办 API，不接微信，不修改任务计划。
 
 ## 行为
 
 1. 读取今日计划 API。
 2. 如果今天不是训练日，打印“不提醒”提示并以 `0` 退出。
 3. 如果今天是训练日，检查本地提醒日志中是否已存在同一 `date + plan_id`。
-4. 未提醒过则在 stdout 打印提醒，并向 JSON 日志追加一条记录。
+4. 未提醒过则在 stdout 打印提醒，调用钉钉提醒 / 钉钉代办 API，并向 JSON 日志追加一条记录。
 5. 已提醒过则打印“已提醒，不重复提醒”提示并以 `0` 退出。
 6. API 不可用、非 2xx、坏 JSON、日志读取/解析/写入失败时，在 stderr 打印清晰 `ERROR:` 并以 `1` 退出。
 
 ## 默认配置
 
-- API：`http://127.0.0.1:3000/api/today`
+- 今日计划 API：`http://127.0.0.1:3000/api/today`
+- 钉钉提醒 API：`http://127.0.0.1:3000/api/reminders/dingtalk/send`
+- 钉钉代办 API：`http://127.0.0.1:3000/api/todos/dingtalk/create`
 - 日志：`workout-app/data/reminder-log.json`
 
 可通过环境变量覆盖：
@@ -21,10 +23,12 @@
 ```bash
 WORKOUT_REMINDER_API_URL=http://127.0.0.1:3000/api/today \
 WORKOUT_REMINDER_LOG_PATH=data/reminder-log.json \
+WORKOUT_DINGTALK_REMINDER_URL=http://127.0.0.1:3000/api/reminders/dingtalk/send \
+WORKOUT_DINGTALK_TODO_URL=http://127.0.0.1:3000/api/todos/dingtalk/create \
 python scripts/workout_reminder_tick.py
 ```
 
-> 注意：脚本不会启动服务。运行前需要用户自行确认 workout-app 服务已在目标 API 地址可访问。
+> 注意：脚本不会启动服务。运行前需要用户自行确认 workout-app 服务已在目标 API 地址可访问。没有钉钉凭据时 API 返回 `not_configured`，脚本仍会记录状态但不能证明真实送达。
 
 ## 定时器示例
 
@@ -73,7 +77,9 @@ python scripts/workout_reminder_tick.py
     "plan_id": 1,
     "title": "力量训练",
     "reminded_at": "2026-06-09T00:00:00.000000+00:00",
-    "api_url": "http://127.0.0.1:3000/api/today"
+    "api_url": "http://127.0.0.1:3000/api/today",
+    "dingtalk_reminder_status": "not_configured",
+    "dingtalk_todo_status": "not_configured"
   }
 ]
 ```

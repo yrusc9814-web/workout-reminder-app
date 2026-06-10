@@ -17,6 +17,8 @@ from urllib.request import Request, urlopen
 
 DEFAULT_API_URL = "http://127.0.0.1:3000/api/today"
 DEFAULT_LOG_PATH = Path(__file__).resolve().parents[1] / "data" / "reminder-log.json"
+DEFAULT_DINGTALK_REMINDER_URL = "http://127.0.0.1:3000/api/reminders/dingtalk/send"
+DEFAULT_DINGTALK_TODO_URL = "http://127.0.0.1:3000/api/todos/dingtalk/create"
 TIMEOUT_SECONDS = 10
 
 
@@ -50,6 +52,43 @@ def fetch_today(api_url: str) -> dict:
         raise RuntimeError("API returned invalid JSON: expected object")
     return body
 
+
+
+def post_json(url: str, payload: dict) -> dict:
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            status = getattr(response, "status", response.getcode())
+            raw = response.read()
+    except HTTPError as exc:
+        raw = exc.read()
+        status = exc.code
+    except URLError as exc:
+        raise RuntimeError(f"DingTalk API request failed: {getattr(exc, 'reason', exc)}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"DingTalk API request failed: {exc}") from exc
+
+    try:
+        body = json.loads(raw.decode("utf-8")) if raw else {}
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"DingTalk API returned invalid JSON: {exc}") from exc
+    if not isinstance(body, dict):
+        raise RuntimeError("DingTalk API returned invalid JSON: expected object")
+    body.setdefault("http_status", status)
+    return body
+
+
+def call_dingtalk_paths(plan_identifier: object, reminder_url: str, todo_url: str) -> tuple[dict, dict]:
+    payload = {"plan_id": plan_identifier}
+    reminder_result = post_json(reminder_url, payload)
+    todo_result = post_json(todo_url, payload)
+    return reminder_result, todo_result
 
 def load_log(log_path: Path) -> list[dict]:
     if not log_path.exists():
@@ -102,7 +141,7 @@ def reminder_message(today: dict, plan_identifier: object) -> str:
     return f"REMINDER: {today['date']} 训练日 - {title}（plan_id={plan_identifier}）"
 
 
-def run(api_url: str, log_path: Path) -> int:
+def run(api_url: str, log_path: Path, dingtalk_reminder_url: str, dingtalk_todo_url: str) -> int:
     today = fetch_today(api_url)
     if not is_training_day(today):
         plan_date = today.get("date", "today")
@@ -122,6 +161,9 @@ def run(api_url: str, log_path: Path) -> int:
         return 0
 
     print(reminder_message(today, current_plan_id))
+    reminder_result, todo_result = call_dingtalk_paths(
+        current_plan_id, dingtalk_reminder_url, dingtalk_todo_url
+    )
     entries.append(
         {
             "date": plan_date,
@@ -129,6 +171,8 @@ def run(api_url: str, log_path: Path) -> int:
             "title": today.get("title"),
             "reminded_at": datetime.now(timezone.utc).isoformat(),
             "api_url": api_url,
+            "dingtalk_reminder_status": reminder_result.get("status"),
+            "dingtalk_todo_status": todo_result.get("status"),
         }
     )
     save_log(log_path, entries)
@@ -138,8 +182,10 @@ def run(api_url: str, log_path: Path) -> int:
 def main() -> int:
     api_url = os.environ.get("WORKOUT_REMINDER_API_URL", DEFAULT_API_URL)
     log_path = Path(os.environ.get("WORKOUT_REMINDER_LOG_PATH", str(DEFAULT_LOG_PATH)))
+    dingtalk_reminder_url = os.environ.get("WORKOUT_DINGTALK_REMINDER_URL", DEFAULT_DINGTALK_REMINDER_URL)
+    dingtalk_todo_url = os.environ.get("WORKOUT_DINGTALK_TODO_URL", DEFAULT_DINGTALK_TODO_URL)
     try:
-        return run(api_url, log_path)
+        return run(api_url, log_path, dingtalk_reminder_url, dingtalk_todo_url)
     except RuntimeError as exc:
         return error(str(exc))
 

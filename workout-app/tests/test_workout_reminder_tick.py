@@ -15,8 +15,10 @@ class JsonHandler(BaseHTTPRequestHandler):
     response_status = 200
     response_body = {}
     response_content_type = "application/json"
+    requests = []
 
     def do_GET(self):
+        self.__class__.requests.append({"method": "GET", "path": self.path})
         body = self.response_body
         if isinstance(body, bytes):
             payload = body
@@ -24,6 +26,21 @@ class JsonHandler(BaseHTTPRequestHandler):
             payload = json.dumps(body).encode("utf-8")
         self.send_response(self.response_status)
         self.send_header("Content-Type", self.response_content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length else b""
+        self.__class__.requests.append({
+            "method": "POST",
+            "path": self.path,
+            "body": json.loads(raw.decode("utf-8")) if raw else None,
+        })
+        payload = json.dumps({"status": "not_configured"}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -36,6 +53,7 @@ def run_tick(tmp_path, body=None, status=200, raw_body=None, extra_env=None):
     class Handler(JsonHandler):
         response_status = status
         response_body = raw_body if raw_body is not None else body
+        requests = []
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -45,6 +63,8 @@ def run_tick(tmp_path, body=None, status=200, raw_body=None, extra_env=None):
         env = {
             "WORKOUT_REMINDER_API_URL": f"http://127.0.0.1:{server.server_port}/api/today",
             "WORKOUT_REMINDER_LOG_PATH": str(log_path),
+            "WORKOUT_DINGTALK_REMINDER_URL": f"http://127.0.0.1:{server.server_port}/api/reminders/dingtalk/send",
+            "WORKOUT_DINGTALK_TODO_URL": f"http://127.0.0.1:{server.server_port}/api/todos/dingtalk/create",
         }
         if extra_env:
             env.update(extra_env)
@@ -56,7 +76,7 @@ def run_tick(tmp_path, body=None, status=200, raw_body=None, extra_env=None):
             text=True,
             timeout=10,
         )
-        return result, log_path
+        return result, log_path, Handler.requests
     finally:
         server.shutdown()
         server.server_close()
@@ -74,7 +94,7 @@ def test_training_day_prints_reminder_and_appends_log(tmp_path):
         "items": [],
     }
 
-    result, log_path = run_tick(tmp_path, body=body)
+    result, log_path, _requests = run_tick(tmp_path, body=body)
 
     assert result.returncode == 0
     assert result.stderr == ""
@@ -97,8 +117,8 @@ def test_duplicate_same_date_and_plan_does_not_repeat(tmp_path):
         "items": [],
     }
 
-    first, log_path = run_tick(tmp_path, body=body)
-    second, _ = run_tick(tmp_path, body=body)
+    first, log_path, first_requests = run_tick(tmp_path, body=body)
+    second, _, second_requests = run_tick(tmp_path, body=body)
 
     assert first.returncode == 0
     assert second.returncode == 0
@@ -139,7 +159,7 @@ def test_no_training_plan_prints_no_reminder_and_writes_no_log(tmp_path):
         "items": [],
     }
 
-    result, log_path = run_tick(tmp_path, body=body)
+    result, log_path, _requests = run_tick(tmp_path, body=body)
 
     assert result.returncode == 0
     assert "No training plan for 2026-05-13; no reminder sent." in result.stdout
@@ -148,7 +168,7 @@ def test_no_training_plan_prints_no_reminder_and_writes_no_log(tmp_path):
 
 
 def test_bad_api_json_reports_error_and_writes_no_log(tmp_path):
-    result, log_path = run_tick(tmp_path, raw_body=b"not-json")
+    result, log_path, _requests = run_tick(tmp_path, raw_body=b"not-json")
 
     assert result.returncode == 1
     assert "ERROR: API returned invalid JSON" in result.stderr
@@ -168,8 +188,69 @@ def test_corrupt_log_reports_error_and_does_not_overwrite(tmp_path):
         "items": [],
     }
 
-    result, _ = run_tick(tmp_path, body=body)
+    result, _, _requests = run_tick(tmp_path, body=body)
 
     assert result.returncode == 1
     assert "ERROR: reminder log is invalid JSON" in result.stderr
     assert log_path.read_text(encoding="utf-8") == "not-json"
+
+
+def test_training_day_calls_dingtalk_reminder_and_todo_paths(tmp_path):
+    body = {
+        "date": "2026-06-01",
+        "id": 201,
+        "title": "Hip stability and core control",
+        "theme": "Core",
+        "type": "training",
+        "is_training": True,
+        "items": [
+            {"name": "Supine pelvic clock", "video_url": "https://example.com/videos/pelvic-clock"},
+        ],
+    }
+
+    result, log_path, requests = run_tick(tmp_path, body=body)
+
+    assert result.returncode == 0
+    post_paths = [request["path"] for request in requests if request["method"] == "POST"]
+    assert "/api/reminders/dingtalk/send" in post_paths
+    assert "/api/todos/dingtalk/create" in post_paths
+    payloads = [request["body"] for request in requests if request["method"] == "POST"]
+    assert all(payload["plan_id"] == 201 for payload in payloads)
+    assert json.loads(log_path.read_text(encoding="utf-8"))[0]["dingtalk_reminder_status"] == "not_configured"
+    assert json.loads(log_path.read_text(encoding="utf-8"))[0]["dingtalk_todo_status"] == "not_configured"
+
+
+def test_duplicate_training_day_does_not_call_dingtalk_again(tmp_path):
+    body = {
+        "date": "2026-06-03",
+        "id": 202,
+        "title": "Breathing and balance",
+        "type": "training",
+        "is_training": True,
+        "items": [{"name": "Box breathing", "video_url": "https://example.com/videos/box-breathing"}],
+    }
+
+    first, _log_path, first_requests = run_tick(tmp_path, body=body)
+    second, _log_path, second_requests = run_tick(tmp_path, body=body)
+
+    assert first.returncode == 0
+    assert second.returncode == 0
+    assert len([request for request in first_requests if request["method"] == "POST"]) == 2
+    assert [request for request in second_requests if request["method"] == "POST"] == []
+
+
+def test_rest_day_does_not_call_dingtalk_paths(tmp_path):
+    body = {
+        "date": "2026-06-02",
+        "id": 203,
+        "title": "Rest day",
+        "type": "rest",
+        "is_training": False,
+        "items": [],
+    }
+
+    result, log_path, requests = run_tick(tmp_path, body=body)
+
+    assert result.returncode == 0
+    assert not log_path.exists()
+    assert [request for request in requests if request["method"] == "POST"] == []

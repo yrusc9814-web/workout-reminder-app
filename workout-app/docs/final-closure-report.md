@@ -44,7 +44,8 @@ python run.py
 | 17 | POST | `/api/settings` | 保存设置 |
 | 18 | POST | `/api/reminders/test` | 提醒 mock，不真实发送 |
 | 19 | POST | `/api/reminders/wechat/send` | 微信提醒 mock，不真实发送 |
-| 20 | POST | `/api/reminders/dingtalk/send` | 钉钉提醒 mock，不真实发送 |
+| 20 | POST | `/api/reminders/dingtalk/send` | 钉钉提醒；无凭据返回 `not_configured`，有 `DINGTALK_WEBHOOK_URL` 时真实调用 |
+| 21 | POST | `/api/todos/dingtalk/create` | 钉钉代办；无凭据返回 `not_configured`，有 `DINGTALK_TODO_CREATE_URL` + `DINGTALK_ACCESS_TOKEN` 时真实调用 |
 
 ## 5. Seed 数据范围与提醒闭环
 
@@ -54,6 +55,7 @@ python run.py
 - `2026-06` / `2026-07` / `2026-08`：按周一、周三、周五生成训练日，其余日期为休息日。
 - 未来三个月训练日数量：2026-06 为 13 天，2026-07 为 14 天，2026-08 为 13 天。
 - 总 seed 计划数为 123 天，训练日 53 天，训练动作 265 条。
+- 每个训练动作包含 `video_url`，钉钉提醒和代办内容会携带视频直达链接。
 - `WorkoutPlan.plan_date` 有唯一约束；seed 按日期查找并更新，重复运行不会为同一天重复插入计划。
 
 服务启动时会自动执行 seed。若本地已有 `workout.db`，重启服务即可写入新增月份；也可手动执行：
@@ -70,8 +72,8 @@ python seed.py
 
 - 默认读取 `http://127.0.0.1:3000/api/today`，支持 `WORKOUT_REMINDER_API_URL` 覆盖。
 - 默认写入 `data/reminder-log.json`，支持 `WORKOUT_REMINDER_LOG_PATH` 覆盖。
-- 训练日且同一 `date + plan_id` 未提醒过时，stdout 打印提醒并追加 JSON 日志。
-- 同日同计划重复运行不重复提醒。
+- 训练日且同一 `date + plan_id` 未提醒过时，stdout 打印提醒，调用钉钉提醒/代办接口，并追加 JSON 日志。
+- 同日同计划重复运行不重复提醒，也不会重复创建钉钉提醒/代办。
 - 无训练计划 stdout 提示不提醒并 `exit 0`。
 - API 不可用、非 2xx、坏 JSON、日志损坏或写入失败时，stderr 输出 `ERROR:` 并 `exit 1`。
 - 详细定时器配置见 `docs/reminder-scheduler.md`。
@@ -108,12 +110,12 @@ pytest 覆盖重点：
 - 统计接口。
 - 设置接口读写。
 - complete / skip / postpone 一致性。
-- 提醒 mock 接口存在。
+- 微信提醒 mock 接口存在；钉钉提醒/代办接口在无凭据时返回 `not_configured`。
 - seed 幂等。
 - 2026-06/07/08 未来月份 seed、每周一/三/五训练日、`/api/plans/month?month=2026-06`、模拟未来训练日 `/api/today`。
 - 前端调用的接口路径与后端契约一致。
 - 首页前端已优化为本地个人运动提醒仪表盘，保留轻量 HTML/CSS/JS，无 React/Vue/Tailwind/Vite。
-- 本地定时提醒 tick：训练日写日志、重复不重复、无训练不提醒、服务/JSON/日志错误清晰失败。
+- 本地定时提醒 tick：训练日调用钉钉提醒/代办并写状态日志、重复不重复、无训练不提醒、服务/JSON/日志错误清晰失败。
 
 建议运行方式：
 
@@ -139,9 +141,10 @@ PY
 - `scripts/create_desktop_shortcut.ps1`
 - `tests/test_api.py`
 - `tests/test_workout_reminder_tick.py`
+- `tests/test_static_contract.py`
 - `docs/reminder-scheduler.md`
 - `docs/final-closure-report.md`
 
 ## 10. 当前结论
 
-未来训练计划 seed、API 测试覆盖、文档说明和桌面快捷方式脚本已补齐。当前改动不包含真实运行日志，不提交、不 push。
+未来训练计划 seed、视频直达链接、钉钉提醒/代办 API、tick 调用链路、测试覆盖、文档说明和桌面快捷方式脚本已补齐。未配置钉钉真实凭据时只能验证 `not_configured` 与 payload，不能证明真实送达。

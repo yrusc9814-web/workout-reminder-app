@@ -1,8 +1,12 @@
 from calendar import monthrange
+import json
+import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -50,8 +54,13 @@ class SettingPayload(BaseModel):
 
 
 class ReminderPayload(BaseModel):
+    plan_id: Optional[int] = None
     title: Optional[str] = None
     message: Optional[str] = None
+
+
+class DingTalkPayload(BaseModel):
+    plan_id: int
 
 
 def as_date(value) -> date:
@@ -122,6 +131,7 @@ def plan_item(plan: Optional[WorkoutPlan], day: date) -> dict:
                 "reps": item.reps,
                 "duration_seconds": item.duration_seconds,
                 "instructions": item.description,
+                "video_url": item.video_url,
                 "sort_order": item.sort_order,
             }
             for item in items
@@ -138,6 +148,68 @@ def range_rows(db: Session, start: date, end: date) -> dict:
     )
     return {as_date(row.plan_date): row for row in rows}
 
+
+
+def get_plan_or_404(db: Session, plan_id: int) -> WorkoutPlan:
+    plan = db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return plan
+
+
+def plan_payload(plan: WorkoutPlan) -> dict:
+    return plan_item(plan, as_date(plan.plan_date))
+
+
+def build_training_text(plan: WorkoutPlan) -> str:
+    payload = plan_payload(plan)
+    lines = [
+        f"训练计划：{payload['title']}",
+        f"日期：{payload['date']}",
+        f"主题：{payload['theme'] or ''}",
+        "动作与视频：",
+    ]
+    for item in payload["items"]:
+        lines.append(f"- {item['name']}: {item['video_url']}")
+    if payload.get("notes"):
+        lines.append(f"备注：{payload['notes']}")
+    return "\n".join(lines)
+
+
+def build_dingtalk_reminder_payload(plan: WorkoutPlan) -> dict:
+    text = build_training_text(plan)
+    return {
+        "msgtype": "markdown",
+        "title": plan.title,
+        "text": text,
+        "markdown": {"title": plan.title, "text": text},
+    }
+
+
+def build_dingtalk_todo_payload(plan: WorkoutPlan) -> dict:
+    return {
+        "subject": f"训练计划：{plan.title}",
+        "description": build_training_text(plan),
+        "sourceId": f"workout-plan-{plan.id}-{as_date(plan.plan_date).isoformat()}",
+        "dueDate": as_date(plan.plan_date).isoformat(),
+    }
+
+
+def post_json(url: str, payload: dict, headers: Optional[dict] = None) -> tuple[int, str]:
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request_headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if headers:
+        request_headers.update(headers)
+    request = Request(url, data=data, headers=request_headers, method="POST")
+    try:
+        with urlopen(request, timeout=10) as response:
+            body = response.read().decode("utf-8", "replace")
+            return response.status, body
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        return exc.code, body
+    except URLError as exc:
+        raise RuntimeError(f"DingTalk request failed: {exc}") from exc
 
 def log_item(row: WorkoutLog) -> dict:
     return {
@@ -378,12 +450,91 @@ def send_wechat_reminder(payload: ReminderPayload) -> dict:
 
 
 @app.post("/api/reminders/dingtalk/send")
-def send_dingtalk_reminder(payload: ReminderPayload) -> dict:
+def send_dingtalk_reminder(payload: ReminderPayload, db: Session = Depends(get_db)) -> dict:
+    if payload.plan_id is None:
+        return {
+            "channel": "dingtalk",
+            "enabled": False,
+            "mock": True,
+            "title": payload.title,
+            "message": payload.message,
+            "status": "not_sent",
+        }
+
+    plan = get_plan_or_404(db, payload.plan_id)
+    message_payload = build_dingtalk_reminder_payload(plan)
+    webhook_url = os.environ.get("DINGTALK_WEBHOOK_URL")
+    if not webhook_url:
+        return {
+            "channel": "dingtalk",
+            "enabled": False,
+            "mock": False,
+            "sent": False,
+            "status": "not_configured",
+            "payload": {"title": plan.title, "text": message_payload["text"], "raw": message_payload},
+        }
+
+    try:
+        status_code, body = post_json(webhook_url, message_payload)
+    except RuntimeError as exc:
+        return {
+            "channel": "dingtalk",
+            "enabled": True,
+            "mock": False,
+            "sent": False,
+            "status": "failed",
+            "error": str(exc),
+            "payload": {"title": plan.title, "text": message_payload["text"], "raw": message_payload},
+        }
+
+    sent = 200 <= status_code < 300
     return {
         "channel": "dingtalk",
-        "enabled": False,
-        "mock": True,
-        "title": payload.title,
-        "message": payload.message,
-        "status": "not_sent",
+        "enabled": True,
+        "mock": False,
+        "sent": sent,
+        "status": "sent" if sent else "failed",
+        "http_status": status_code,
+        "response": body,
+        "payload": {"title": plan.title, "text": message_payload["text"], "raw": message_payload},
+    }
+
+
+@app.post("/api/todos/dingtalk/create")
+def create_dingtalk_todo(payload: DingTalkPayload, db: Session = Depends(get_db)) -> dict:
+    plan = get_plan_or_404(db, payload.plan_id)
+    todo_payload = build_dingtalk_todo_payload(plan)
+    todo_url = os.environ.get("DINGTALK_TODO_CREATE_URL")
+    token = os.environ.get("DINGTALK_ACCESS_TOKEN")
+    if not todo_url or not token:
+        return {
+            "channel": "dingtalk_todo",
+            "enabled": False,
+            "created": False,
+            "status": "not_configured",
+            "payload": todo_payload,
+        }
+
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        status_code, body = post_json(todo_url, todo_payload, headers=headers)
+    except RuntimeError as exc:
+        return {
+            "channel": "dingtalk_todo",
+            "enabled": True,
+            "created": False,
+            "status": "failed",
+            "error": str(exc),
+            "payload": todo_payload,
+        }
+
+    created = 200 <= status_code < 300
+    return {
+        "channel": "dingtalk_todo",
+        "enabled": True,
+        "created": created,
+        "status": "created" if created else "failed",
+        "http_status": status_code,
+        "response": body,
+        "payload": todo_payload,
     }
