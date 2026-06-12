@@ -42,28 +42,34 @@ python scripts/workout_reminder_tick.py
 
 ### Windows 任务计划程序
 
-可创建每日任务，操作配置为：
+本项目提供 Windows 自动化入口：
 
-- 程序：`python`，或当前环境的 Python 绝对路径，例如 `C:\Users\VIVI\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe`
-- 参数：`scripts/workout_reminder_tick.py`
+- `scripts/windows_daily_reminder.py`
+- `scripts/windows_daily_reminder.cmd`
+
+该入口用于任务计划程序的一次性运行：会加载现有环境变量 / `../dingtalk-secrets.txt`（不打印密钥），必要时临时启动本地 FastAPI 服务，检查 `/api/health`，调用既有 `scripts/workout_reminder_tick.py`，并写入本地 JSONL 运行日志。
+
+推荐任务操作配置：
+
+- 程序：`D:\workout-reminder-app-github\workout-app\scripts\windows_daily_reminder.cmd`
+- 参数：可留空
 - 起始于：`D:\workout-reminder-app-github\workout-app`
 
 当前本机上线启用配置：
 
 - 任务名：`Workout Reminder App Daily Tick`
 - 触发器：每天 `08:30`
-- 程序：`C:\Users\VIVI\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe`
-- 参数：`scripts/workout_reminder_tick.py`
-- 起始于：`D:/workout-reminder-app-github/workout-app`
+- 程序：`D:\workout-reminder-app-github\workout-app\scripts\windows_daily_reminder.cmd`
+- 参数：空
+- 起始于：`D:\workout-reminder-app-github\workout-app`
 - 权限：当前 Windows 用户交互登录、非最高权限运行
-- 说明：脚本不会启动后端服务；任务运行前需确保 `http://127.0.0.1:3000/api/today` 可访问。
+- 运行日志：`data/windows-reminder-runs.jsonl`
+- 去重日志：`data/windows-reminder-log.json`
 
-如需使用自定义 API 或日志路径，在任务的环境或包装脚本中设置：
+如需使用自定义 API 或日志路径，可直接调用 Python 入口并传参：
 
 ```bash
-export WORKOUT_REMINDER_API_URL="http://127.0.0.1:3000/api/today"
-export WORKOUT_REMINDER_LOG_PATH="data/reminder-log.json"
-python scripts/workout_reminder_tick.py
+python scripts/windows_daily_reminder.py --port 3000 --run-log data/windows-reminder-runs.jsonl --tick-log data/windows-reminder-log.json
 ```
 
 ## 日志格式
