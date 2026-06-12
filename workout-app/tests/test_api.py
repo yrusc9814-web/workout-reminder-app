@@ -1,5 +1,6 @@
 from datetime import date
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -363,8 +364,11 @@ def test_dingtalk_reminder_not_configured_returns_payload_with_video_links(clien
     assert body["status"] == "not_configured"
     assert body["mock"] is False
     assert body["sent"] is False
-    assert body["payload"]["title"] == plan["title"]
-    assert plan["title"] in body["payload"]["text"]
+    assert body["payload"]["title"] == f"【待办】{plan['title']}"
+    assert f"【待办】{plan['title']}" in body["payload"]["text"]
+    assert f"训练日期：{plan['date']}" in body["payload"]["text"]
+    assert "训练动作：" in body["payload"]["text"]
+    assert "完成后在群里回复“已完成”" in body["payload"]["text"]
     for item in plan["items"]:
         assert item["video_url"] in body["payload"]["text"]
 
@@ -385,3 +389,52 @@ def test_dingtalk_todo_not_configured_returns_payload_with_video_links(client, m
     assert plan["title"] in body["payload"]["description"]
     for item in plan["items"]:
         assert item["video_url"] in body["payload"]["description"]
+
+
+def test_dingtalk_todo_uses_dingtalk_access_token_header(client, monkeypatch):
+    captured = {}
+
+    def fake_post_json(url, payload, headers=None):
+        captured["url"] = url
+        captured["payload"] = payload
+        captured["headers"] = headers
+        return 200, "{}"
+
+    monkeypatch.setenv("DINGTALK_TODO_CREATE_URL", "https://api.dingtalk.example/todos")
+    monkeypatch.setenv("DINGTALK_ACCESS_TOKEN", "test-token")
+    monkeypatch.setattr("main.post_json", fake_post_json)
+    plan = june_training_plan(client)
+
+    response = client.post("/api/todos/dingtalk/create", json={"plan_id": plan["id"]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "created"
+    assert captured["url"] == "https://api.dingtalk.example/todos"
+    assert captured["headers"] == {"x-acs-dingtalk-access-token": "test-token"}
+    assert captured["payload"]["subject"] == f"训练计划：{plan['title']}"
+    assert "Authorization" not in captured["headers"]
+
+
+def test_dingtalk_todo_permission_denied_returns_clear_status(client, monkeypatch):
+    def fake_post_json(url, payload, headers=None):
+        return 403, json.dumps(
+            {
+                "code": "Forbidden.AccessDenied.AccessTokenPermissionDenied",
+                "message": "应用尚未开通所需的权限：[Todo.PersonalTodo.Write]",
+            }
+        )
+
+    monkeypatch.setenv("DINGTALK_TODO_CREATE_URL", "https://api.dingtalk.example/todos")
+    monkeypatch.setenv("DINGTALK_ACCESS_TOKEN", "test-token")
+    monkeypatch.setattr("main.post_json", fake_post_json)
+    plan = june_training_plan(client)
+
+    response = client.post("/api/todos/dingtalk/create", json={"plan_id": plan["id"]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "todo_unavailable_due_to_permission"
+    assert body["created"] is False
+    assert body["enabled"] is True
+    assert body["permission"] == "Todo.PersonalTodo.Write"

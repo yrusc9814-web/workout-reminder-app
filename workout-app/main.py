@@ -164,25 +164,27 @@ def plan_payload(plan: WorkoutPlan) -> dict:
 def build_training_text(plan: WorkoutPlan) -> str:
     payload = plan_payload(plan)
     lines = [
-        f"训练计划：{payload['title']}",
-        f"日期：{payload['date']}",
+        f"【待办】{payload['title']}",
+        f"训练日期：{payload['date']}",
         f"主题：{payload['theme'] or ''}",
-        "动作与视频：",
+        "训练动作：",
     ]
     for item in payload["items"]:
         lines.append(f"- {item['name']}: {item['video_url']}")
     if payload.get("notes"):
         lines.append(f"备注：{payload['notes']}")
+    lines.append("完成提示：完成后在群里回复“已完成”。")
     return "\n".join(lines)
 
 
 def build_dingtalk_reminder_payload(plan: WorkoutPlan) -> dict:
     text = build_training_text(plan)
+    title = f"【待办】{plan.title}"
     return {
         "msgtype": "markdown",
-        "title": plan.title,
+        "title": title,
         "text": text,
-        "markdown": {"title": plan.title, "text": text},
+        "markdown": {"title": title, "text": text},
     }
 
 
@@ -471,7 +473,7 @@ def send_dingtalk_reminder(payload: ReminderPayload, db: Session = Depends(get_d
             "mock": False,
             "sent": False,
             "status": "not_configured",
-            "payload": {"title": plan.title, "text": message_payload["text"], "raw": message_payload},
+            "payload": {"title": message_payload["title"], "text": message_payload["text"], "raw": message_payload},
         }
 
     try:
@@ -484,7 +486,7 @@ def send_dingtalk_reminder(payload: ReminderPayload, db: Session = Depends(get_d
             "sent": False,
             "status": "failed",
             "error": str(exc),
-            "payload": {"title": plan.title, "text": message_payload["text"], "raw": message_payload},
+            "payload": {"title": message_payload["title"], "text": message_payload["text"], "raw": message_payload},
         }
 
     sent = 200 <= status_code < 300
@@ -515,7 +517,7 @@ def create_dingtalk_todo(payload: DingTalkPayload, db: Session = Depends(get_db)
             "payload": todo_payload,
         }
 
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"x-acs-dingtalk-access-token": token}
     try:
         status_code, body = post_json(todo_url, todo_payload, headers=headers)
     except RuntimeError as exc:
@@ -529,12 +531,28 @@ def create_dingtalk_todo(payload: DingTalkPayload, db: Session = Depends(get_db)
         }
 
     created = 200 <= status_code < 300
+    status = "created" if created else "failed"
+    permission = None
+    try:
+        response_data = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        response_data = {}
+    error_code = str(response_data.get("code") or response_data.get("errcode") or "")
+    error_message = str(response_data.get("message") or response_data.get("errmsg") or "")
+    if (
+        status_code == 403
+        and "AccessTokenPermissionDenied" in error_code
+        and "Todo.PersonalTodo.Write" in error_message
+    ):
+        status = "todo_unavailable_due_to_permission"
+        permission = "Todo.PersonalTodo.Write"
     return {
         "channel": "dingtalk_todo",
         "enabled": True,
         "created": created,
-        "status": "created" if created else "failed",
+        "status": status,
         "http_status": status_code,
         "response": body,
+        "permission": permission,
         "payload": todo_payload,
     }
