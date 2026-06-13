@@ -159,45 +159,45 @@ TRAINING_DATES.update(_future_training_dates())
 TRAINING_EXERCISES = [
     {
         "sort_order": 1,
-        "name": "Supine pelvic clock",
-        "video_url": "https://www.youtube.com/results?search_query=supine+pelvic+clock+exercise",
-        "description": "Small, slow pelvic tilts while lying down to improve hip awareness and gentle control.",
+        "name": "仰卧骨盆时钟",
+        "video_url": "https://www.bilibili.com/video/BV1X625B5EWd/",
+        "description": "仰卧屈膝，想象骨盆是一只时钟，缓慢做前后、左右和绕圈倾斜，找回髋部感知与骨盆控制。",
         "sets": 1,
         "duration_seconds": 180,
         "reps": None,
     },
     {
         "sort_order": 2,
-        "name": "Supported bridge hold",
-        "video_url": "https://www.youtube.com/results?search_query=supported+bridge+hold+exercise",
-        "description": "Gentle hip lift with short holds, stopping before strain or breath holding.",
+        "name": "支撑臀桥停留",
+        "video_url": "https://www.bilibili.com/video/BV1Jg4y1z7Nm/",
+        "description": "脚掌踩稳，轻轻抬起髋部并短暂停留，保持呼吸顺畅，不憋气、不顶腰。",
         "sets": 2,
         "duration_seconds": 20,
         "reps": None,
     },
     {
         "sort_order": 3,
-        "name": "Side-lying hip abduction",
-        "video_url": "https://www.youtube.com/results?search_query=side+lying+hip+abduction+exercise",
-        "description": "Small-range side lift for hip stability with a relaxed pace and neutral pelvis.",
+        "name": "侧卧髋外展",
+        "video_url": "https://www.bilibili.com/video/BV1No4y1h7NH/",
+        "description": "侧卧保持骨盆稳定，小幅抬起上侧腿，节奏放慢，重点感受臀中肌发力。",
         "sets": 2,
         "duration_seconds": None,
         "reps": 6,
     },
     {
         "sort_order": 4,
-        "name": "Dead bug heel taps",
-        "video_url": "https://www.youtube.com/results?search_query=dead+bug+heel+taps+exercise",
-        "description": "Alternating heel taps with steady breathing and light abdominal bracing.",
+        "name": "死虫式脚跟点地",
+        "video_url": "https://www.bilibili.com/video/BV1Bu411V7rW/",
+        "description": "仰卧收紧核心，左右交替让脚跟轻点地面，保持腰背稳定和呼吸连续。",
         "sets": 2,
         "duration_seconds": None,
         "reps": 6,
     },
     {
         "sort_order": 5,
-        "name": "Seated hip march",
-        "video_url": "https://www.youtube.com/results?search_query=seated+hip+march+exercise",
-        "description": "Slow alternating knee lifts while seated, keeping the trunk quiet and effort easy.",
+        "name": "坐姿抬腿",
+        "video_url": "https://www.bilibili.com/video/BV1Rv4y1d7XM/",
+        "description": "坐稳后左右交替抬膝，躯干保持安静，动作慢而可控，避免耸肩或后仰。",
         "sets": 2,
         "duration_seconds": None,
         "reps": 6,
@@ -227,12 +227,12 @@ def create_tables():
 
 
 def _seed_plan(db, plan_date, is_training_day):
-    title = "Hip stability and core control" if is_training_day else "Rest day"
-    focus = "Low-volume hip stability and core control" if is_training_day else "Recovery"
+    title = "髋部稳定与核心控制" if is_training_day else "恢复日"
+    focus = "低强度髋部稳定 + 核心控制" if is_training_day else "恢复与轻量活动"
     notes = (
-        "Keep effort easy, controlled, and pain-free."
+        "全程保持轻松、可控、无疼痛；如果出现不适，立即停止。"
         if is_training_day
-        else "Rest and normal gentle movement only."
+        else "今天不安排正式训练，保持散步、拉伸等温和活动即可。"
     )
 
     plan = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == plan_date).one_or_none()

@@ -45,7 +45,7 @@ def test_root_returns_html(client):
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "本地个人运动提醒仪表盘" in response.text
+    assert "运动提醒 App" in response.text or "训练面板" in response.text
 
 
 def test_today_endpoint_exists_and_returns_shape(client):
@@ -350,6 +350,11 @@ def test_training_items_include_video_links(client):
 
     assert plan["items"]
     assert all(item["video_url"].startswith("https://") for item in plan["items"])
+    assert all(
+        "bilibili.com" in item["video_url"] or "b23.tv" in item["video_url"]
+        for item in plan["items"]
+    )
+    assert "youtube" not in json.dumps(plan, ensure_ascii=False).lower()
 
 
 def test_dingtalk_reminder_not_configured_returns_payload_with_video_links(client, monkeypatch):

@@ -7,12 +7,12 @@
 - 今日计划查看
 - 周计划 / 月计划查看
 - 月历查看
-- 训练日志记录（完成 / 跳过 / 延期）
-- 月度统计与总统计
-- 设置读写
+- 本地静态仪表盘：首页、今日计划、周计划、月历、统计、设置、日志
+- 2026-05 至 2026-08 训练计划种子数据：每周一 / 三 / 五训练，其他日期恢复
+- 训练内容：髋部稳定与核心控制，动作包含中文说明、组数 / 次数 / 时长，以及 Bilibili 公开视频链接
 - 钉钉真实提醒 / 钉钉代办接口（未配置凭据时返回 not_configured）；保留微信 mock 兼容接口
 - 本地定时提醒 tick 脚本（一次性检查今日训练并写本地去重日志）
-- 静态本地个人运动提醒仪表盘
+- Windows 一键启动脚本和桌面快捷方式：双击“运动提醒 App”启动后端并打开浏览器
 - 训练动作视频直达链接
 
 项目目录：`workout-app/`
@@ -224,9 +224,25 @@ python scripts/workout_reminder_tick.py
 更多定时器配置示例见：`docs/reminder-scheduler.md`。
 
 
+## 一键启动网页（Windows）
+
+无需手动输入命令行。双击以下脚本会在本机 `127.0.0.1:3000` 启动 FastAPI 后端，并自动打开浏览器：
+
+```cmd
+scripts\start_workout_app.cmd
+```
+
+如需创建桌面快捷方式，运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create_start_shortcut.ps1
+```
+
+创建后桌面会出现：`运动提醒 App.lnk`。双击该快捷方式即可启动后端并打开 `http://127.0.0.1:3000`。
+
 ## 桌面快捷方式（Windows）
 
-可选脚本：`scripts/create_desktop_shortcut.ps1`。它只在当前用户桌面创建标准 Internet Shortcut：`Workout Reminder App.url`，目标地址为：
+保留可选浏览器快捷方式脚本：`scripts/create_desktop_shortcut.ps1`。它只在当前用户桌面创建标准 Internet Shortcut：`Workout Reminder App.url`，目标地址为：
 
 - `http://127.0.0.1:3000`
 

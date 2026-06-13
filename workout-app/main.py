@@ -73,29 +73,29 @@ def parse_month_token(month: str) -> tuple[int, int]:
     try:
         parsed = datetime.strptime(month, "%Y-%m")
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail="month must be YYYY-MM") from exc
+        raise HTTPException(status_code=422, detail="月份格式必须是 YYYY-MM") from exc
     return parsed.year, parsed.month
 
 
 def resolve_year_month(year: Optional[int], month: Optional[str]) -> tuple[int, int]:
     if month is None:
-        raise HTTPException(status_code=422, detail="month is required")
+        raise HTTPException(status_code=422, detail="必须提供月份")
 
     if "-" in month:
         if year is not None:
-            raise HTTPException(status_code=422, detail="use either year+month or month=YYYY-MM")
+            raise HTTPException(status_code=422, detail="请使用 year+month，或只使用 month=YYYY-MM")
         return parse_month_token(month)
 
     try:
         month_num = int(month)
     except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="month must be 1-12 or YYYY-MM") from exc
+        raise HTTPException(status_code=422, detail="月份必须是 1-12 或 YYYY-MM") from exc
 
     if not 1 <= month_num <= 12:
-        raise HTTPException(status_code=422, detail="month must be between 1 and 12")
+        raise HTTPException(status_code=422, detail="月份必须在 1 到 12 之间")
 
     if year is None:
-        raise HTTPException(status_code=422, detail="year is required when month is numeric")
+        raise HTTPException(status_code=422, detail="月份为数字时必须提供年份")
 
     return year, month_num
 
@@ -153,7 +153,7 @@ def range_rows(db: Session, start: date, end: date) -> dict:
 def get_plan_or_404(db: Session, plan_id: int) -> WorkoutPlan:
     plan = db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
     if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
+        raise HTTPException(status_code=404, detail="未找到训练计划")
     return plan
 
 
@@ -211,7 +211,7 @@ def post_json(url: str, payload: dict, headers: Optional[dict] = None) -> tuple[
         body = exc.read().decode("utf-8", "replace")
         return exc.code, body
     except URLError as exc:
-        raise RuntimeError(f"DingTalk request failed: {exc}") from exc
+        raise RuntimeError(f"钉钉请求失败：{exc}") from exc
 
 def log_item(row: WorkoutLog) -> dict:
     return {
@@ -227,7 +227,7 @@ def log_item(row: WorkoutLog) -> dict:
 def write_log(db: Session, plan_id: int, state: str, notes: Optional[str]) -> dict:
     plan = db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
     if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
+        raise HTTPException(status_code=404, detail="未找到训练计划")
 
     row = WorkoutLog(plan_id=plan_id, action=state, status=state, notes=notes)
     db.add(row)
@@ -278,7 +278,7 @@ def week(date: str = Query(...), db: Session = Depends(get_db)) -> dict:
     try:
         target = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
-        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+        raise HTTPException(status_code=422, detail="日期格式必须是 YYYY-MM-DD")
 
     start = target - timedelta(days=target.weekday())
     end = start + timedelta(days=6)

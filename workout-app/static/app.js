@@ -10,26 +10,30 @@ const month = today.getMonth() + 1;
 
 const statusText = {
   training: '训练日',
-  rest: '休息日',
+  rest: '恢复日',
   completed: '已完成',
   done: '已完成',
-  skipped: '跳过',
-  postponed: '延期',
+  skipped: '已跳过',
+  postponed: '已延期',
+  sent: '已发送',
+  not_configured: '未配置',
+  failed: '失败',
+  todo_unavailable_due_to_permission: '待办权限不可用',
 };
 
 const statLabels = {
   total_plans: '计划总数',
   training_days: '训练日',
-  rest_days: '休息日',
+  rest_days: '恢复日',
   completed: '已完成',
-  skipped: '跳过',
-  postponed: '延期',
+  skipped: '已跳过',
+  postponed: '已延期',
   completion_rate: '完成率',
 };
 
 function recordApi(path) {
   apiCalls.add(path.replace(/([?&](date|year|month)=)[^&]+/g, '$1…'));
-  $('apiCalls').textContent = Array.from(apiCalls).sort().join(' | ');
+  $('apiCalls').textContent = Array.from(apiCalls).sort().join(' ｜ ');
 }
 
 async function api(path, options = {}) {
@@ -41,7 +45,8 @@ async function api(path, options = {}) {
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${text}`);
+    const detail = data?.detail || text || response.statusText;
+    throw new Error(`请求失败（${response.status}）：${detail}`);
   }
   return data;
 }
@@ -67,25 +72,35 @@ function badge(status) {
 }
 
 function exerciseDetail(item) {
-  if (item.duration_seconds) return `${item.duration_seconds} 秒`;
+  if (item.duration_seconds) return `${item.sets || 1} 组 · 每组 ${item.duration_seconds} 秒`;
   return `${item.sets || '-'} 组 × ${item.reps || '-'} 次`;
+}
+
+function videoHost(url) {
+  if (!url) return '';
+  if (url.includes('bilibili.com')) return 'Bilibili';
+  if (url.includes('b23.tv')) return 'B23';
+  return '视频';
 }
 
 function renderPlan(day) {
   if (!day || !day.id) {
     return `<article class="plan-card rest">
-      <div class="plan-top"><span class="status-badge rest">休息日</span></div>
-      <h3 class="plan-title">${escapeHtml(day?.date || isoToday)} 暂无计划</h3>
-      <p class="plan-meta">今天没有训练安排，保持轻量活动和恢复。</p>
+      <div class="plan-top"><span class="status-badge rest">恢复日</span></div>
+      <h3 class="plan-title">${escapeHtml(day?.date || isoToday)} 暂无训练安排</h3>
+      <p class="plan-meta">今天不做正式训练，保持散步、拉伸或轻量活动即可。</p>
     </article>`;
   }
   const status = latestStatusForPlan(day);
-  const items = (day.items || []).map((item) => `
-    <li>
-      <span class="exercise-name">${escapeHtml(item.name)}</span>
+  const items = (day.items || []).map((item, index) => `
+    <li class="exercise-item">
+      <span class="exercise-index">${String(index + 1).padStart(2, '0')}</span>
+      <div class="exercise-main">
+        <strong class="exercise-name">${escapeHtml(item.name)}</strong>
+        <span class="exercise-instructions">${escapeHtml(item.instructions || '')}</span>
+      </div>
       <span class="exercise-dose">${escapeHtml(exerciseDetail(item))}</span>
-      <span class="exercise-instructions">${escapeHtml(item.instructions || '')}</span>
-      ${item.video_url ? `<a class="exercise-video" href="${escapeHtml(item.video_url)}" target="_blank" rel="noopener noreferrer">视频直达</a>` : ''}
+      ${item.video_url ? `<a class="exercise-video" href="${escapeHtml(item.video_url)}" target="_blank" rel="noopener noreferrer">打开${escapeHtml(videoHost(item.video_url))}</a>` : ''}
     </li>
   `).join('');
   return `<article class="plan-card ${planBaseClass(day)} ${status}">
@@ -96,7 +111,7 @@ function renderPlan(day) {
     <h3 class="plan-title">${escapeHtml(day.title || (day.is_training ? '今日训练' : '恢复日'))}</h3>
     <div class="plan-meta">${escapeHtml(day.theme || day.type || '')}</div>
     ${day.notes ? `<p class="plan-meta">${escapeHtml(day.notes)}</p>` : ''}
-    ${items ? `<ul class="exercise-list">${items}</ul>` : '<p class="plan-meta">无动作清单，按恢复日处理。</p>'}
+    ${items ? `<ul class="exercise-list">${items}</ul>` : '<p class="plan-meta">暂无动作清单，按恢复日处理。</p>'}
   </article>`;
 }
 
@@ -106,8 +121,8 @@ function renderWeekDay(day) {
   return `<article class="week-day ${planBaseClass(day)} ${status}">
     <div class="week-date">${escapeHtml(day.date)}</div>
     ${badge(status)}
-    <div class="week-title">${escapeHtml(day.title || (day.is_training ? '训练' : '恢复'))}</div>
-    <div class="week-items">${day.is_training ? `${itemCount} 个动作` : '恢复 / 轻量活动'}</div>
+    <div class="week-title">${escapeHtml(day.title || (day.is_training ? '训练日' : '恢复日'))}</div>
+    <div class="week-items">${day.is_training ? `${itemCount} 个动作 · 视频已配齐` : '恢复 / 轻量活动'}</div>
   </article>`;
 }
 
@@ -116,7 +131,7 @@ function renderMonthRow(day) {
   return `<div class="month-row ${planBaseClass(day)} ${status}">
     <strong>${escapeHtml(day.date)}</strong>
     ${badge(status)}
-    <span>${escapeHtml(day.title || (day.is_training ? '训练' : '休息'))}</span>
+    <span>${escapeHtml(day.title || (day.is_training ? '训练日' : '恢复日'))}</span>
   </div>`;
 }
 
@@ -125,7 +140,7 @@ function renderCalendarDay(day) {
   return `<div class="day ${planBaseClass(day)} ${status}">
     <span class="day-num">${escapeHtml(String(day.date).slice(-2))}</span>
     ${badge(status)}
-    <span class="day-label">${escapeHtml(day.title || (day.is_training ? '训练' : '休息'))}</span>
+    <span class="day-label">${escapeHtml(day.title || (day.is_training ? '训练' : '恢复'))}</span>
   </div>`;
 }
 
@@ -142,14 +157,14 @@ function buildLatestLogMap(logs) {
 async function loadHealth() {
   const target = $('health');
   target.className = 'status pending';
-  target.textContent = 'API 检测中';
+  target.textContent = '正在检测';
   try {
-    const data = await api('/api/health');
+    await api('/api/health');
     target.className = 'status ok';
-    target.textContent = `API 正常：${data.status}`;
+    target.textContent = '后端正常';
   } catch (error) {
     target.className = 'status error';
-    target.textContent = `API 异常：${error.message}`;
+    target.textContent = `后端异常：${error.message}`;
     throw error;
   }
 }
@@ -164,12 +179,12 @@ async function loadToday() {
 
 async function loadWeek() {
   const data = await api(`/api/plans/week?date=${isoToday}`);
-  $('weekPlan').innerHTML = (data.days || []).map(renderWeekDay).join('') || '<div class="empty-state">暂无周计划</div>';
+  $('weekPlan').innerHTML = (data.days || []).map(renderWeekDay).join('') || '<div class="empty-state">暂无本周计划</div>';
 }
 
 async function loadMonth() {
   const data = await api(`/api/plans/month?year=${year}&month=${month}`);
-  $('monthPlan').innerHTML = (data.days || []).map(renderMonthRow).join('') || '<div class="empty-state">暂无月计划</div>';
+  $('monthPlan').innerHTML = (data.days || []).map(renderMonthRow).join('') || '<div class="empty-state">暂无本月计划</div>';
 }
 
 async function loadCalendar() {
@@ -189,10 +204,10 @@ async function loadSettings() {
   const settings = data.settings || {};
   const reminders = data.reminders || [];
   $('settings').innerHTML = `
-    <strong>settings</strong>
+    <strong>设置项</strong>
     ${Object.keys(settings).length ? Object.entries(settings).map(([k, v]) => `<div>${escapeHtml(k)} = ${escapeHtml(v)}</div>`).join('') : '<div>暂无设置</div>'}
-    <strong>reminders</strong>
-    ${reminders.length ? reminders.map((r) => `<div>#${r.id} ${escapeHtml(r.reminder_date)} ${escapeHtml(r.message)} enabled=${r.enabled}</div>`).join('') : '<div>暂无提醒</div>'}
+    <strong>本地提醒</strong>
+    ${reminders.length ? reminders.map((r) => `<div>#${r.id} ${escapeHtml(r.reminder_date)} ${escapeHtml(r.message)} 状态=${r.enabled ? '启用' : '停用'}</div>`).join('') : '<div>暂无提醒</div>'}
   `;
 }
 
@@ -202,9 +217,9 @@ async function loadLogs() {
   buildLatestLogMap(logs);
   $('logs').innerHTML = logs.slice(0, 20).map((log) => (
     `<div class="log-row ${escapeHtml(log.status || '')}">
-      <strong>#${log.id}</strong>
+      <strong>记录 #${log.id}</strong>
       <span>${badge(log.status || 'rest')}</span>
-      <span>plan=${log.plan_id} · ${escapeHtml(log.created_at || '')} ${escapeHtml(log.notes || '')}</span>
+      <span>计划 ${log.plan_id} · ${escapeHtml(log.created_at || '')} ${escapeHtml(log.notes || '')}</span>
     </div>`
   )).join('') || '<div class="empty-state">暂无日志</div>';
 }
@@ -235,7 +250,7 @@ $('skipBtn').addEventListener('click', () => postAction('skip').catch(console.er
 $('postponeBtn').addEventListener('click', () => postAction('postpone').catch(console.error));
 $('saveSetting').addEventListener('click', async () => {
   const key = $('settingKey').value.trim();
-  if (!key) return alert('请输入 setting key');
+  if (!key) return alert('请输入设置项名称');
   await api('/api/settings', {
     method: 'POST',
     body: JSON.stringify({ key, value: $('settingValue').value }),
@@ -244,7 +259,7 @@ $('saveSetting').addEventListener('click', async () => {
 });
 $('testReminder').addEventListener('click', async () => {
   if (!todayPlan?.id || !todayPlan?.is_training) {
-    $('reminderResult').textContent = '今天不是训练日或没有计划，不创建钉钉提醒/代办。';
+    $('reminderResult').textContent = '今天不是训练日或没有计划，不创建钉钉提醒。';
     return;
   }
   const [reminder, todo] = await Promise.all([
@@ -257,7 +272,7 @@ $('testReminder').addEventListener('click', async () => {
       body: JSON.stringify({ plan_id: todayPlan.id }),
     }),
   ]);
-  $('reminderResult').textContent = JSON.stringify({ dingtalk_reminder: reminder, dingtalk_todo: todo }, null, 2);
+  $('reminderResult').textContent = JSON.stringify({ 钉钉群消息: reminder, 钉钉个人待办: todo }, null, 2);
 });
 
 refreshAll().catch((error) => console.error('初始化失败', error));
