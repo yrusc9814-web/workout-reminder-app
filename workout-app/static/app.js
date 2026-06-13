@@ -118,11 +118,18 @@ function renderPlan(day) {
 function renderWeekDay(day) {
   const status = latestStatusForPlan(day);
   const itemCount = (day.items || []).length;
+  const actionPreview = day.is_training ? (day.items || []).slice(0, 3).map((item) => `
+    <div class="week-action">
+      <span>${escapeHtml(item.name)}</span>
+      ${item.video_url ? `<a href="${escapeHtml(item.video_url)}" target="_blank" rel="noopener noreferrer">Bilibili</a>` : ''}
+    </div>
+  `).join('') : '';
   return `<article class="week-day ${planBaseClass(day)} ${status}">
     <div class="week-date">${escapeHtml(day.date)}</div>
     ${badge(status)}
     <div class="week-title">${escapeHtml(day.title || (day.is_training ? '训练日' : '恢复日'))}</div>
     <div class="week-items">${day.is_training ? `${itemCount} 个动作 · 视频已配齐` : '恢复 / 轻量活动'}</div>
+    ${actionPreview ? `<div class="week-actions">${actionPreview}</div>` : ''}
   </article>`;
 }
 
