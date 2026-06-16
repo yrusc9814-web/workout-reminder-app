@@ -3,142 +3,162 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>运动提醒 App</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260613-startup-fix" />
+  <title>运动提醒 App｜运动训练计划管理</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260615-planner-v1" />
 </head>
 <body>
   <div class="ambient ambient-one"></div>
   <div class="ambient ambient-two"></div>
-  <div class="app-shell">
-    <header class="hero dashboard-hero">
-      <div class="hero-copy">
-        <p class="eyebrow">本地训练面板</p>
-        <h1>运动提醒 App</h1>
-        <p class="hero-subtitle">每天打开就知道今天练不练、练什么、怎么练。训练动作和 Bilibili 视频入口集中展示，钉钉群消息提醒保留真实发送链路。</p>
-        <div class="hero-tags" aria-label="训练安排摘要">
-          <span>每周一 / 三 / 五训练</span>
-          <span>髋部稳定</span>
-          <span>核心控制</span>
+  <div class="planner-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand-block">
+        <span class="brand-mark">动</span>
+        <div>
+          <strong>运动提醒 App</strong>
+          <small>本地模式 · LocalStorage</small>
         </div>
       </div>
-      <div class="hero-panel" aria-label="服务状态">
-        <span class="hero-panel-label">服务状态</span>
-        <div id="health" class="status pending">正在检测</div>
-        <button id="refreshAll" class="btn primary" type="button">刷新面板</button>
+      <nav class="nav-list" id="navList">
+        <button class="nav-item active" data-page="dashboard" type="button">仪表盘</button>
+        <button class="nav-item" data-page="today" type="button">今日训练</button>
+        <button class="nav-item" data-page="week" type="button">周计划</button>
+        <button class="nav-item" data-page="month" type="button">月计划</button>
+        <button class="nav-item" data-page="exerciseLibrary" type="button">动作库</button>
+        <button class="nav-item" data-page="templateManager" type="button">训练模板</button>
+        <button class="nav-item" data-page="videoLinks" type="button">视频链接</button>
+        <button class="nav-item" data-page="settings" type="button">设置</button>
+      </nav>
+      <div class="ai-panel">
+        <button class="ai-button" data-ai-disabled type="button">AI 辅助导入 <span>第二阶段开放</span></button>
+        <button class="ai-button" data-ai-disabled type="button">AI 搜索视频 <span>第二阶段开放</span></button>
       </div>
-    </header>
+      <div class="local-status">
+        <span>本地数据已连接</span>
+        <strong id="storageUsage">计算中</strong>
+        <small>数据保存在本机</small>
+      </div>
+    </aside>
 
-    <main class="dashboard-grid">
-      <section class="card today-card" aria-labelledby="todayTitle">
-        <div class="section-head">
-          <div>
-            <p class="section-kicker">今日重点</p>
-            <h2 id="todayTitle">今日训练</h2>
-          </div>
-          <span id="todayDate" class="pill neutral"></span>
+    <main class="main-panel">
+      <header class="topbar glass-card">
+        <div>
+          <p class="eyebrow">本地模式 · 数据仅保存在当前电脑 · 支持 JSON 导入 / 导出</p>
+          <h1>运动提醒 App · 运动训练计划管理</h1>
         </div>
-        <div id="todayPlan" class="today-plan content-block"></div>
-        <div class="action-panel" aria-label="今日计划操作">
-          <button id="completeBtn" class="btn success" type="button">完成训练</button>
-          <button id="skipBtn" class="btn warning" type="button">今天跳过</button>
-          <button id="postponeBtn" class="btn secondary" type="button">延期处理</button>
+        <div class="top-actions">
+          <span id="health" class="status-pill pending">服务检测中</span>
+          <button id="openImportExport" class="btn secondary" type="button">导入 / 导出</button>
+          <button id="startTodayTop" class="btn primary" type="button">开始今日训练</button>
         </div>
-        <label class="note-label">操作备注
-          <input id="actionNotes" placeholder="可选，例如：今天状态不错" />
-        </label>
+      </header>
+
+      <section class="page active" data-page-panel="dashboard">
+        <div class="dashboard-grid">
+          <article class="hero-card glass-card" id="dashboardToday"></article>
+          <aside class="stack">
+            <section class="glass-card compact-card">
+              <div class="section-head"><h2>月度统计</h2><span id="monthLabel"></span></div>
+              <div id="stats" class="metric-grid"></div>
+            </section>
+            <section class="glass-card compact-card">
+              <div class="section-head"><h2>今日相关视频</h2></div>
+              <div id="todayVideos" class="video-list"></div>
+            </section>
+          </aside>
+          <section class="glass-card wide-card">
+            <div class="section-head"><h2>本周训练路线</h2><button class="text-btn" data-page-link="week" type="button">查看周计划</button></div>
+            <div id="weekRoute" class="week-route"></div>
+          </section>
+          <section class="glass-card wide-card">
+            <div class="section-head"><h2>月度训练计划</h2><div><button id="prevMonth" class="ghost-btn" type="button">上一月</button><button id="nextMonth" class="ghost-btn" type="button">下一月</button></div></div>
+            <div id="monthCalendar" class="calendar-grid"></div>
+          </section>
+        </div>
       </section>
 
-      <aside class="side-stack" aria-label="统计和设置">
-        <section class="card stats-card" aria-labelledby="statsTitle">
-          <div class="section-head compact-head">
-            <div>
-              <p class="section-kicker">进度概览</p>
-              <h2 id="statsTitle">训练统计</h2>
-            </div>
-          </div>
-          <div id="stats" class="stats metric-grid"></div>
+      <section class="page" data-page-panel="today">
+        <div class="two-column">
+          <article class="glass-card" id="todayDetail"></article>
+          <aside class="glass-card">
+            <div class="section-head"><h2>今日相关视频</h2></div>
+            <div id="todayVideoDetail" class="video-list"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page" data-page-panel="week">
+        <section class="glass-card">
+          <div class="section-head"><h2>本周计划</h2><span class="legend"><i class="dot training"></i>训练日 <i class="dot rest"></i>休息日</span></div>
+          <div id="weekPlan" class="week-editor"></div>
         </section>
+      </section>
 
-        <section class="card settings-card" aria-labelledby="settingsTitle">
-          <div class="section-head compact-head">
-            <div>
-              <p class="section-kicker">本地配置</p>
-              <h2 id="settingsTitle">提醒设置</h2>
-            </div>
-          </div>
-          <div id="settings" class="content-block settings-block"></div>
-          <div class="form-row stacked">
-            <input id="settingKey" placeholder="设置项，例如 reminder_time" />
-            <input id="settingValue" placeholder="设置值，例如 07:30" />
-            <button id="saveSetting" class="btn primary full" type="button">保存设置</button>
-          </div>
+      <section class="page" data-page-panel="month">
+        <section class="glass-card">
+          <div class="section-head"><h2>月计划</h2><div><button id="prevMonthPage" class="ghost-btn" type="button">上一月</button><button id="nextMonthPage" class="ghost-btn" type="button">下一月</button></div></div>
+          <div id="monthStats" class="metric-grid slim"></div>
+          <div id="monthCalendarPage" class="calendar-grid large"></div>
         </section>
-      </aside>
-
-      <section class="card wide" aria-labelledby="weekTitle">
-        <div class="section-head">
-          <div>
-            <p class="section-kicker">一周安排</p>
-            <h2 id="weekTitle">本周计划</h2>
-          </div>
-          <span class="legend"><i class="dot training-dot"></i>训练日 <i class="dot rest-dot"></i>恢复日</span>
-        </div>
-        <div id="weekPlan" class="week-list"></div>
       </section>
 
-      <section class="card wide" aria-labelledby="calendarTitle">
-        <div class="section-head">
-          <div>
-            <p class="section-kicker">月度视图</p>
-            <h2 id="calendarTitle">训练月历</h2>
+      <section class="page" data-page-panel="exerciseLibrary">
+        <section class="glass-card">
+          <div class="section-head wrap">
+            <div><h2>动作库</h2><p>动作是数据源，视频必须绑定在动作上。</p></div>
+            <div class="toolbar"><input id="exerciseSearch" placeholder="搜索动作" /><select id="exerciseFilter"><option value="all">全部</option></select><button id="addExercise" class="btn primary" type="button">+ 新增动作</button></div>
           </div>
-          <span class="legend"><i class="dot done-dot"></i>已完成 <i class="dot skipped-dot"></i>已跳过 <i class="dot postponed-dot"></i>已延期</span>
-        </div>
-        <div id="calendar" class="calendar"></div>
+          <div id="exerciseList" class="card-list"></div>
+        </section>
       </section>
 
-      <section class="card wide" aria-labelledby="monthTitle">
-        <div class="section-head">
-          <div>
-            <p class="section-kicker">完整清单</p>
-            <h2 id="monthTitle">本月计划</h2>
-          </div>
-        </div>
-        <div id="monthPlan" class="month-list compact"></div>
+      <section class="page" data-page-panel="templateManager">
+        <section class="glass-card">
+          <div class="section-head"><h2>训练模板</h2><button id="addTemplate" class="btn primary" type="button">+ 新建模板</button></div>
+          <div id="templateList" class="template-grid"></div>
+        </section>
       </section>
 
-      <section class="card wide reminder-card" aria-labelledby="reminderTitleText">
-        <div class="section-head">
-          <div>
-            <p class="section-kicker">钉钉链路</p>
-            <h2 id="reminderTitleText">提醒发送验收</h2>
-          </div>
-        </div>
-        <p class="info-box">点击后调用真实钉钉群消息提醒接口；若凭据缺失会显示未配置，不会把模拟结果伪装成成功。个人待办权限不可用时会显示清晰状态。</p>
-        <div class="form-row reminder-row">
-          <input id="reminderTitle" placeholder="提醒标题" value="运动训练提醒" />
-          <input id="reminderMessage" placeholder="提醒内容" value="请查看今日训练动作和视频链接" />
-          <button id="testReminder" class="btn secondary" type="button">发送钉钉提醒</button>
-        </div>
-        <pre id="reminderResult"></pre>
+      <section class="page" data-page-panel="videoLinks">
+        <section class="glass-card">
+          <div class="section-head"><h2>视频链接</h2><p>默认视频跟随动作，训练执行页同步刷新。</p></div>
+          <div id="videoLinkList" class="video-list expanded"></div>
+        </section>
       </section>
 
-      <section class="card wide" aria-labelledby="logsTitle">
-        <div class="section-head">
-          <div>
-            <p class="section-kicker">操作记录</p>
-            <h2 id="logsTitle">最近日志</h2>
-          </div>
+      <section class="page" data-page-panel="settings">
+        <div class="two-column">
+          <section class="glass-card">
+            <div class="section-head"><h2>JSON 导入 / 导出</h2></div>
+            <div class="settings-actions">
+              <button id="exportJson" class="btn primary" type="button">导出 JSON</button>
+              <button id="openImport" class="btn secondary" type="button">导入 JSON</button>
+              <button id="resetLocalData" class="btn warning" type="button">重置为默认数据</button>
+            </div>
+            <textarea id="jsonBox" placeholder="导出的 JSON 或待导入 JSON"></textarea>
+            <div id="importPreview" class="info-box"></div>
+          </section>
+          <section class="glass-card">
+            <div class="section-head"><h2>钉钉提醒验收</h2></div>
+            <p class="info-box">保留真实钉钉接口。缺凭据时显示未配置，不把 mock 当成功。</p>
+            <button id="sendDingTalk" class="btn secondary" type="button">发送今日钉钉提醒</button>
+            <pre id="reminderResult"></pre>
+          </section>
         </div>
-        <div id="logs" class="log-list compact"></div>
+      </section>
+
+      <section class="page" data-page-panel="trainingSession">
+        <section class="training-layout glass-card">
+          <div id="trainingSession"></div>
+        </section>
       </section>
     </main>
-
-    <footer class="api-footer">
-      <span>本页已调用接口：</span><code id="apiCalls"></code>
-    </footer>
   </div>
 
-  <script src="/static/app.js?v=20260613-startup-fix"></script>
+  <dialog id="exerciseDialog" class="modal"><form method="dialog" id="exerciseForm" class="modal-form"></form></dialog>
+  <dialog id="templateDialog" class="modal"><form method="dialog" id="templateForm" class="modal-form"></form></dialog>
+  <dialog id="planDialog" class="modal"><form method="dialog" id="planForm" class="modal-form"></form></dialog>
+  <dialog id="videoDialog" class="modal"><form method="dialog" id="videoForm" class="modal-form"></form></dialog>
+
+  <script src="/static/app.js?v=20260615-planner-v1"></script>
 </body>
 </html>
