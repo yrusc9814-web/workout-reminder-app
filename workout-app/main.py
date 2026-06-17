@@ -18,8 +18,10 @@ from sqlalchemy.orm import Session
 
 from database import (
     Base,
+    Exercise,
     Reminder,
     Setting,
+    Template,
     WorkoutLog,
     WorkoutPlan,
     engine,
@@ -559,6 +561,231 @@ def create_dingtalk_todo(payload: DingTalkPayload, db: Session = Depends(get_db)
         "permission": permission,
         "payload": todo_payload,
     }
+
+
+# ── Exercise Library CRUD ──────────────────────────────────────────────────
+
+class ExercisePayload(BaseModel):
+    name: str
+    category: str = ""
+    body_parts: str = ""
+    difficulty: str = "低"
+    default_sets: int = 3
+    default_reps: str | None = None
+    duration_seconds: int | None = None
+    notes: str | None = None
+    tips: str | None = None
+    video_url: str | None = None
+
+
+def exercise_to_dict(ex: Exercise) -> dict:
+    return {
+        "id": ex.id,
+        "name": ex.name,
+        "category": ex.category,
+        "body_parts": ex.body_parts,
+        "difficulty": ex.difficulty,
+        "default_sets": ex.default_sets,
+        "default_reps": ex.default_reps,
+        "duration_seconds": ex.duration_seconds,
+        "notes": ex.notes,
+        "tips": ex.tips,
+        "video_url": ex.video_url,
+    }
+
+
+@app.get("/api/exercises")
+def list_exercises(db: Session = Depends(get_db)) -> dict:
+    rows = db.query(Exercise).order_by(Exercise.name.asc()).all()
+    return {"exercises": [exercise_to_dict(r) for r in rows]}
+
+
+@app.get("/api/exercises/{exercise_id}")
+def get_exercise(exercise_id: int, db: Session = Depends(get_db)) -> dict:
+    ex = db.query(Exercise).filter(Exercise.id == exercise_id).first()
+    if not ex:
+        raise HTTPException(status_code=404, detail="动作不存在")
+    return exercise_to_dict(ex)
+
+
+@app.post("/api/exercises", status_code=201)
+def create_exercise(payload: ExercisePayload, db: Session = Depends(get_db)) -> dict:
+    ex = Exercise(**payload.model_dump())
+    db.add(ex)
+    db.commit()
+    db.refresh(ex)
+    return exercise_to_dict(ex)
+
+
+@app.put("/api/exercises/{exercise_id}")
+def update_exercise(exercise_id: int, payload: ExercisePayload, db: Session = Depends(get_db)) -> dict:
+    ex = db.query(Exercise).filter(Exercise.id == exercise_id).first()
+    if not ex:
+        raise HTTPException(status_code=404, detail="动作不存在")
+    for key, value in payload.model_dump().items():
+        setattr(ex, key, value)
+    db.commit()
+    db.refresh(ex)
+    return exercise_to_dict(ex)
+
+
+@app.delete("/api/exercises/{exercise_id}")
+def delete_exercise(exercise_id: int, db: Session = Depends(get_db)) -> dict:
+    ex = db.query(Exercise).filter(Exercise.id == exercise_id).first()
+    if not ex:
+        raise HTTPException(status_code=404, detail="动作不存在")
+    db.delete(ex)
+    db.commit()
+    return {"status": "deleted", "id": exercise_id}
+
+
+# ── Template CRUD ──────────────────────────────────────────────────────────
+
+class TemplatePayload(BaseModel):
+    name: str
+    description: str | None = None
+    difficulty: str = "低强度"
+    estimated_minutes: int = 30
+    exercise_ids: list[int] = []
+
+
+def template_to_dict(tmpl: Template) -> dict:
+    return {
+        "id": tmpl.id,
+        "name": tmpl.name,
+        "description": tmpl.description,
+        "difficulty": tmpl.difficulty,
+        "estimated_minutes": tmpl.estimated_minutes,
+        "exercises": [exercise_to_dict(ex) for ex in tmpl.exercises],
+    }
+
+
+@app.get("/api/templates")
+def list_templates(db: Session = Depends(get_db)) -> dict:
+    rows = db.query(Template).order_by(Template.name.asc()).all()
+    return {"templates": [template_to_dict(r) for r in rows]}
+
+
+@app.get("/api/templates/{template_id}")
+def get_template(template_id: int, db: Session = Depends(get_db)) -> dict:
+    tmpl = db.query(Template).filter(Template.id == template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    return template_to_dict(tmpl)
+
+
+@app.post("/api/templates", status_code=201)
+def create_template(payload: TemplatePayload, db: Session = Depends(get_db)) -> dict:
+    tmpl = Template(
+        name=payload.name,
+        description=payload.description,
+        difficulty=payload.difficulty,
+        estimated_minutes=payload.estimated_minutes,
+    )
+    db.add(tmpl)
+    db.flush()
+    if payload.exercise_ids:
+        exercises = db.query(Exercise).filter(Exercise.id.in_(payload.exercise_ids)).all()
+        tmpl.exercises = exercises
+    db.commit()
+    db.refresh(tmpl)
+    return template_to_dict(tmpl)
+
+
+@app.put("/api/templates/{template_id}")
+def update_template(template_id: int, payload: TemplatePayload, db: Session = Depends(get_db)) -> dict:
+    tmpl = db.query(Template).filter(Template.id == template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    tmpl.name = payload.name
+    tmpl.description = payload.description
+    tmpl.difficulty = payload.difficulty
+    tmpl.estimated_minutes = payload.estimated_minutes
+    if payload.exercise_ids is not None:
+        exercises = db.query(Exercise).filter(Exercise.id.in_(payload.exercise_ids)).all()
+        tmpl.exercises = exercises
+    db.commit()
+    db.refresh(tmpl)
+    return template_to_dict(tmpl)
+
+
+@app.delete("/api/templates/{template_id}")
+def delete_template(template_id: int, db: Session = Depends(get_db)) -> dict:
+    tmpl = db.query(Template).filter(Template.id == template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    db.delete(tmpl)
+    db.commit()
+    return {"status": "deleted", "id": template_id}
+
+
+# ── Training Completion ────────────────────────────────────────────────────
+
+class TrainingCompletePayload(BaseModel):
+    date: str
+    template_id: int | None = None
+    completed: list[str] = []
+    skipped: list[str] = []
+    status: str = "done"
+    notes: str | None = None
+
+
+@app.post("/api/training/complete")
+def training_complete(payload: TrainingCompletePayload, db: Session = Depends(get_db)) -> dict:
+    """Record training session completion. Links to backend plan if one exists."""
+    from datetime import date as dt_date
+    try:
+        plan_date = dt_date.fromisoformat(payload.date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="日期格式错误") from exc
+
+    plan = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == plan_date).first()
+    plan_id = plan.id if plan else None
+
+    log = WorkoutLog(
+        plan_id=plan_id,
+        log_date=plan_date,
+        action="completed" if payload.status == "done" else "skipped",
+        status="completed" if payload.status == "done" else "skipped",
+        notes=payload.notes or f"训练完成，完成{len(payload.completed)}个动作，跳过{len(payload.skipped)}个动作",
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return {
+        "status": "recorded",
+        "plan_id": plan_id,
+        "log_id": log.id,
+        "completed": payload.completed,
+        "skipped": payload.skipped,
+    }
+
+
+# ── Plan Edit ──────────────────────────────────────────────────────────────
+
+class PlanUpdatePayload(BaseModel):
+    title: str | None = None
+    is_training_day: bool | None = None
+    focus: str | None = None
+    notes: str | None = None
+
+
+@app.put("/api/plans/{plan_id}")
+def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(get_db)) -> dict:
+    plan = db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="计划不存在")
+    if payload.title is not None:
+        plan.title = payload.title
+    if payload.is_training_day is not None:
+        plan.is_training_day = payload.is_training_day
+    if payload.focus is not None:
+        plan.focus = payload.focus
+    if payload.notes is not None:
+        plan.notes = payload.notes
+    db.commit()
+    db.refresh(plan)
+    return plan_item(plan, plan.plan_date)
 
 
 # ---------------------------------------------------------------------------

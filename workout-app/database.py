@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
     create_engine,
@@ -75,6 +76,53 @@ class WorkoutExercise(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     plan = relationship("WorkoutPlan", back_populates="exercises")
+
+
+# ── Exercise library (standalone) ──────────────────────────────────────────
+
+template_exercises = Table(
+    "template_exercises", Base.metadata,
+    Column("template_id", Integer, ForeignKey("templates.id", ondelete="CASCADE"), primary_key=True),
+    Column("exercise_id", Integer, ForeignKey("exercises.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Exercise(Base):
+    """Standalone exercise library — the canonical list of all exercises."""
+    __tablename__ = "exercises"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(140), nullable=False, index=True)
+    category = Column(String(80), nullable=False, default="")
+    body_parts = Column(String(240), nullable=False, default="")
+    difficulty = Column(String(20), nullable=False, default="低")
+    default_sets = Column(Integer, nullable=False, default=3)
+    default_reps = Column(String(20), nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    notes = Column(Text, nullable=True)
+    tips = Column(Text, nullable=True)
+    video_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class Template(Base):
+    """Training template — groups exercises into a named routine."""
+    __tablename__ = "templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(140), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    difficulty = Column(String(20), nullable=False, default="低强度")
+    estimated_minutes = Column(Integer, nullable=False, default=30)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    exercises = relationship(
+        "Exercise",
+        secondary=template_exercises,
+        lazy="selectin",
+    )
 
 
 class WorkoutLog(Base):
@@ -278,6 +326,42 @@ def _seed_plan(db, plan_date, is_training_day):
         exercise.video_url = item["video_url"]
 
 
+SEED_EXERCISES = [
+    {"name": "仰卧骨盆时钟", "category": "核心控制", "body_parts": "核心", "difficulty": "低", "default_sets": 1, "default_reps": None, "duration_seconds": 180, "notes": "仰卧屈膝，想象骨盆是一只时钟，缓慢做前后、左右和绕圈倾斜", "tips": "慢一点|不要憋气|感受骨盆微动", "video_url": "https://www.bilibili.com/video/BV1X625B5EWd/"},
+    {"name": "支撑臀桥停留", "category": "髋部稳定", "body_parts": "臀部,核心", "difficulty": "低", "default_sets": 2, "default_reps": None, "duration_seconds": 20, "notes": "脚掌踩稳，轻轻抬起髋部并短暂停留", "tips": "不顶腰|保持呼吸|收紧臀部", "video_url": "https://www.bilibili.com/video/BV1Jg4y1z7Nm/"},
+    {"name": "侧卧髋外展", "category": "髋部稳定", "body_parts": "臀部,腿部", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "侧卧保持骨盆稳定，小幅抬起上侧腿", "tips": "骨盆稳定|节奏放慢", "video_url": "https://www.bilibili.com/video/BV1No4y1h7NH/"},
+    {"name": "死虫式脚跟点地", "category": "核心控制", "body_parts": "核心", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "仰卧收紧核心，左右交替让脚跟轻点地面", "tips": "腰背贴地|均匀呼吸", "video_url": "https://www.bilibili.com/video/BV1Bu411V7rW/"},
+    {"name": "坐姿抬腿", "category": "髋部稳定", "body_parts": "髋部,核心", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "坐稳后左右交替抬膝，躯干保持安静", "tips": "不耸肩|不后仰", "video_url": "https://www.bilibili.com/video/BV1Rv4y1d7XM/"},
+]
+
+SEED_TEMPLATES = [
+    {"name": "髋部稳定与核心控制", "description": "专注核心稳定与髋部控制，适合日常训练与康复巩固。", "difficulty": "低强度", "estimated_minutes": 35, "exercise_names": ["仰卧骨盆时钟", "支撑臀桥停留", "侧卧髋外展", "死虫式脚跟点地", "坐姿抬腿"]},
+]
+
+
+def _seed_exercise_library(db):
+    """Seed the standalone exercise library and templates if empty."""
+    if db.query(Exercise).count() > 0:
+        return
+    for item in SEED_EXERCISES:
+        ex = Exercise(**item)
+        db.add(ex)
+    db.flush()
+
+    name_map = {ex.name: ex for ex in db.query(Exercise).all()}
+    for tdata in SEED_TEMPLATES:
+        tmpl = Template(
+            name=tdata["name"],
+            description=tdata["description"],
+            difficulty=tdata["difficulty"],
+            estimated_minutes=tdata["estimated_minutes"],
+        )
+        db.add(tmpl)
+        db.flush()
+        enames = tdata["exercise_names"]
+        tmpl.exercises = [name_map[n] for n in enames if n in name_map]
+
+
 def seed_database():
     db = SessionLocal()
     try:
@@ -285,6 +369,8 @@ def seed_database():
             for day in range(1, monthrange(year, month)[1] + 1):
                 plan_date = date(year, month, day)
                 _seed_plan(db, plan_date, plan_date in TRAINING_DATES)
+
+        _seed_exercise_library(db)
 
         setting = db.query(Setting).filter(Setting.key == "seed_month").one_or_none()
         if setting is None:

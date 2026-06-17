@@ -170,6 +170,48 @@ pre { white-space: pre-wrap; word-break: break-word; padding: 14px; border-radiu
 .rest-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
 .empty-state, .info-box { padding: 15px; border-radius: 18px; background: rgba(255,255,255,.58); border: 1px solid var(--line); }
 
+/* ── 进度条 ───────────────────────────────────────────── */
+.progress-track { position: relative; height: 28px; background: rgba(37,99,235,.08); border-radius: 999px; margin: 12px 0; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--primary), #22c55e); border-radius: 999px; transition: width .4s ease; }
+.progress-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.25); }
+
+/* ── 管理网格 ──────────────────────────────────────────── */
+.management-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.manage-card { display: flex; gap: 12px; align-items: flex-start; padding: 16px; border-radius: 22px; background: rgba(255,255,255,.66); border: 1px solid var(--line); cursor: pointer; transition: .18s ease; }
+.manage-card:hover { background: rgba(37,99,235,.06); border-color: rgba(37,99,235,.2); }
+.manage-icon { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; background: linear-gradient(135deg, var(--primary), #22c55e); color: #fff; font-weight: 900; font-size: 18px; flex-shrink: 0; }
+.manage-card h3 { margin: 0 0 4px; font-size: 15px; }
+.manage-card p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.manage-stat { display: inline-block; margin-top: 6px; padding: 4px 8px; border-radius: 8px; background: rgba(37,99,235,.08); color: var(--primary-dark); font-size: 12px; font-weight: 700; }
+
+/* ── 动作组次徽标 ───────────────────────────────────────── */
+.set-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.set-badge { padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 700; background: rgba(148,163,184,.14); color: var(--muted); }
+.set-badge.set-current { background: var(--primary); color: #fff; box-shadow: 0 4px 10px rgba(37,99,235,.25); }
+.set-badge.set-complete { background: rgba(22,163,74,.14); color: #15803d; }
+
+/* ── 训练摘要 ───────────────────────────────────────────── */
+.session-summary { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 16px; padding: 14px; border-radius: 18px; background: rgba(255,255,255,.58); border: 1px solid var(--line); }
+.session-summary strong { font-size: 14px; }
+.session-summary span { color: var(--muted); font-size: 13px; }
+
+#trainingSummaryBanner { display: none; }
+.summary-banner-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 18px; border-radius: 18px; background: linear-gradient(135deg, rgba(22,163,74,.10), rgba(37,99,235,.06)); border: 1px solid rgba(22,163,74,.2); margin-bottom: 12px; }
+.summary-banner-inner strong { font-size: 15px; }
+.summary-banner-inner span { font-size: 13px; color: var(--muted); }
+
+/* ── 完成日状态 ─────────────────────────────────────────── */
+.week-card.completed { border-color: rgba(22,163,74,.35); background: rgba(22,163,74,.06); }
+.week-card.completed em { color: #15803d; }
+.calendar-day.completed { border-color: rgba(22,163,74,.35); background: rgba(22,163,74,.06); }
+.calendar-day.completed em { color: #15803d; }
+
+/* ── 导入模板预览 ───────────────────────────────────────── */
+.import-template-preview { display: grid; gap: 4px; padding: 12px; border-radius: 14px; background: rgba(255,255,255,.5); border: 1px solid var(--line); margin: 6px 0; }
+.import-template-preview strong { font-size: 14px; }
+.import-template-preview span { font-size: 13px; color: var(--muted); }
+.import-template-preview em { font-style: normal; font-size: 12px; color: var(--primary-dark); }
+
 @media (max-width: 1120px) {
   .planner-shell { grid-template-columns: 1fr; }
   .sidebar { position: relative; height: auto; }

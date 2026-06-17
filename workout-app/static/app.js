@@ -14,6 +14,12 @@ const BACKEND_ENDPOINT_CONTRACT = [
   '/api/logs/${action}',
   '/api/reminders/dingtalk/send',
   '/api/todos/dingtalk/create',
+  '/api/exercises',
+  '/api/exercises/${exercise_id}',
+  '/api/templates',
+  '/api/templates/${template_id}',
+  '/api/training/complete',
+  '/api/plans/${plan_id}',
 ];
 const $ = (id) => document.getElementById(id);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -118,6 +124,15 @@ function todayPlan() { return planFor(isoToday); }
 function todayTemplate() { const plan = todayPlan(); return plan?.type === 'training' ? templateById(plan.templateId) : null; }
 function statusText(status) { return { pending: '待开始', done: '已完成', skipped: '已跳过', partial: '未完成', rest: '休息日' }[status] || status || '待开始'; }
 
+function validateBilibiliUrl(url) {
+  if (!url || typeof url !== 'string') return { valid: false, error: '请输入视频链接' };
+  const trimmed = url.trim();
+  if (/^https?:\/\/(www\.)?bilibili\.com\/video\//.test(trimmed)) return { valid: true, error: null };
+  if (/^https?:\/\/b23\.tv\//.test(trimmed)) return { valid: true, error: null };
+  if (/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//.test(trimmed)) return { valid: false, error: '不支持 YouTube 链接，请使用 Bilibili 链接' };
+  return { valid: false, error: '仅支持 Bilibili 链接（bilibili.com/video/ 或 b23.tv）' };
+}
+
 function updateStorageUsage() {
   const bytes = new Blob([localStorage.getItem(STORAGE_KEY) || '']).size;
   $('storageUsage').textContent = `${(bytes / 1024).toFixed(1)} KB / 5 MB`;
@@ -190,7 +205,7 @@ function renderWeek() {
     const plan = planFor(date) || { type: 'rest', status: 'pending', note: '休息恢复' };
     const template = templateById(plan.templateId);
     const isToday = date === isoToday;
-    return `<article class="week-card ${plan.type} ${isToday ? 'today' : ''}" data-edit-plan="${date}"><span>${date}</span><strong>${isToday ? '今日 · ' : ''}${plan.type === 'training' ? escapeHtml(template?.name || '模板丢失') : '休息恢复'}</strong><em>${plan.type === 'training' ? '训练' : '休息'} · ${statusText(plan.status)}</em></article>`;
+    return `<article class="week-card ${plan.type} ${plan.status === 'done' ? 'completed' : ''} ${isToday ? 'today' : ''}" data-edit-plan="${date}"><span>${date}</span><strong>${isToday ? '今日 · ' : ''}${plan.type === 'training' ? escapeHtml(template?.name || '模板丢失') : '休息恢复'}</strong><em>${plan.type === 'training' ? '训练' : '休息'} · ${statusText(plan.status)}</em></article>`;
   }).join('');
   $('weekRoute').innerHTML = html;
   $('weekPlan').innerHTML = html;
@@ -208,7 +223,8 @@ function renderCalendar(targetId) {
     const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const plan = planFor(date) || { type: 'rest', status: 'pending' };
     const template = templateById(plan.templateId);
-    cells.push(`<button class="calendar-day ${plan.type} ${date === isoToday ? 'today' : ''}" data-edit-plan="${date}" type="button"><span>${day}</span><i>${plan.type === 'training' ? escapeHtml(template?.name || '训练') : '休息'}</i><em>${statusText(plan.status)}</em></button>`);
+    const extraClass = plan.status === 'done' ? ' completed' : '';
+    cells.push(`<button class="calendar-day ${plan.type}${extraClass} ${date === isoToday ? 'today' : ''}" data-edit-plan="${date}" type="button"><span>${day}</span><i>${plan.type === 'training' ? escapeHtml(template?.name || '训练') : '休息'}</i><em>${statusText(plan.status)}</em></button>`);
   }
   $(targetId).innerHTML = cells.join('');
 }
@@ -239,6 +255,12 @@ function renderVideoLinks() {
   }).join('');
 }
 
+function renderDashboardManagement() {
+  const target = $('dashboardManagement');
+  if (!target) return;
+  target.innerHTML = `<article class="manage-card" data-page-link="exerciseLibrary"><div class="manage-icon">动</div><div><h3>动作库管理</h3><p>新增、编辑、删除训练动作，管理 Bilibili 视频链接</p><span class="manage-stat">${state.exercises.length} 个动作</span></div></article><article class="manage-card" data-page-link="templateManager"><div class="manage-icon">模</div><div><h3>训练模板管理</h3><p>创建、编辑、删除训练模板，组合动作序列</p><span class="manage-stat">${state.templates.length} 个模板</span></div></article><article class="manage-card" data-page-link="week"><div class="manage-icon">计</div><div><h3>训练计划管理</h3><p>编辑每日计划类型、模板和状态</p><span class="manage-stat">${Object.keys(state.schedule).length} 天计划</span></div></article><article class="manage-card" data-page-link="settings"><div class="manage-icon">导</div><div><h3>导入 / 导出数据</h3><p>JSON 导入导出、AI 辅助导入训练计划</p></div></article>`;
+}
+
 function renderSettings() {
   $('jsonBox').value = $('jsonBox').value || '';
   $('importPreview').innerHTML = `<strong>本地数据状态</strong><p>动作 ${state.exercises.length} 个，模板 ${state.templates.length} 个，计划 ${Object.keys(state.schedule).length} 天，训练记录 ${state.logs.length} 条。</p>`;
@@ -259,13 +281,17 @@ function renderTrainingSession() {
     return;
   }
   const progress = Math.round(((session.currentExerciseIndex) / Math.max(exercises.length, 1)) * 100);
-  target.innerHTML = `<div class="session-head"><button class="ghost-btn" data-page-link="dashboard" type="button">返回</button><div><h2>${escapeHtml(template.name)}</h2><p>本地训练模式 · 第 ${session.currentExerciseIndex + 1} / ${exercises.length} 个动作 · 总进度 ${progress}% · 状态：${escapeHtml(statusText(session.status))}</p></div><button class="btn danger" data-end-session type="button">结束训练</button></div><div class="session-grid"><article class="current-exercise"><p class="eyebrow">当前动作</p><h3>${escapeHtml(exercise.name)}</h3><p>目标：${escapeHtml(exercise.category)} · ${escapeHtml(doseText(exercise))} · 当前第 ${session.currentSetIndex + 1} / ${exercise.defaultSets} 组</p><ul>${(exercise.tips || []).map((tip) => `<li>${escapeHtml(tip)}</li>`).join('')}</ul><div class="button-row"><button class="btn primary" data-complete-set type="button">完成本组</button><button class="btn secondary" data-rest type="button">进入休息</button><button class="btn warning" data-skip-exercise type="button">跳过动作</button></div></article><aside class="video-panel"><p class="eyebrow">当前视频</p>${video ? `<h3>${escapeHtml(video.title)}</h3><p>${escapeHtml(video.remark || '')}</p><a class="btn primary" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili视频</a><button class="btn secondary" data-change-video="${escapeHtml(exercise.id)}" type="button">更换视频</button>` : `<h3>当前动作暂无视频</h3><button class="btn secondary" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button>`}</aside></div><div class="session-actions"><button class="ghost-btn" data-prev-exercise type="button" ${session.currentExerciseIndex === 0 ? 'disabled' : ''}>上一个动作</button><button class="ghost-btn" data-next-exercise type="button">下一个动作</button><button class="ghost-btn" data-pause-session type="button">${session.status === 'paused' ? '继续训练' : '暂停训练'}</button></div><ol class="session-list">${exercises.map((item, index) => `<li class="${index === session.currentExerciseIndex ? 'active' : ''} ${session.completed.includes(item.id) ? 'done' : ''} ${session.skipped.includes(item.id) ? 'skipped' : ''}" data-jump-exercise="${index}">${escapeHtml(item.name)}<span>${index === session.currentExerciseIndex ? '进行中' : session.completed.includes(item.id) ? '已完成' : session.skipped.includes(item.id) ? '已跳过' : '待开始'}</span></li>`).join('')}</ol>`;
+  const completedCount = session.completed.length;
+  const skippedCount = session.skipped.length;
+  const totalSetsDone = session.totalSetsDone || 0;
+  target.innerHTML = `<div class="session-head"><button class="ghost-btn" data-page-link="dashboard" type="button">返回</button><div><h2>${escapeHtml(template.name)}</h2><p>本地训练模式 · 第 ${session.currentExerciseIndex + 1} / ${exercises.length} 个动作 · 状态：${escapeHtml(statusText(session.status))}</p></div><button class="btn danger" data-end-session type="button">结束训练</button></div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div><span class="progress-label">${progress}%</span></div><div class="session-grid"><article class="current-exercise"><p class="eyebrow">当前动作</p><h3>${escapeHtml(exercise.name)}</h3><p>目标：${escapeHtml(exercise.category)} · ${escapeHtml(doseText(exercise))} · 当前第 ${session.currentSetIndex + 1} / ${exercise.defaultSets} 组</p><ul>${(exercise.tips || []).map((tip) => `<li>${escapeHtml(tip)}</li>`).join('')}</ul><div class="button-row"><button class="btn primary" data-complete-set type="button">完成本组</button><button class="btn secondary" data-rest type="button">进入休息</button><button class="btn warning" data-skip-exercise type="button">跳过动作</button></div><div class="set-badges">${Array.from({ length: exercise.defaultSets }, (_, i) => `<span class="set-badge ${i < session.currentSetIndex ? 'set-complete' : i === session.currentSetIndex ? 'set-current' : ''}">第${i + 1}组</span>`).join('')}</div></article><aside class="video-panel"><p class="eyebrow">当前视频</p>${video ? `<h3>${escapeHtml(video.title)}</h3><p>${escapeHtml(video.remark || '')}</p><a class="btn primary" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili视频</a><button class="btn secondary" data-change-video="${escapeHtml(exercise.id)}" type="button">更换视频</button>` : `<h3>当前动作暂无视频</h3><button class="btn secondary" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button>`}</aside></div><div class="session-actions"><button class="ghost-btn" data-prev-exercise type="button" ${session.currentExerciseIndex === 0 ? 'disabled' : ''}>上一个动作</button><button class="ghost-btn" data-next-exercise type="button">下一个动作</button><button class="ghost-btn" data-pause-session type="button">${session.status === 'paused' ? '继续训练' : '暂停训练'}</button></div><ol class="session-list">${exercises.map((item, index) => `<li class="${index === session.currentExerciseIndex ? 'active' : ''} ${session.completed.includes(item.id) ? 'done' : ''} ${session.skipped.includes(item.id) ? 'skipped' : ''}" data-jump-exercise="${index}">${escapeHtml(item.name)}<span>${index === session.currentExerciseIndex ? '进行中' : session.completed.includes(item.id) ? '已完成' : session.skipped.includes(item.id) ? '已跳过' : '待开始'}</span></li>`).join('')}</ol><div class="session-summary"><strong>完成摘要</strong><span>已完成动作：${completedCount} | 已跳过动作：${skippedCount} | 已完成组数：${totalSetsDone}</span></div>`;
 }
 
 function render() {
   updateStorageUsage();
   renderTodayCard('dashboardToday');
   renderTodayCard('todayDetail', true);
+  renderDashboardManagement();
   renderStats();
   renderTodayVideos();
   renderWeek();
@@ -319,10 +345,44 @@ function startTrainingSession() {
 function finishTraining(status = 'done') {
   const plan = todayPlan();
   if (plan) plan.status = status;
+  const summary = {
+    templateName: session?.templateId ? (templateById(session.templateId)?.name || '未知模板') : '无模板',
+    completed: session?.completed || [],
+    skipped: session?.skipped || [],
+    totalSetsDone: session?.totalSetsDone || 0,
+    status,
+    startedAt: session?.startedAt,
+  };
   state.logs.unshift({ id: uid('log'), date: isoToday, templateId: session?.templateId, startedAt: session?.startedAt, endedAt: new Date().toISOString(), completed: session?.completed || [], skipped: session?.skipped || [], status });
+  // 同步记录到后端
+  fetch('/api/training/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: isoToday,
+      template_id: session?.templateId ? session.templateId : undefined,
+      completed: session?.completed || [],
+      skipped: session?.skipped || [],
+      status,
+    }),
+  }).catch(() => { /* 后端日志记录非阻塞，失败不影响本地 */ });
   session = null;
   saveData();
+  // 显示完成摘要
+  window.__lastTrainingSummary = summary;
+  render();
   switchPage('dashboard');
+  const summaryEl = document.getElementById('trainingSummaryBanner');
+  if (summaryEl) {
+    summaryEl.style.display = 'block';
+    summaryEl.innerHTML = `<div class="summary-banner-inner"><strong>训练完成摘要</strong><span>模板：${escapeHtml(summary.templateName)} | 完成动作：${summary.completed.length} 个 | 跳过动作：${summary.skipped.length} 个 | 完成组数：${summary.totalSetsDone} | 状态：${statusText(summary.status)}</span><button id="dismissSummaryBanner" class="btn mini secondary" type="button">关闭</button></div>`;
+    setTimeout(() => { summaryEl.style.display = 'none'; }, 10000);
+  }
+}
+
+function dismissTrainingSummary() {
+  const el = document.getElementById('trainingSummaryBanner');
+  if (el) el.style.display = 'none';
 }
 
 function validateImport(data) {
@@ -340,37 +400,38 @@ function validateImport(data) {
 }
 
 function attachEvents() {
-  $('navList').addEventListener('click', (event) => { const page = event.target.dataset.page; if (page) switchPage(page); });
+  $('navList').addEventListener('click', (event) => { const item = event.target.closest('[data-page]'); if (item) switchPage(item.dataset.page); });
   document.body.addEventListener('click', async (event) => {
     const target = event.target;
-    if (target.dataset.pageLink) switchPage(target.dataset.pageLink);
-    if (target.dataset.aiDisabled !== undefined) alert('第二阶段开放');
-    if (target.dataset.aiAction === 'import') { switchPage('settings'); const box = $('aiImportPrompt'); if (box) box.scrollIntoView({ behavior: 'smooth' }); }
-    if (target.dataset.aiAction === 'search-video') openAiVideoSearchDialog(null);
-    if (target.dataset.aiSearchVideo) openAiVideoSearchDialog(target.dataset.aiSearchVideo);
-    if (target.dataset.startTraining !== undefined || target.id === 'startTodayTop') startTrainingSession();
-    if (target.dataset.expandToday !== undefined) renderTodayCard('dashboardToday', true);
-    if (target.dataset.showDetail !== undefined) switchPage('today');
-    if (target.dataset.editPlan) openPlanDialog(target.dataset.editPlan);
-    if (target.dataset.editExercise) openExerciseDialog(target.dataset.editExercise);
+    const linkEl = target.closest('[data-page-link]'); if (linkEl) switchPage(linkEl.dataset.pageLink);
+    const aiDisabledEl = target.closest('[data-ai-disabled]'); if (aiDisabledEl) alert('第二阶段开放');
+    const aiImportEl = target.closest('[data-ai-action="import"]'); if (aiImportEl) { switchPage('settings'); const box = $('aiImportPrompt'); if (box) box.scrollIntoView({ behavior: 'smooth' }); }
+    const aiSearchEl = target.closest('[data-ai-action="search-video"]'); if (aiSearchEl) openAiVideoSearchDialog(null);
+    const aiSearchVideoEl = target.closest('[data-ai-search-video]'); if (aiSearchVideoEl) openAiVideoSearchDialog(aiSearchVideoEl.dataset.aiSearchVideo);
+    const startTrainingEl = target.closest('[data-start-training]'); if (startTrainingEl || target.id === 'startTodayTop') startTrainingSession();
+    if (target.closest('[data-expand-today]')) renderTodayCard('dashboardToday', true);
+    if (target.closest('[data-show-detail]')) switchPage('today');
+    const editPlanEl = target.closest('[data-edit-plan]'); if (editPlanEl) openPlanDialog(editPlanEl.dataset.editPlan);
+    const editExerciseEl = target.closest('[data-edit-exercise]'); if (editExerciseEl) openExerciseDialog(editExerciseEl.dataset.editExercise);
     if (target.id === 'addExercise') openExerciseDialog();
-    if (target.dataset.addVideo) openVideoDialog(target.dataset.addVideo);
-    if (target.dataset.editTemplate) openTemplateDialog(target.dataset.editTemplate);
+    const addVideoEl = target.closest('[data-add-video]'); if (addVideoEl) openVideoDialog(addVideoEl.dataset.addVideo);
+    const editTemplateEl = target.closest('[data-edit-template]'); if (editTemplateEl) openTemplateDialog(editTemplateEl.dataset.editTemplate);
     if (target.id === 'addTemplate') openTemplateDialog();
-    if (target.dataset.deleteExercise) deleteExercise(target.dataset.deleteExercise);
-    if (target.dataset.deleteTemplate) deleteTemplate(target.dataset.deleteTemplate);
-    if (target.dataset.defaultVideo) setDefaultVideo(...target.dataset.defaultVideo.split('::'));
-    if (target.dataset.closeModal !== undefined) target.closest('dialog').close();
+    const deleteExerciseEl = target.closest('[data-delete-exercise]'); if (deleteExerciseEl) deleteExercise(deleteExerciseEl.dataset.deleteExercise);
+    const deleteTemplateEl = target.closest('[data-delete-template]'); if (deleteTemplateEl) deleteTemplate(deleteTemplateEl.dataset.deleteTemplate);
+    const defaultVideoEl = target.closest('[data-default-video]'); if (defaultVideoEl) setDefaultVideo(...defaultVideoEl.dataset.defaultVideo.split('::'));
+    const closeModalEl = target.closest('[data-close-modal]'); if (closeModalEl) closeModalEl.closest('dialog').close();
     if (target.id === 'prevMonth' || target.id === 'prevMonthPage') { visibleMonth.setMonth(visibleMonth.getMonth() - 1); render(); }
     if (target.id === 'nextMonth' || target.id === 'nextMonthPage') { visibleMonth.setMonth(visibleMonth.getMonth() + 1); render(); }
-    if (target.dataset.completeSet !== undefined) completeSet();
-    if (target.dataset.nextExercise !== undefined) nextExercise();
-    if (target.dataset.prevExercise !== undefined) prevExercise();
-    if (target.dataset.skipExercise !== undefined) skipExercise();
-    if (target.dataset.rest !== undefined) { session.status = 'resting'; renderTrainingSession(); }
-    if (target.dataset.pauseSession !== undefined) { session.status = session.status === 'paused' ? 'in_progress' : 'paused'; renderTrainingSession(); }
-    if (target.dataset.endSession !== undefined && confirm('确认结束本次训练？当前训练进度会保存为未完成。')) finishTraining('partial');
-    if (target.dataset.jumpExercise) { session.currentExerciseIndex = Number(target.dataset.jumpExercise); session.currentSetIndex = 0; session.status = 'in_progress'; renderTrainingSession(); }
+    if (target.closest('[data-complete-set]')) completeSet();
+    if (target.closest('[data-next-exercise]')) nextExercise();
+    if (target.closest('[data-prev-exercise]')) prevExercise();
+    if (target.closest('[data-skip-exercise]')) skipExercise();
+    if (target.closest('[data-rest]')) { session.status = 'resting'; renderTrainingSession(); }
+    if (target.closest('[data-pause-session]')) { session.status = session.status === 'paused' ? 'in_progress' : 'paused'; renderTrainingSession(); }
+    if (target.closest('[data-end-session]') && confirm('确认结束本次训练？当前训练进度会保存为未完成。')) finishTraining('partial');
+    const jumpEl = target.closest('[data-jump-exercise]'); if (jumpEl) { session.currentExerciseIndex = Number(jumpEl.dataset.jumpExercise); session.currentSetIndex = 0; session.status = 'in_progress'; renderTrainingSession(); }
+    if (target.id === 'dismissSummaryBanner') dismissTrainingSummary();
   });
   $('exerciseSearch').addEventListener('input', renderExercises);
   $('exerciseFilter').addEventListener('change', renderExercises);
@@ -432,8 +493,12 @@ function savePlanFromForm(event) {
 function saveVideoFromForm(event) {
   event.preventDefault();
   const exercise = exerciseById($('videoDialog').dataset.exerciseId);
+  if (!exercise) { alert('动作已不存在'); return; }
   const form = new FormData(event.target);
-  const video = { id: form.get('id').trim(), title: form.get('title').trim(), platform: 'bilibili', url: form.get('url').trim(), isDefault: form.get('isDefault') === 'on', remark: form.get('remark') };
+  const rawUrl = form.get('url').trim();
+  const validation = validateBilibiliUrl(rawUrl);
+  if (!validation.valid) { alert(validation.error); return; }
+  const video = { id: form.get('id').trim(), title: form.get('title').trim(), platform: 'bilibili', url: rawUrl, isDefault: form.get('isDefault') === 'on', remark: form.get('remark') };
   exercise.videos = exercise.videos || [];
   if (video.isDefault) exercise.videos.forEach((item) => { item.isDefault = false; });
   exercise.videos.push(video);
@@ -467,6 +532,7 @@ function completeSet() {
   const template = templateById(session.templateId);
   const exercises = templateExercises(template);
   const exercise = exercises[session.currentExerciseIndex];
+  session.totalSetsDone = (session.totalSetsDone || 0) + 1;
   if (session.currentSetIndex < exercise.defaultSets - 1) { session.currentSetIndex += 1; session.status = 'resting'; } else { session.completed.push(exercise.id); if (session.currentExerciseIndex < exercises.length - 1) nextExercise(); else finishTraining('done'); }
   renderTrainingSession();
 }
@@ -478,9 +544,36 @@ function previewImport() {
   try {
     const data = normalizeData(JSON.parse($('jsonBox').value));
     const result = validateImport(data);
-    $('importPreview').innerHTML = `<strong>导入预览</strong><p>动作数量：${result.counts.exercises}，模板数量：${result.counts.templates}，计划数量：${result.counts.schedule}，错误数量：${result.errors.length}</p>${result.errors.length ? `<pre>${escapeHtml(result.errors.join('\n'))}</pre>` : '<button id="confirmImport" class="btn primary" type="button">确认导入</button>'}`;
+    const templatePreviews = (data.templates || []).map((t) => {
+      const exNames = (t.exerciseIds || []).map((eid) => {
+        const ex = data.exercises.find((e) => e.id === eid);
+        return ex ? ex.name : eid;
+      });
+      return `<div class="import-template-preview"><strong>${escapeHtml(t.name)}</strong><span>${escapeHtml(t.description || '暂无描述')}</span><em>${exNames.join('、') || '无动作'}</em></div>`;
+    }).join('');
+    // 检查是否覆盖已有日期计划
+    const existingDates = Object.keys(state.schedule);
+    const incomingDates = Object.keys(data.schedule || {});
+    const overlap = incomingDates.filter((d) => existingDates.includes(d));
+    let overlapWarning = '';
+    if (overlap.length) {
+      overlapWarning = `<p style="color:var(--orange);margin-top:8px">⚠ 以下日期已有计划，导入将覆盖：${overlap.slice(0, 5).join(', ')}${overlap.length > 5 ? ` 等共 ${overlap.length} 天` : ''}</p>`;
+    }
+    const hasErrors = result.errors.length > 0;
+    $('importPreview').innerHTML = `<strong>导入预览</strong><p>动作数量：${result.counts.exercises} | 模板数量：${result.counts.templates} | 计划数量：${result.counts.schedule} | 错误数量：${result.errors.length}</p>${templatePreviews}${hasErrors ? `<pre>${escapeHtml(result.errors.join('\n'))}</pre>` : '<button id="confirmImport" class="btn primary" type="button">确认导入</button>'}${overlapWarning}`;
+    if (hasErrors) return;
     const confirmBtn = $('confirmImport');
-    if (confirmBtn) confirmBtn.addEventListener('click', () => { state = data; saveData(); render(); alert('导入完成'); });
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', () => {
+        if (overlap.length && !confirm(`导入将覆盖 ${overlap.length} 天的已有计划（${overlap.slice(0, 5).join(', ')}${overlap.length > 5 ? ` 等共 ${overlap.length} 天` : ''}），确认继续？`)) return;
+        state = data;
+        saveData();
+        render();
+        confirmBtn.textContent = '已导入';
+        confirmBtn.disabled = true;
+        alert('导入完成');
+      });
+    }
   } catch (error) { $('importPreview').innerHTML = `<strong>导入失败</strong><p>${escapeHtml(error.message)}</p>`; }
 }
 
@@ -562,6 +655,13 @@ function confirmAiImport() {
   const data = window.__aiDraft;
   if (!data) return;
   const draft = data.draft;
+  // 检查计划日期重叠
+  const existingDates = Object.keys(state.schedule);
+  const incomingDates = (draft.plans || []).filter((p) => p.date).map((p) => p.date);
+  const overlap = incomingDates.filter((d) => existingDates.includes(d));
+  if (overlap.length && !confirm(`导入将覆盖 ${overlap.length} 天的已有计划（${overlap.slice(0, 5).join(', ')}${overlap.length > 5 ? ` 等共 ${overlap.length} 天` : ''}），确认继续？`)) {
+    return;
+  }
   // 合并 exercises
   for (const ex of draft.exercises || []) {
     const idx = state.exercises.findIndex((e) => e.id === ex.id);

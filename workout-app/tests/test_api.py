@@ -699,3 +699,291 @@ def test_validate_ai_draft_pure():
     # 缺少 exercises
     errors = _validate_ai_draft({"version": "1.0"})
     assert any("exercises" in e for e in errors)
+
+
+# ── Exercise Library CRUD ───────────────────────────────────────────────────
+
+
+def test_exercise_list_empty_when_no_data(client):
+    """新数据库应返回空动作列表。"""
+    response = client.get("/api/exercises")
+    assert response.status_code == 200
+    body = response.json()
+    assert "exercises" in body
+    assert isinstance(body["exercises"], list)
+
+
+def test_exercise_create_and_read(client):
+    """创建动作并读取。"""
+    payload = {"name": "测试动作", "category": "核心控制", "difficulty": "低", "default_sets": 3}
+    create = client.post("/api/exercises", json=payload)
+    assert create.status_code == 201
+    created = create.json()
+    assert created["name"] == "测试动作"
+    assert created["id"] > 0
+
+    # 读取
+    get = client.get(f"/api/exercises/{created['id']}")
+    assert get.status_code == 200
+    assert get.json()["name"] == "测试动作"
+
+    # 列表包含新动作
+    lst = client.get("/api/exercises")
+    ids = [e["id"] for e in lst.json()["exercises"]]
+    assert created["id"] in ids
+
+
+def test_exercise_update(client):
+    """更新动作字段。"""
+    payload = {"name": "原名称", "category": "核心", "difficulty": "低", "default_sets": 2}
+    create = client.post("/api/exercises", json=payload)
+    uid = create.json()["id"]
+
+    update_payload = {"name": "新名称", "category": "髋部", "difficulty": "中", "default_sets": 3}
+    update = client.put(f"/api/exercises/{uid}", json=update_payload)
+    assert update.status_code == 200
+    assert update.json()["name"] == "新名称"
+    assert update.json()["category"] == "髋部"
+
+
+def test_exercise_delete(client):
+    """删除动作。"""
+    payload = {"name": "待删除", "category": "测试", "difficulty": "低", "default_sets": 1}
+    create = client.post("/api/exercises", json=payload)
+    uid = create.json()["id"]
+
+    delete = client.delete(f"/api/exercises/{uid}")
+    assert delete.status_code == 200
+    assert delete.json()["status"] == "deleted"
+
+    get = client.get(f"/api/exercises/{uid}")
+    assert get.status_code == 404
+
+
+def test_exercise_get_404(client):
+    """获取不存在的动作返回 404。"""
+    response = client.get("/api/exercises/999999")
+    assert response.status_code == 404
+
+
+def test_exercise_created_with_video_url(client):
+    """创建动作时可以设置 Bilibili 视频 URL。"""
+    payload = {"name": "带视频动作", "category": "核心", "difficulty": "低", "default_sets": 3, "video_url": "https://www.bilibili.com/video/BV1xx"}
+    create = client.post("/api/exercises", json=payload)
+    assert create.status_code == 201
+    assert create.json()["video_url"] == "https://www.bilibili.com/video/BV1xx"
+
+
+# ── Template CRUD ────────────────────────────────────────────────────────────
+
+
+def test_template_list_empty_when_no_data(client):
+    """新数据库应返回空模板列表。"""
+    response = client.get("/api/templates")
+    assert response.status_code == 200
+    body = response.json()
+    assert "templates" in body
+
+
+def test_template_create_with_exercises(client):
+    """创建模板并关联动作。"""
+    ex1 = client.post("/api/exercises", json={"name": "动作1", "category": "核心", "difficulty": "低", "default_sets": 3}).json()
+    ex2 = client.post("/api/exercises", json={"name": "动作2", "category": "髋部", "difficulty": "低", "default_sets": 2}).json()
+
+    payload = {"name": "测试模板", "description": "一个测试模板", "difficulty": "低强度", "estimated_minutes": 30, "exercise_ids": [ex1["id"], ex2["id"]]}
+    create = client.post("/api/templates", json=payload)
+    assert create.status_code == 201
+    created = create.json()
+    assert created["name"] == "测试模板"
+    assert len(created["exercises"]) == 2
+
+    # 读取
+    get = client.get(f"/api/templates/{created['id']}")
+    assert get.status_code == 200
+    assert get.json()["name"] == "测试模板"
+
+
+def test_template_update(client):
+    """更新模板名称和关联动作。"""
+    ex = client.post("/api/exercises", json={"name": "E1", "category": "核心", "difficulty": "低", "default_sets": 3}).json()
+    tmpl = client.post("/api/templates", json={"name": "旧模板", "description": "", "exercise_ids": [ex["id"]]}).json()
+
+    update = client.put(f"/api/templates/{tmpl['id']}", json={"name": "新模板", "description": "更新描述", "difficulty": "低强度", "estimated_minutes": 40, "exercise_ids": []})
+    assert update.status_code == 200
+    assert update.json()["name"] == "新模板"
+    assert update.json()["description"] == "更新描述"
+    assert update.json()["estimated_minutes"] == 40
+
+
+def test_template_delete(client):
+    """删除模板。"""
+    ex = client.post("/api/exercises", json={"name": "E", "category": "核心", "difficulty": "低", "default_sets": 3}).json()
+    tmpl = client.post("/api/templates", json={"name": "待删除模板", "description": "", "exercise_ids": [ex["id"]]}).json()
+
+    delete = client.delete(f"/api/templates/{tmpl['id']}")
+    assert delete.status_code == 200
+    assert delete.json()["status"] == "deleted"
+
+    get = client.get(f"/api/templates/{tmpl['id']}")
+    assert get.status_code == 404
+
+
+def test_template_get_404(client):
+    """获取不存在的模板返回 404。"""
+    response = client.get("/api/templates/999999")
+    assert response.status_code == 404
+
+
+# ── Training Completion ──────────────────────────────────────────────────────
+
+
+def test_training_complete_records_log(client):
+    """训练完成记录到后端，自动查找当日计划。"""
+    response = client.post("/api/training/complete", json={
+        "date": "2026-06-01",
+        "template_id": 1,
+        "completed": ["动作1", "动作2"],
+        "skipped": [],
+        "status": "done",
+        "notes": "完成训练",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "recorded"
+    assert body["log_id"] > 0
+    assert len(body["completed"]) == 2
+    assert len(body["skipped"]) == 0
+
+
+def test_training_complete_with_skipped(client):
+    """跳过动作的训练记录。"""
+    response = client.post("/api/training/complete", json={
+        "date": "2026-06-03",
+        "completed": [],
+        "skipped": ["动作1"],
+        "status": "partial",
+        "notes": "跳过大部分动作",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "recorded"
+    assert len(body["skipped"]) == 1
+
+
+def test_training_complete_rejects_bad_date(client):
+    """无效日期格式返回 422。"""
+    response = client.post("/api/training/complete", json={
+        "date": "not-a-date",
+        "status": "done",
+    })
+    assert response.status_code == 422
+
+
+def test_training_complete_appears_in_logs(client):
+    """训练完成记录出现在日志列表中。"""
+    client.post("/api/training/complete", json={
+        "date": "2026-06-05",
+        "completed": ["动作1"],
+        "skipped": [],
+        "status": "done",
+    })
+    response = client.get("/api/logs")
+    assert response.status_code == 200
+    logs = response.json()["logs"]
+    assert any(log["action"] == "completed" for log in logs)
+
+
+# ── Plan Update ──────────────────────────────────────────────────────────────
+
+
+def test_plan_update_title(client):
+    """更新计划的主题字段。"""
+    plan = client.get("/api/plans/month", params={"month": "2026-06"}).json()["days"][0]
+    pid = plan["id"]
+    assert pid is not None
+
+    update = client.put(f"/api/plans/{pid}", json={"title": "修改后的训练计划", "focus": "高强度"})
+    assert update.status_code == 200
+    assert update.json()["title"] == "修改后的训练计划"
+
+    # 验证持久化
+    get = client.get("/api/plans/month", params={"month": "2026-06"})
+    updated = next(d for d in get.json()["days"] if d["id"] == pid)
+    assert updated["title"] == "修改后的训练计划"
+    assert updated["theme"] == "高强度"
+
+
+def test_plan_update_404(client):
+    """更新不存在的计划返回 404。"""
+    response = client.put("/api/plans/999999", json={"title": "无"})
+    assert response.status_code == 404
+
+
+def test_plan_update_training_day(client):
+    """切换训练日状态。"""
+    plan = client.get("/api/plans/month", params={"month": "2026-06"}).json()["days"][0]
+    pid = plan["id"]
+    original = plan["is_training"]
+
+    update = client.put(f"/api/plans/{pid}", json={"is_training_day": not original})
+    assert update.status_code == 200
+    assert update.json()["is_training"] == (not original)
+
+
+# ── Stats Consistency ─────────────────────────────────────────────────────────
+
+
+def test_stats_reflects_training_logs(client):
+    """记录训练完成后统计数据更新。"""
+    before = client.get("/api/stats/month", params={"month": "2026-06"}).json()
+    before_completed = before["completed"]
+
+    # 找到一个训练日
+    month = client.get("/api/plans/month", params={"month": "2026-06"}).json()
+    training_day = next(d for d in month["days"] if d["is_training"])
+    client.post("/api/logs/complete", json={"plan_id": training_day["id"], "notes": "测试"})
+
+    after = client.get("/api/stats/month", params={"month": "2026-06"}).json()
+    assert after["completed"] == before_completed + 1
+
+
+def test_stats_overall_matches_month_sum(client):
+    """整体统计与各月统计之和一致。"""
+    overall = client.get("/api/stats").json()
+    june = client.get("/api/stats/month", params={"month": "2026-06"}).json()
+
+    assert overall["plans"] >= june["plans"]
+    assert overall["training_days"] >= june["training_days"]
+
+
+# ── Seed Data Consistency ─────────────────────────────────────────────────────
+
+
+def test_exercises_table_seeded_correctly(app_modules):
+    """验证新增的 Exercise/Template 表初始化正确。"""
+    database, _ = app_modules
+    db = database.SessionLocal()
+    try:
+        ex_count = db.query(database.Exercise).count()
+        tmpl_count = db.query(database.Template).count()
+        assert ex_count == 5
+        assert tmpl_count == 1
+
+        tmpl = db.query(database.Template).first()
+        assert tmpl is not None
+        assert len(tmpl.exercises) == 5
+    finally:
+        db.close()
+
+
+def test_seed_exercise_library_is_idempotent(app_modules):
+    """Exercise/Template 种子数据是幂等的。"""
+    database, _ = app_modules
+    database.seed_database()
+
+    db = database.SessionLocal()
+    try:
+        assert db.query(database.Exercise).count() == 5
+        assert db.query(database.Template).count() == 1
+    finally:
+        db.close()
