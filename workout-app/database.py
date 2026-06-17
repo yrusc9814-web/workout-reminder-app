@@ -55,6 +55,7 @@ class WorkoutPlan(Base):
         order_by="WorkoutExercise.sort_order",
     )
     logs = relationship("WorkoutLog", back_populates="plan", cascade="all, delete-orphan")
+    sessions = relationship("WorkoutSession", back_populates="plan", cascade="all, delete-orphan")
 
 
 class WorkoutExercise(Base):
@@ -65,6 +66,7 @@ class WorkoutExercise(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     plan_id = Column(Integer, ForeignKey("workout_plans.id"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=True, index=True)
     sort_order = Column(Integer, nullable=False)
     name = Column(String(140), nullable=False)
     description = Column(Text, nullable=False)
@@ -123,6 +125,61 @@ class Template(Base):
         secondary=template_exercises,
         lazy="selectin",
     )
+
+
+class WorkoutSession(Base):
+    __tablename__ = "workout_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('in_progress', 'completed', 'cancelled')",
+            name="ck_workout_sessions_status",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    plan_id = Column(Integer, ForeignKey("workout_plans.id"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="in_progress", index=True)
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    rating = Column(Integer, nullable=True)
+    ai_feedback = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    plan = relationship("WorkoutPlan", back_populates="sessions")
+    records = relationship(
+        "SessionRecord",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="SessionRecord.id",
+    )
+
+
+class SessionRecord(Base):
+    __tablename__ = "session_records"
+    __table_args__ = (
+        UniqueConstraint("session_id", "exercise_id", name="uq_session_records_session_exercise"),
+        CheckConstraint(
+            "status IN ('pending', 'completed', 'skipped')",
+            name="ck_session_records_status",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("workout_sessions.id"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="pending")
+    sets_completed = Column(Integer, nullable=True)
+    reps_completed = Column(String(40), nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    notes = Column(Text, nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    session = relationship("WorkoutSession", back_populates="records")
+    exercise = relationship("Exercise")
 
 
 class WorkoutLog(Base):

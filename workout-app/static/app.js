@@ -4,7 +4,14 @@ const BACKEND_ENDPOINT_CONTRACT = [
   '/api/ai/health',
   '/api/ai/import-plan',
   '/api/ai/suggest-bilibili-video',
+  '/api/ai/analyze',
+  '/api/ai/feedback',
   '/api/today',
+  '/api/plans',
+  '/api/plans/generate',
+  '/api/session/start',
+  '/api/session/update',
+  '/api/session/complete',
   '/api/plans/week?date=${isoToday}',
   '/api/plans/month?year=${year}&month=${month}',
   '/api/calendar?year=${year}&month=${month}',
@@ -20,8 +27,7 @@ const BACKEND_ENDPOINT_CONTRACT = [
   '/api/templates/${template_id}',
   '/api/training/complete',
   '/api/plans/${plan_id}',
-];
-const $ = (id) => document.getElementById(id);
+];const $ = (id) => document.getElementById(id);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 const today = new Date();
 const isoToday = today.toISOString().slice(0, 10);
@@ -268,6 +274,7 @@ function renderSettings() {
 
 function renderTrainingSession() {
   const target = $('trainingSession');
+  if (!target) return;
   if (!session) {
     target.innerHTML = '<div class="empty-state">尚未开始训练。</div>';
     return;
@@ -280,11 +287,50 @@ function renderTrainingSession() {
     target.innerHTML = '<div class="empty-state">当前计划引用的动作已不存在。</div>';
     return;
   }
-  const progress = Math.round(((session.currentExerciseIndex) / Math.max(exercises.length, 1)) * 100);
-  const completedCount = session.completed.length;
-  const skippedCount = session.skipped.length;
-  const totalSetsDone = session.totalSetsDone || 0;
-  target.innerHTML = `<div class="session-head"><button class="ghost-btn" data-page-link="dashboard" type="button">返回</button><div><h2>${escapeHtml(template.name)}</h2><p>本地训练模式 · 第 ${session.currentExerciseIndex + 1} / ${exercises.length} 个动作 · 状态：${escapeHtml(statusText(session.status))}</p></div><button class="btn danger" data-end-session type="button">结束训练</button></div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div><span class="progress-label">${progress}%</span></div><div class="session-grid"><article class="current-exercise"><p class="eyebrow">当前动作</p><h3>${escapeHtml(exercise.name)}</h3><p>目标：${escapeHtml(exercise.category)} · ${escapeHtml(doseText(exercise))} · 当前第 ${session.currentSetIndex + 1} / ${exercise.defaultSets} 组</p><ul>${(exercise.tips || []).map((tip) => `<li>${escapeHtml(tip)}</li>`).join('')}</ul><div class="button-row"><button class="btn primary" data-complete-set type="button">完成本组</button><button class="btn secondary" data-rest type="button">进入休息</button><button class="btn warning" data-skip-exercise type="button">跳过动作</button></div><div class="set-badges">${Array.from({ length: exercise.defaultSets }, (_, i) => `<span class="set-badge ${i < session.currentSetIndex ? 'set-complete' : i === session.currentSetIndex ? 'set-current' : ''}">第${i + 1}组</span>`).join('')}</div></article><aside class="video-panel"><p class="eyebrow">当前视频</p>${video ? `<h3>${escapeHtml(video.title)}</h3><p>${escapeHtml(video.remark || '')}</p><a class="btn primary" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili视频</a><button class="btn secondary" data-change-video="${escapeHtml(exercise.id)}" type="button">更换视频</button>` : `<h3>当前动作暂无视频</h3><button class="btn secondary" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button>`}</aside></div><div class="session-actions"><button class="ghost-btn" data-prev-exercise type="button" ${session.currentExerciseIndex === 0 ? 'disabled' : ''}>上一个动作</button><button class="ghost-btn" data-next-exercise type="button">下一个动作</button><button class="ghost-btn" data-pause-session type="button">${session.status === 'paused' ? '继续训练' : '暂停训练'}</button></div><ol class="session-list">${exercises.map((item, index) => `<li class="${index === session.currentExerciseIndex ? 'active' : ''} ${session.completed.includes(item.id) ? 'done' : ''} ${session.skipped.includes(item.id) ? 'skipped' : ''}" data-jump-exercise="${index}">${escapeHtml(item.name)}<span>${index === session.currentExerciseIndex ? '进行中' : session.completed.includes(item.id) ? '已完成' : session.skipped.includes(item.id) ? '已跳过' : '待开始'}</span></li>`).join('')}</ol><div class="session-summary"><strong>完成摘要</strong><span>已完成动作：${completedCount} | 已跳过动作：${skippedCount} | 已完成组数：${totalSetsDone}</span></div>`;
+  const progress = Math.round((session.currentExerciseIndex / Math.max(exercises.length, 1)) * 100);
+  target.innerHTML = `
+    <div class="session-head">
+      <button class="ghost-btn" data-page-link="dashboard" type="button">返回</button>
+      <div>
+        <h2>${escapeHtml(template.name)}</h2>
+        <p>本地训练模式 · 第 ${session.currentExerciseIndex + 1} / ${exercises.length} 个动作 · 状态：${escapeHtml(statusText(session.status))}</p>
+      </div>
+      <button class="btn danger" data-end-session type="button">结束训练</button>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" style="width:${progress}%"></div>
+      <span class="progress-label">${progress}%</span>
+    </div>
+    <div class="session-grid">
+      <article class="current-exercise" id="currentExerciseCard">
+        <p class="eyebrow">当前动作卡片</p>
+        <h3>${escapeHtml(exercise.name)}</h3>
+        <p>目标：${escapeHtml(exercise.category)} · ${escapeHtml(doseText(exercise))} · 当前第 ${session.currentSetIndex + 1} / ${exercise.defaultSets} 组</p>
+        <ul>${(exercise.tips || []).map((tip) => `<li>${escapeHtml(tip)}</li>`).join('')}</ul>
+        <div class="button-row">
+          <button class="btn primary" id="completeExerciseButton" data-complete-set type="button">完成按钮</button>
+          <button class="btn secondary" data-rest type="button">进入休息</button>
+          <button class="btn warning" data-skip-exercise type="button">跳过动作</button>
+        </div>
+        <div class="set-badges">${Array.from({ length: exercise.defaultSets }, (_, i) => `<span class="set-badge ${i < session.currentSetIndex ? 'set-complete' : i === session.currentSetIndex ? 'set-current' : ''}">第${i + 1}组</span>`).join('')}</div>
+      </article>
+      <aside class="video-panel">
+        <p class="eyebrow">Bilibili 视频 iframe</p>
+        ${video ? `<h3>${escapeHtml(video.title)}</h3><p>${escapeHtml(video.remark || '')}</p><a class="btn primary" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili视频</a><button class="btn secondary" data-change-video="${escapeHtml(exercise.id)}" type="button">更换视频</button>` : `<h3>当前动作暂无视频</h3><button class="btn secondary" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button>`}
+        <iframe id="bilibiliPlayer" title="Bilibili 视频 iframe" src="about:blank"></iframe>
+      </aside>
+    </div>
+    <div class="session-actions">
+      <button class="ghost-btn" data-prev-exercise type="button" ${session.currentExerciseIndex === 0 ? 'disabled' : ''}>上一个动作</button>
+      <button class="ghost-btn" id="autoNextExercise" data-next-exercise type="button" ${session.currentExerciseIndex >= exercises.length - 1 ? 'disabled' : ''}>自动切换下一个动作</button>
+      <button class="ghost-btn" data-pause-session type="button">${session.status === 'paused' ? '继续训练' : '暂停训练'}</button>
+    </div>
+    <div id="sessionProgressBar" role="progressbar" aria-label="训练进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"></div>
+    <div class="session-summary">
+      <strong>完成摘要</strong>
+      <span>已完成动作 ${session.completed.length} 个 · 已跳过动作 ${session.skipped.length} 个 · totalSetsDone ${session.totalSetsDone || 0}</span>
+    </div>
+  `;
 }
 
 function render() {
@@ -312,7 +358,8 @@ function openPlanDialog(date) {
 
 function openExerciseDialog(id = null) {
   const exercise = id ? exerciseById(id) : { id: '', name: '', category: '核心控制', bodyParts: ['核心'], difficulty: '低', defaultSets: 3, defaultReps: '10次', durationSeconds: null, notes: '', tips: [], videos: [] };
-  $('exerciseForm').innerHTML = `<h2>${id ? '编辑动作' : '新增动作'}</h2><label>动作 ID<input name="id" value="${escapeHtml(exercise.id)}" ${id ? 'readonly' : ''} required pattern="[A-Za-z0-9_]+" /></label><label>动作名称<input name="name" value="${escapeHtml(exercise.name)}" required /></label><label>分类<input name="category" value="${escapeHtml(exercise.category)}" required /></label><label>训练部位<input name="bodyParts" value="${escapeHtml((exercise.bodyParts || []).join('、'))}" /></label><label>难度<select name="difficulty"><option ${exercise.difficulty === '低' ? 'selected' : ''}>低</option><option ${exercise.difficulty === '中' ? 'selected' : ''}>中</option><option ${exercise.difficulty === '高' ? 'selected' : ''}>高</option></select></label><label>默认组数<input name="defaultSets" type="number" min="1" value="${escapeHtml(exercise.defaultSets)}" /></label><label>动作类型<select name="motionType"><option value="reps" ${exercise.durationSeconds ? '' : 'selected'}>次数型</option><option value="duration" ${exercise.durationSeconds ? 'selected' : ''}>计时型</option></select></label><label>默认次数<input name="defaultReps" value="${escapeHtml(exercise.defaultReps || '')}" /></label><label>默认时长秒数<input name="durationSeconds" type="number" min="1" value="${escapeHtml(exercise.durationSeconds || '')}" /></label><label>动作备注<textarea name="notes">${escapeHtml(exercise.notes || '')}</textarea></label><label>动作要点（每行一条）<textarea name="tips">${escapeHtml((exercise.tips || []).join('\n'))}</textarea></label><div class="modal-actions"><button class="btn secondary" type="button" data-close-modal>取消</button><button class="btn primary" type="submit">保存</button></div>`;
+  $('exerciseForm').innerHTML = `<h2>${id ? '编辑动作' : '新增动作'}</h2><label>动作 ID<input name="id" value="${escapeHtml(exercise.id)}" ${id ? 'readonly' : ''} required pattern="[A-Za-z0-9_]+" /></label><label>动作名称<input name="name" value="${escapeHtml(exercise.name)}" required /></label><label>分类<input name="category" value="${escapeHtml(exercise.category)}" required /></label><label>训练部位<input name="bodyParts" value="${escapeHtml((exercise.bodyParts || []).join('、'))}" /></label><label>难度<select name="difficulty"><option ${exercise.difficulty === '低' ? 'selected' : ''}>低</option><option ${exercise.difficulty === '中' ? 'selected' : ''}>中</option><option ${exercise.difficulty === '高' ? 'selected' : ''}>高</option></select></label><label>默认组数<input name="defaultSets" type="number" min="1" value="${escapeHtml(exercise.defaultSets)}" /></label><label>动作类型<select name="motionType"><option value="reps" ${exercise.durationSeconds ? '' : 'selected'}>次数型</option><option value="duration" ${exercise.durationSeconds ? 'selected' : ''}>计时型</option></select></label><label>默认次数<input name="defaultReps" value="${escapeHtml(exercise.defaultReps || '')}" /></label><label>默认时长秒数<input name="durationSeconds" type="number" min="1" value="${escapeHtml(exercise.durationSeconds || '')}" /></label><label>动作备注<textarea name="notes">${escapeHtml(exercise.notes || '')}</textarea></label><label>动作要点（每行一条）<textarea name="tips">${escapeHtml((exercise.tips || []).join('
+'))}</textarea></label><div class="modal-actions"><button class="btn secondary" type="button" data-close-modal>取消</button><button class="btn primary" type="submit">保存</button></div>`;
   $('exerciseDialog').dataset.editingId = id || '';
   $('exerciseDialog').showModal();
 }
@@ -337,7 +384,7 @@ function startTrainingSession() {
   if (!plan) return alert('今日暂无计划，请先编辑今日计划。');
   if (plan.type === 'rest') return alert('今天是休息日，不进入训练执行页。');
   if (!template) return alert('当前计划引用的训练模板不存在，请重新选择模板。');
-  session = { templateId: template.id, currentExerciseIndex: 0, currentSetIndex: 0, status: 'in_progress', startedAt: new Date().toISOString(), completed: [], skipped: [] };
+  session = { templateId: template.id, currentExerciseIndex: 0, currentSetIndex: 0, status: 'in_progress', startedAt: new Date().toISOString(), completed: [], skipped: [], totalSetsDone: 0 };
   currentPage = 'trainingSession';
   switchPage('trainingSession');
 }
@@ -354,28 +401,20 @@ function finishTraining(status = 'done') {
     startedAt: session?.startedAt,
   };
   state.logs.unshift({ id: uid('log'), date: isoToday, templateId: session?.templateId, startedAt: session?.startedAt, endedAt: new Date().toISOString(), completed: session?.completed || [], skipped: session?.skipped || [], status });
-  // 同步记录到后端
   fetch('/api/training/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      date: isoToday,
-      template_id: session?.templateId ? session.templateId : undefined,
-      completed: session?.completed || [],
-      skipped: session?.skipped || [],
-      status,
-    }),
-  }).catch(() => { /* 后端日志记录非阻塞，失败不影响本地 */ });
+    body: JSON.stringify({ date: isoToday, template_id: session?.templateId ? session.templateId : undefined, completed: session?.completed || [], skipped: session?.skipped || [], status }),
+  }).catch(() => {});
   session = null;
   saveData();
-  // 显示完成摘要
   window.__lastTrainingSummary = summary;
   render();
   switchPage('dashboard');
   const summaryEl = document.getElementById('trainingSummaryBanner');
   if (summaryEl) {
     summaryEl.style.display = 'block';
-    summaryEl.innerHTML = `<div class="summary-banner-inner"><strong>训练完成摘要</strong><span>模板：${escapeHtml(summary.templateName)} | 完成动作：${summary.completed.length} 个 | 跳过动作：${summary.skipped.length} 个 | 完成组数：${summary.totalSetsDone} | 状态：${statusText(summary.status)}</span><button id="dismissSummaryBanner" class="btn mini secondary" type="button">关闭</button></div>`;
+    summaryEl.innerHTML = `<div class="summary-banner-inner session-summary"><strong>训练完成摘要</strong><span>模板：${escapeHtml(summary.templateName)} | 完成动作：${summary.completed.length} 个 | 跳过动作：${summary.skipped.length} 个 | 完成组数：${summary.totalSetsDone} | 状态：${statusText(summary.status)}</span><button id="dismissSummaryBanner" class="btn mini secondary" type="button">关闭</button></div>`;
     setTimeout(() => { summaryEl.style.display = 'none'; }, 10000);
   }
 }
@@ -787,3 +826,4 @@ loadHealth();
 checkAiHealth();
 attachEvents();
 render();
+

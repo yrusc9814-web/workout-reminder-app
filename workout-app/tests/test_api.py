@@ -1,7 +1,5 @@
 from datetime import date
-import importlib
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -9,28 +7,6 @@ from fastapi.testclient import TestClient
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
-
-
-@pytest.fixture()
-def app_modules(tmp_path, monkeypatch):
-    db_path = tmp_path / "workout-test.db"
-    monkeypatch.setenv("WORKOUT_DB_PATH", str(db_path))
-    monkeypatch.syspath_prepend(str(APP_DIR))
-
-    for name in ["main", "seed", "database"]:
-        sys.modules.pop(name, None)
-
-    database = importlib.import_module("database")
-    main = importlib.import_module("main")
-    database.Base.metadata.create_all(bind=database.engine)
-    database.seed_database()
-    return database, main
-
-
-@pytest.fixture()
-def client(app_modules):
-    _database, main = app_modules
-    return TestClient(main.app)
 
 
 def test_health_endpoint_exists(client):
@@ -423,12 +399,20 @@ def test_dingtalk_todo_uses_dingtalk_access_token_header(client, monkeypatch):
 
 def test_dingtalk_todo_permission_denied_returns_clear_status(client, monkeypatch):
     def fake_post_json(url, payload, headers=None):
-        return 403, json.dumps(
-            {
-                "code": "Forbidden.AccessDenied.AccessTokenPermissionDenied",
-                "message": "应用尚未开通所需的权限：[Todo.PersonalTodo.Write]",
-            }
-        )
+        return {
+            "http_status": 403,
+            "response_body": json.dumps(
+                {
+                    "code": "Forbidden.AccessDenied.AccessTokenPermissionDenied",
+                    "message": "应用尚未开通所需的权限：[Todo.PersonalTodo.Write]",
+                }
+            ),
+            "request_url": url,
+            "request_headers": {"x-acs-dingtalk-access-token": "***"},
+            "request_body": payload,
+            "response_headers": {"x-acs-request-id": "req-403"},
+            "request_id": "req-403",
+        }
 
     monkeypatch.setenv("DINGTALK_TODO_CREATE_URL", "https://api.dingtalk.example/todos")
     monkeypatch.setenv("DINGTALK_ACCESS_TOKEN", "test-token")
@@ -443,6 +427,47 @@ def test_dingtalk_todo_permission_denied_returns_clear_status(client, monkeypatc
     assert body["created"] is False
     assert body["enabled"] is True
     assert body["permission"] == "Todo.PersonalTodo.Write"
+    assert body["debug_trace"]["request_url"] == "https://api.dingtalk.example/todos"
+    assert body["debug_trace"]["request_headers"]["x-acs-dingtalk-access-token"] == "***"
+    assert body["debug_trace"]["response_status"] == 403
+    assert body["debug_trace"]["request_id"] == "req-403"
+    assert body["error_type"] == "api"
+
+
+def test_dingtalk_todo_network_failure_returns_debug_trace(client, monkeypatch):
+    def fake_post_json(url, payload, headers=None):
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "error": "钉钉请求失败：timed out",
+                    "error_type": "network",
+                    "debug_trace": {
+                        "request_url": url,
+                        "request_headers": {"x-acs-dingtalk-access-token": "***"},
+                        "request_body": payload,
+                        "response_status": None,
+                        "response_body": "",
+                        "request_id": None,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    monkeypatch.setenv("DINGTALK_TODO_CREATE_URL", "https://api.dingtalk.example/todos")
+    monkeypatch.setenv("DINGTALK_ACCESS_TOKEN", "test-token")
+    monkeypatch.setattr("main.post_json", fake_post_json)
+    plan = june_training_plan(client)
+
+    response = client.post("/api/todos/dingtalk/create", json={"plan_id": plan["id"]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["error_type"] == "network"
+    assert body["debug_trace"]["request_url"] == "https://api.dingtalk.example/todos"
+    assert body["debug_trace"]["request_headers"]["x-acs-dingtalk-access-token"] == "***"
+    assert body["debug_trace"]["response_status"] is None
 
 
 # ── AI 辅助能力测试 ───────────────────────────────────────────────────────
@@ -1188,3 +1213,4 @@ def test_seed_exercise_library_is_idempotent(app_modules):
         assert db.query(database.Template).count() == 1
     finally:
         db.close()
+

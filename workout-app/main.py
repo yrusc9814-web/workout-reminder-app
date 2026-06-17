@@ -20,10 +20,13 @@ from database import (
     Base,
     Exercise,
     Reminder,
+    SessionRecord,
     Setting,
     Template,
+    WorkoutExercise,
     WorkoutLog,
     WorkoutPlan,
+    WorkoutSession,
     engine,
     get_db,
 )
@@ -202,21 +205,63 @@ def build_dingtalk_todo_payload(plan: WorkoutPlan) -> dict:
     }
 
 
-def post_json(url: str, payload: dict, headers: Optional[dict] = None) -> tuple[int, str]:
+def post_json(url: str, payload: dict, headers: Optional[dict] = None) -> dict:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request_headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if headers:
         request_headers.update(headers)
+    safe_headers = {
+        key: ("***" if "token" in key.lower() or "authorization" in key.lower() else value)
+        for key, value in request_headers.items()
+    }
     request = Request(url, data=data, headers=request_headers, method="POST")
     try:
         with urlopen(request, timeout=10) as response:
             body = response.read().decode("utf-8", "replace")
-            return response.status, body
+            response_headers = dict(response.headers.items())
+            request_id = response.headers.get("x-acs-request-id") or response.headers.get("x-request-id")
+            return {
+                "http_status": response.status,
+                "response_body": body,
+                "request_url": url,
+                "request_headers": safe_headers,
+                "request_body": payload,
+                "response_headers": response_headers,
+                "request_id": request_id,
+            }
     except HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")
-        return exc.code, body
+        response_headers = dict(exc.headers.items()) if exc.headers else {}
+        request_id = None
+        if exc.headers:
+            request_id = exc.headers.get("x-acs-request-id") or exc.headers.get("x-request-id")
+        return {
+            "http_status": exc.code,
+            "response_body": body,
+            "request_url": url,
+            "request_headers": safe_headers,
+            "request_body": payload,
+            "response_headers": response_headers,
+            "request_id": request_id,
+        }
     except URLError as exc:
-        raise RuntimeError(f"钉钉请求失败：{exc}") from exc
+        raise RuntimeError(
+            json.dumps(
+                {
+                    "error": f"钉钉请求失败：{exc}",
+                    "error_type": "network",
+                    "debug_trace": {
+                        "request_url": url,
+                        "request_headers": safe_headers,
+                        "request_body": payload,
+                        "response_status": None,
+                        "response_body": "",
+                        "request_id": None,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        ) from exc
 
 def log_item(row: WorkoutLog) -> dict:
     return {
@@ -524,15 +569,54 @@ def create_dingtalk_todo(payload: DingTalkPayload, db: Session = Depends(get_db)
 
     headers = {"x-acs-dingtalk-access-token": token}
     try:
-        status_code, body = post_json(todo_url, todo_payload, headers=headers)
+        result = post_json(todo_url, todo_payload, headers=headers)
     except RuntimeError as exc:
+        try:
+            error_info = json.loads(str(exc))
+        except json.JSONDecodeError:
+            error_info = {
+                "error": str(exc),
+                "error_type": "network",
+                "debug_trace": {
+                    "request_url": todo_url,
+                    "request_headers": {"x-acs-dingtalk-access-token": "***"},
+                    "request_body": todo_payload,
+                    "response_status": None,
+                    "response_body": "",
+                    "request_id": None,
+                },
+            }
         return {
             "channel": "dingtalk_todo",
             "enabled": True,
             "created": False,
             "status": "failed",
-            "error": str(exc),
+            "error": error_info.get("error"),
+            "error_type": error_info.get("error_type", "unknown"),
+            "debug_trace": error_info.get("debug_trace"),
             "payload": todo_payload,
+        }
+
+    if isinstance(result, tuple):
+        status_code, body = result
+        trace = {
+            "request_url": todo_url,
+            "request_headers": {"x-acs-dingtalk-access-token": "***"},
+            "request_body": todo_payload,
+            "response_status": status_code,
+            "response_body": body,
+            "request_id": None,
+        }
+    else:
+        status_code = result["http_status"]
+        body = result["response_body"]
+        trace = {
+            "request_url": result["request_url"],
+            "request_headers": result["request_headers"],
+            "request_body": result["request_body"],
+            "response_status": result["http_status"],
+            "response_body": result["response_body"],
+            "request_id": result.get("request_id"),
         }
 
     created = 200 <= status_code < 300
@@ -551,6 +635,9 @@ def create_dingtalk_todo(payload: DingTalkPayload, db: Session = Depends(get_db)
     ):
         status = "todo_unavailable_due_to_permission"
         permission = "Todo.PersonalTodo.Write"
+    error_type = "api" if not created else "unknown"
+    if status == "failed" and status_code == 0:
+        error_type = "network"
     return {
         "channel": "dingtalk_todo",
         "enabled": True,
@@ -559,6 +646,8 @@ def create_dingtalk_todo(payload: DingTalkPayload, db: Session = Depends(get_db)
         "http_status": status_code,
         "response": body,
         "permission": permission,
+        "error_type": error_type,
+        "debug_trace": trace,
         "payload": todo_payload,
     }
 
@@ -569,13 +658,35 @@ class ExercisePayload(BaseModel):
     name: str
     category: str = ""
     body_parts: str = ""
+    bodyParts: list[str] | None = None
     difficulty: str = "低"
     default_sets: int = 3
+    defaultSets: int | None = None
     default_reps: str | None = None
+    defaultReps: str | None = None
     duration_seconds: int | None = None
+    durationSeconds: int | None = None
     notes: str | None = None
-    tips: str | None = None
+    tips: str | list[str] | None = None
     video_url: str | None = None
+    videos: list[dict] | None = None
+
+    def to_model_dict(self) -> dict:
+        videos = self.videos or []
+        default_video = next((item for item in videos if item.get("isDefault")), videos[0] if videos else {})
+        tips = self.tips
+        return {
+            "name": self.name,
+            "category": self.category,
+            "body_parts": ",".join(self.bodyParts) if self.bodyParts is not None else self.body_parts,
+            "difficulty": self.difficulty,
+            "default_sets": self.defaultSets if self.defaultSets is not None else self.default_sets,
+            "default_reps": self.defaultReps if self.defaultReps is not None else self.default_reps,
+            "duration_seconds": self.durationSeconds if self.durationSeconds is not None else self.duration_seconds,
+            "notes": self.notes,
+            "tips": "|".join(tips) if isinstance(tips, list) else tips,
+            "video_url": default_video.get("url") or self.video_url,
+        }
 
 
 def exercise_to_dict(ex: Exercise) -> dict:
@@ -610,7 +721,7 @@ def get_exercise(exercise_id: int, db: Session = Depends(get_db)) -> dict:
 
 @app.post("/api/exercises", status_code=201)
 def create_exercise(payload: ExercisePayload, db: Session = Depends(get_db)) -> dict:
-    ex = Exercise(**payload.model_dump())
+    ex = Exercise(**payload.to_model_dict())
     db.add(ex)
     db.commit()
     db.refresh(ex)
@@ -622,7 +733,7 @@ def update_exercise(exercise_id: int, payload: ExercisePayload, db: Session = De
     ex = db.query(Exercise).filter(Exercise.id == exercise_id).first()
     if not ex:
         raise HTTPException(status_code=404, detail="动作不存在")
-    for key, value in payload.model_dump().items():
+    for key, value in payload.to_model_dict().items():
         setattr(ex, key, value)
     db.commit()
     db.refresh(ex)
@@ -1009,6 +1120,245 @@ class AISuggestVideoRequest(BaseModel):
     notes: str = ""
 
 
+class PlanGenerateRequest(BaseModel):
+    date: str
+    title: str | None = None
+    theme: str | None = None
+    exerciseIds: list[int] = []
+    notes: str | None = None
+
+
+class SessionStartRequest(BaseModel):
+    plan_id: int
+
+
+class SessionUpdateRequest(BaseModel):
+    session_id: int
+    exercise_id: int
+    status: str = "completed"
+    sets_completed: int | None = None
+    reps_completed: str | None = None
+    duration_seconds: int | None = None
+    notes: str | None = None
+
+
+class SessionCompleteRequest(BaseModel):
+    session_id: int
+    notes: str | None = None
+    rating: int | None = None
+
+
+class AIAnalyzeRequest(BaseModel):
+    session_id: int | None = None
+    prompt: str | None = None
+
+
+class AIFeedbackRequest(BaseModel):
+    session_id: int
+    rating: int
+    comment: str | None = None
+
+
+def date_from_iso(value: str) -> date:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="日期格式必须是 YYYY-MM-DD") from exc
+
+
+def _parse_reps(value: str | None) -> int | None:
+    number = re.sub(r"[^0-9]", "", value or "")
+    return int(number) if number else None
+
+
+def plan_to_v31_dict(plan: WorkoutPlan) -> dict:
+    items = [
+        {
+            "id": item.id,
+            "exercise_id": item.exercise_id if item.exercise_id is not None else item.id,
+            "name": item.name,
+            "sortOrder": item.sort_order,
+            "sets": item.sets,
+            "reps": item.reps,
+            "durationSeconds": item.duration_seconds,
+            "videoUrl": item.video_url,
+            "notes": item.description,
+        }
+        for item in sorted(plan.exercises, key=lambda row: row.sort_order)
+    ]
+    return {
+        "id": plan.id,
+        "date": as_date(plan.plan_date).isoformat(),
+        "title": plan.title,
+        "theme": plan.focus,
+        "notes": plan.notes,
+        "isTrainingDay": bool(plan.is_training_day),
+        "items": items,
+    }
+
+
+def session_record_to_v31_dict(record: SessionRecord) -> dict:
+    return {
+        "id": record.id,
+        "session_id": record.session_id,
+        "exercise_id": record.exercise_id,
+        "status": record.status,
+        "sets_completed": record.sets_completed,
+        "reps_completed": record.reps_completed,
+        "duration_seconds": record.duration_seconds,
+        "notes": record.notes,
+        "completed_at": record.completed_at.isoformat() if record.completed_at else None,
+    }
+
+
+def session_to_v31_dict(session: WorkoutSession) -> dict:
+    return {
+        "id": session.id,
+        "plan_id": session.plan_id,
+        "status": session.status,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+        "notes": session.notes,
+        "rating": session.rating,
+        "ai_feedback": session.ai_feedback,
+        "records": [session_record_to_v31_dict(record) for record in session.records],
+    }
+
+
+def call_openai_compatible(base_url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, timeout: int = 60) -> dict:
+    content = _call_ai_chat(base_url, api_key, model, system_prompt, user_prompt, timeout=timeout)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"AI 返回非 JSON：{content[:300]}") from exc
+
+
+def _require_plan(db: Session, plan_id: int) -> WorkoutPlan:
+    plan = db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="计划不存在")
+    return plan
+
+
+def _require_session(db: Session, session_id: int) -> WorkoutSession:
+    session = db.query(WorkoutSession).filter(WorkoutSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="训练会话不存在")
+    return session
+
+
+def _local_ai_analysis(session: WorkoutSession) -> dict:
+    completed = sum(1 for record in session.records if record.status == "completed")
+    total = len(session.records) or 1
+    score = round((completed / total) * 100)
+    return {
+        "session_id": session.id,
+        "score": score,
+        "summary": "训练记录已完成分析。",
+        "adjustments": ["保持当前低强度节奏", "下次训练优先保证动作质量"],
+    }
+
+
+def _run_session_analysis(session: WorkoutSession) -> dict:
+    config = _ai_config()
+    if not config["enabled"]:
+        return _local_ai_analysis(session)
+    payload = {"session": session_to_v31_dict(session), "plan": plan_to_v31_dict(session.plan)}
+    return call_openai_compatible(
+        config["base_url"],
+        config["api_key"],
+        config["model"],
+        "你是运动训练复审助手，只能给 session 评分、训练调整建议，禁止输出写库指令。请返回 JSON。",
+        json.dumps(payload, ensure_ascii=False),
+    )
+
+
+@app.get("/api/plans")
+def list_v31_plans(date: str | None = Query(None), db: Session = Depends(get_db)) -> dict:
+    query = db.query(WorkoutPlan).order_by(WorkoutPlan.plan_date.asc())
+    if date:
+        query = query.filter(WorkoutPlan.plan_date == date_from_iso(date))
+    return {"plans": [plan_to_v31_dict(plan) for plan in query.all()]}
+
+
+@app.post("/api/plans/generate")
+def generate_plan(payload: PlanGenerateRequest, db: Session = Depends(get_db)) -> dict:
+    plan_date = date_from_iso(payload.date)
+    plan = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == plan_date).first()
+    if plan is None:
+        plan = WorkoutPlan(plan_date=plan_date, title=payload.title or "生成训练计划", is_training_day=True, focus=payload.theme or "训练建议", notes=payload.notes or "")
+        db.add(plan)
+        db.flush()
+    else:
+        plan.title = payload.title or plan.title
+        plan.is_training_day = True
+        plan.focus = payload.theme or plan.focus
+        plan.notes = payload.notes if payload.notes is not None else plan.notes
+        for item in list(plan.exercises):
+            db.delete(item)
+        db.flush()
+    for idx, exercise_id in enumerate(payload.exerciseIds, start=1):
+        exercise = db.query(Exercise).filter(Exercise.id == exercise_id).first()
+        if not exercise:
+            raise HTTPException(status_code=404, detail=f"动作不存在：{exercise_id}")
+        db.add(WorkoutExercise(plan_id=plan.id, exercise_id=exercise.id, sort_order=idx, name=exercise.name, description=exercise.notes or "", sets=exercise.default_sets, duration_seconds=exercise.duration_seconds, reps=_parse_reps(exercise.default_reps), video_url=exercise.video_url))
+    db.commit()
+    db.refresh(plan)
+    return {"status": "ok", "plan": plan_to_v31_dict(plan)}
+
+
+@app.post("/api/session/start")
+def start_session(payload: SessionStartRequest, db: Session = Depends(get_db)) -> dict:
+    plan = _require_plan(db, payload.plan_id)
+    session = WorkoutSession(plan_id=plan.id, status="in_progress")
+    db.add(session)
+    db.flush()
+    for item in plan.exercises:
+        db.add(SessionRecord(session_id=session.id, exercise_id=item.exercise_id if item.exercise_id is not None else item.id, status="pending"))
+    db.commit()
+    db.refresh(session)
+    return {"status": "started", "session": session_to_v31_dict(session), "plan": plan_to_v31_dict(plan)}
+
+
+@app.post("/api/session/update")
+def update_session(payload: SessionUpdateRequest, db: Session = Depends(get_db)) -> dict:
+    session = _require_session(db, payload.session_id)
+    record = db.query(SessionRecord).filter(SessionRecord.session_id == session.id, SessionRecord.exercise_id == payload.exercise_id).first()
+    if record is None:
+        record = SessionRecord(session_id=session.id, exercise_id=payload.exercise_id)
+        db.add(record)
+    record.status = payload.status
+    record.sets_completed = payload.sets_completed
+    record.reps_completed = payload.reps_completed
+    record.duration_seconds = payload.duration_seconds
+    record.notes = payload.notes
+    if payload.status == "completed":
+        record.completed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(record)
+    return {"status": "updated", "record": session_record_to_v31_dict(record)}
+
+
+@app.post("/api/session/complete")
+def complete_session(payload: SessionCompleteRequest, db: Session = Depends(get_db)) -> dict:
+    session = _require_session(db, payload.session_id)
+    session.status = "completed"
+    session.completed_at = datetime.utcnow()
+    session.notes = payload.notes
+    session.rating = payload.rating
+    completed_records = db.query(SessionRecord).filter(SessionRecord.session_id == session.id, SessionRecord.status == "completed").count()
+    db.add(WorkoutLog(plan_id=session.plan_id, action="completed", status="completed", notes=payload.notes))
+    db.commit()
+    db.refresh(session)
+    return {"status": "completed", "session": session_to_v31_dict(session), "summary": {"completed_records": completed_records}}
+
+
+@app.post("/api/ai/feedback")
+def ai_feedback(payload: AIFeedbackRequest, db: Session = Depends(get_db)) -> dict:
+    session = _require_session(db, payload.session_id)
+    return {"status": "feedback_recorded", "session_id": session.id, "rating": payload.rating, "comment": payload.comment}
+
+
 @app.get("/api/ai/health")
 def ai_health():
     config = _ai_config()
@@ -1143,8 +1493,14 @@ def ai_import_plan(payload: AIImportRequest):
 
 
 @app.post("/api/ai/analyze")
-def ai_analyze(payload: AIImportRequest):
-    return ai_import_plan(payload)
+def ai_analyze(payload: AIAnalyzeRequest, db: Session = Depends(get_db)):
+    if payload.session_id is not None:
+        session = _require_session(db, payload.session_id)
+        analysis = _run_session_analysis(session)
+        return {"status": "analysis", "analysis": analysis, "warnings": []}
+    if payload.prompt:
+        return ai_import_plan(AIImportRequest(prompt=payload.prompt))
+    raise HTTPException(status_code=422, detail="必须提供 session_id 或 prompt")
 
 
 @app.post("/api/ai/suggest-bilibili-video")
