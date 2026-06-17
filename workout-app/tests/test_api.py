@@ -478,18 +478,29 @@ def test_ai_health_configured(client, monkeypatch):
     assert "已配置" in body["message"]
 
 
-def test_ai_import_plan_no_key_returns_400(client, monkeypatch):
-    monkeypatch.delenv("WORKOUT_AI_BASE_URL", raising=False)
-    monkeypatch.delenv("WORKOUT_AI_API_KEY", raising=False)
+def test_ai_import_plan_no_key_returns_fallback(client, monkeypatch):
+    for name in [
+        "WORKOUT_AI_BASE_URL", "WORKOUT_AI_API_KEY", "WORKOUT_AI_MODEL",
+        "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
+        "DEEPSEEK_BASE_URL", "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL",
+        "WUAPI_BASE_URL", "WUAPI_API_KEY", "WUAPI_MODEL",
+    ]:
+        monkeypatch.delenv(name, raising=False)
 
     response = client.post("/api/ai/import-plan", json={"prompt": "生成一份核心训练"})
-
-    assert response.status_code == 400
-    assert "未配置" in response.json()["detail"]
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "fallback"
+    assert body["ai_enabled"] is False
+    assert "bilibili.com" in body["fallback"]["search_url"]
 
 
 VALID_DRAFT_JSON = json.dumps({
     "version": "1.0",
+    "source": "ai_generated",
+    "title": "核心训练",
+    "theme": "核心控制",
+    "recommendedDate": "2026-06-22",
     "exercises": [
         {
             "id": "pelvic_tilt",
@@ -603,16 +614,24 @@ def test_ai_import_plan_handles_schedule_to_plans(client, monkeypatch):
     assert body["draft"]["plans"][1]["type"] == "rest"
 
 
-def test_ai_suggest_bilibili_no_key_400(client, monkeypatch):
-    monkeypatch.delenv("WORKOUT_AI_BASE_URL", raising=False)
-    monkeypatch.delenv("WORKOUT_AI_API_KEY", raising=False)
+def test_ai_suggest_bilibili_no_key_fallback(client, monkeypatch):
+    for name in [
+        "WORKOUT_AI_BASE_URL", "WORKOUT_AI_API_KEY", "WORKOUT_AI_MODEL",
+        "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
+        "DEEPSEEK_BASE_URL", "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL",
+        "WUAPI_BASE_URL", "WUAPI_API_KEY", "WUAPI_MODEL",
+    ]:
+        monkeypatch.delenv(name, raising=False)
 
     response = client.post("/api/ai/suggest-bilibili-video", json={
         "exercise_name": "平板支撑",
     })
 
-    assert response.status_code == 400
-    assert "未配置" in response.json()["detail"]
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "fallback"
+    assert body["ai_enabled"] is False
+    assert "bilibili.com" in body["search_url"]
 
 
 def test_ai_suggest_bilibili_valid(client, monkeypatch):
@@ -956,7 +975,189 @@ def test_stats_overall_matches_month_sum(client):
     assert overall["training_days"] >= june["training_days"]
 
 
-# ── Seed Data Consistency ─────────────────────────────────────────────────────
+# ── Real AI Assistant ───────────────────────────────────────────────────────
+
+
+def _valid_ai_draft():
+    return {
+        "version": "1.0",
+        "source": "ai_generated",
+        "title": "核心稳定训练",
+        "theme": "核心控制",
+        "recommendedDate": "2026-06-15",
+        "exercises": [
+            {
+                "id": "dead_bug_ai",
+                "name": "死虫训练",
+                "category": "核心控制",
+                "bodyParts": ["核心"],
+                "difficulty": "低",
+                "defaultSets": 3,
+                "defaultReps": "10次/侧",
+                "durationSeconds": None,
+                "notes": "保持腰背贴地",
+                "tips": ["慢速控制"],
+                "videos": [
+                    {
+                        "id": "video_dead_bug_ai",
+                        "title": "死虫训练 B站搜索",
+                        "platform": "bilibili",
+                        "url": "https://search.bilibili.com/all?keyword=%E6%AD%BB%E8%99%AB%E8%AE%AD%E7%BB%83",
+                        "isDefault": True,
+                        "remark": "AI 建议搜索词",
+                    }
+                ],
+            }
+        ],
+        "templates": [
+            {
+                "id": "core_ai_template",
+                "name": "核心稳定训练",
+                "description": "AI 生成草稿，需用户确认后导入",
+                "exerciseIds": ["dead_bug_ai"],
+                "difficulty": "低强度",
+                "estimatedMinutes": 25,
+            }
+        ],
+        "schedule": {
+            "2026-06-15": {
+                "type": "training",
+                "templateId": "core_ai_template",
+                "status": "pending",
+                "note": "注意腰背稳定",
+            }
+        },
+    }
+
+
+def test_ai_health_unconfigured_reports_disabled(client, monkeypatch):
+    for name in [
+        "WORKOUT_AI_API_KEY", "WORKOUT_AI_BASE_URL", "WORKOUT_AI_MODEL",
+        "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+        "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
+        "WUAPI_API_KEY", "WUAPI_BASE_URL", "WUAPI_MODEL",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+
+    response = client.get("/api/ai/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["key_configured"] is False
+    assert body["base_url"] == ""
+    assert "api_key" not in body
+
+
+def test_ai_health_deepseek_env_uses_safe_defaults(client, monkeypatch):
+    monkeypatch.delenv("WORKOUT_AI_API_KEY", raising=False)
+    monkeypatch.delenv("WORKOUT_AI_BASE_URL", raising=False)
+    monkeypatch.delenv("WORKOUT_AI_MODEL", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-secret-key")
+
+    response = client.get("/api/ai/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is True
+    assert body["model"] == "deepseek-v4-flash"
+    assert body["base_url"] == "api.deepseek.com"
+    assert "test-secret-key" not in json.dumps(body, ensure_ascii=False)
+
+
+def test_ai_import_plan_calls_openai_compatible_backend(app_modules, client, monkeypatch):
+    _database, main = app_modules
+    captured = {}
+
+    def fake_call(base_url, api_key, model, system_prompt, user_prompt, timeout=60):
+        captured.update({
+            "base_url": base_url,
+            "api_key": api_key,
+            "model": model,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "timeout": timeout,
+        })
+        return json.dumps(_valid_ai_draft(), ensure_ascii=False)
+
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "test-secret-key")
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://ai.example.test/v1")
+    monkeypatch.setenv("WORKOUT_AI_MODEL", "deepseek-v4-flash")
+    monkeypatch.setattr(main, "_call_ai_chat", fake_call)
+
+    response = client.post("/api/ai/analyze", json={"prompt": "生成核心训练"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "draft"
+    assert body["ai_enabled"] is True
+    assert body["draft"]["exercises"][0]["name"] == "死虫训练"
+    assert body["draft"]["plans"][0]["date"] == "2026-06-15"
+    assert captured["base_url"] == "https://ai.example.test/v1"
+    assert captured["api_key"] == "test-secret-key"
+    assert captured["model"] == "deepseek-v4-flash"
+    assert "Bilibili" in captured["system_prompt"] or "bilibili" in captured["system_prompt"]
+
+
+def test_ai_import_plan_rejects_youtube_from_model(app_modules, client, monkeypatch):
+    _database, main = app_modules
+    draft = _valid_ai_draft()
+    draft["exercises"][0]["videos"][0]["url"] = "https://youtu.be/not-allowed"
+
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "test-secret-key")
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://ai.example.test/v1")
+    monkeypatch.setattr(main, "_call_ai_chat", lambda *args, **kwargs: json.dumps(draft, ensure_ascii=False))
+
+    response = client.post("/api/ai/import-plan", json={"prompt": "生成训练"})
+
+    assert response.status_code == 422
+    assert "非 Bilibili" in response.json()["detail"] or "Bilibili" in response.json()["detail"]
+
+
+def test_ai_import_plan_rejects_non_json_model_output(app_modules, client, monkeypatch):
+    _database, main = app_modules
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "test-secret-key")
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://ai.example.test/v1")
+    monkeypatch.setattr(main, "_call_ai_chat", lambda *args, **kwargs: "不是 JSON")
+
+    response = client.post("/api/ai/import-plan", json={"prompt": "生成训练"})
+
+    assert response.status_code == 422
+    assert "不是合法 JSON" in response.json()["detail"]
+
+
+def test_ai_import_plan_rejects_missing_required_fields(app_modules, client, monkeypatch):
+    _database, main = app_modules
+    draft = _valid_ai_draft()
+    draft.pop("title")
+
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "test-secret-key")
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://ai.example.test/v1")
+    monkeypatch.setattr(main, "_call_ai_chat", lambda *args, **kwargs: json.dumps(draft, ensure_ascii=False))
+
+    response = client.post("/api/ai/import-plan", json={"prompt": "生成训练"})
+
+    assert response.status_code == 422
+    assert "title" in response.json()["detail"]
+
+
+def test_ai_unconfigured_returns_bilibili_fallback_preview(client, monkeypatch):
+    for name in [
+        "WORKOUT_AI_API_KEY", "WORKOUT_AI_BASE_URL", "WORKOUT_AI_MODEL",
+        "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+        "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
+        "WUAPI_API_KEY", "WUAPI_BASE_URL", "WUAPI_MODEL",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+
+    response = client.post("/api/ai/analyze", json={"prompt": "死虫训练"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "fallback"
+    assert body["ai_enabled"] is False
+    assert "search.bilibili.com" in body["fallback"]["search_url"]
+    assert body["draft"] is None
 
 
 def test_exercises_table_seeded_correctly(app_modules):

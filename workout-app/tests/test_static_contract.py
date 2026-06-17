@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
 
+from main import app
+
 
 APP_DIR = Path(__file__).resolve().parents[1]
 
@@ -27,6 +29,11 @@ def test_frontend_calls_existing_backend_endpoints():
 
     for endpoint in expected:
         assert endpoint in app_js
+
+
+def test_ai_analyze_route_is_registered():
+    routes = {route.path for route in app.routes}
+    assert "/api/ai/analyze" in routes
 
 
 def test_frontend_primary_copy_is_chinese():

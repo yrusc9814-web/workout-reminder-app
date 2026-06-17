@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -792,8 +792,54 @@ def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(
 # AI 辅助能力（第二阶段）
 # ---------------------------------------------------------------------------
 
-BILIBILI_DOMAINS = {"bilibili.com", "www.bilibili.com", "b23.tv"}
+BILIBILI_DOMAINS = {"bilibili.com", "www.bilibili.com", "b23.tv", "search.bilibili.com"}
 FORBIDDEN_DOMAINS = {"youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com"}
+AI_API_KEY_VARS = ("WORKOUT_AI_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "WUAPI_API_KEY")
+AI_BASE_URL_VARS = ("WORKOUT_AI_BASE_URL", "OPENAI_BASE_URL", "DEEPSEEK_BASE_URL", "WUAPI_BASE_URL")
+AI_MODEL_VARS = ("WORKOUT_AI_MODEL", "OPENAI_MODEL", "DEEPSEEK_MODEL", "WUAPI_MODEL")
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+DEFAULT_AI_MODEL = "deepseek-v4-flash"
+
+
+def _first_env(names: tuple[str, ...]) -> tuple[str, str]:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value, name
+    return "", ""
+
+
+def _ai_config() -> dict:
+    api_key, api_key_var = _first_env(AI_API_KEY_VARS)
+    base_url, base_url_var = _first_env(AI_BASE_URL_VARS)
+    model, model_var = _first_env(AI_MODEL_VARS)
+    if api_key and not base_url and api_key_var == "DEEPSEEK_API_KEY":
+        base_url = DEFAULT_DEEPSEEK_BASE_URL
+        base_url_var = "DEFAULT_DEEPSEEK_BASE_URL"
+    if api_key and not model:
+        model = DEFAULT_AI_MODEL
+        model_var = "DEFAULT_AI_MODEL"
+    return {
+        "api_key": api_key,
+        "api_key_var": api_key_var,
+        "base_url": base_url.rstrip("/"),
+        "base_url_var": base_url_var,
+        "model": model,
+        "model_var": model_var,
+        "enabled": bool(api_key and base_url and model),
+    }
+
+
+def _safe_base_url_label(base_url: str) -> str:
+    if not base_url:
+        return ""
+    parsed = urlparse(base_url)
+    return parsed.netloc or base_url.split("/")[0]
+
+
+def _bilibili_search_url(keyword: str) -> str:
+    query = quote((keyword or "训练动作").strip() or "训练动作")
+    return f"https://search.bilibili.com/all?keyword={query}"
 
 
 def _validate_bilibili_url(url: str) -> bool:
@@ -822,17 +868,17 @@ def _validate_ai_draft(draft: dict) -> list[str]:
     if not isinstance(draft, dict):
         return ["AI 返回的数据格式错误，预期为 JSON 对象"]
 
-    if "version" not in draft:
-        errors.append("缺少 version 字段")
+    for field_name in ("version", "title", "theme", "recommendedDate"):
+        if not draft.get(field_name) or not isinstance(draft.get(field_name), str):
+            errors.append(f"缺少 {field_name} 字段")
 
     exercises = draft.get("exercises", [])
+    exercise_ids = set()
     if not isinstance(exercises, list):
         errors.append("exercises 必须是数组")
     else:
         if len(exercises) == 0:
             errors.append("exercises 至少需要 1 个动作")
-
-        exercise_ids = set()
         for i, exercise in enumerate(exercises):
             if not isinstance(exercise, dict):
                 errors.append(f"第 {i+1} 个动作格式错误")
@@ -846,13 +892,22 @@ def _validate_ai_draft(draft: dict) -> list[str]:
                 if eid in exercise_ids:
                     errors.append(f"重复动作 ID：{eid}")
                 exercise_ids.add(eid)
-            if not exercise.get("name") or not isinstance(exercise["name"], str):
+            if not exercise.get("name") or not isinstance(exercise.get("name"), str):
                 errors.append(f"动作 {eid or i+1} 缺少 name 字段")
+            has_reps = bool(exercise.get("defaultReps"))
+            has_duration = exercise.get("durationSeconds") is not None
+            if not exercise.get("defaultSets") or not (has_reps or has_duration):
+                errors.append(f"动作 {exercise.get('name', eid or i+1)} 缺少组数/次数/时长")
+            if not exercise.get("notes") or not isinstance(exercise.get("notes"), str):
+                errors.append(f"动作 {exercise.get('name', eid or i+1)} 缺少注意事项")
 
             videos = exercise.get("videos", [])
             if isinstance(videos, list):
                 default_count = 0
                 for v in videos:
+                    if not isinstance(v, dict):
+                        errors.append(f"动作 {exercise.get('name', eid or i+1)} 的视频格式错误")
+                        continue
                     url = v.get("url", "")
                     if url and not _validate_bilibili_url(url):
                         ename = exercise.get("name", exercise.get("id", ""))
@@ -875,6 +930,8 @@ def _validate_ai_draft(draft: dict) -> list[str]:
             tid = tmpl.get("id", "")
             if not tid:
                 errors.append(f"第 {i+1} 个模板缺少 id")
+            if not tmpl.get("name"):
+                errors.append(f"模板 {tid or i+1} 缺少 name")
             if tid in template_ids:
                 errors.append(f"重复模板 ID：{tid}")
             template_ids.add(tid)
@@ -887,11 +944,15 @@ def _validate_ai_draft(draft: dict) -> list[str]:
         errors.append("schedule 必须是对象")
     else:
         for ds, entry in schedule.items():
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(ds)):
+                errors.append(f"日期 {ds} 格式错误，应为 YYYY-MM-DD")
             if not isinstance(entry, dict):
                 errors.append(f"日期 {ds} 的计划格式错误")
                 continue
             if entry.get("type") == "training" and not entry.get("templateId"):
                 errors.append(f"日期 {ds} 是训练日但缺少 templateId")
+            if entry.get("templateId") and entry.get("templateId") not in template_ids:
+                errors.append(f"日期 {ds} 引用不存在模板：{entry.get('templateId')}")
 
     return errors
 
@@ -950,66 +1011,119 @@ class AISuggestVideoRequest(BaseModel):
 
 @app.get("/api/ai/health")
 def ai_health():
-    base_url = os.environ.get("WORKOUT_AI_BASE_URL", "")
-    api_key = os.environ.get("WORKOUT_AI_API_KEY", "")
-    model = os.environ.get("WORKOUT_AI_MODEL", "gpt-4o-mini")
-    key_configured = bool(base_url and api_key)
+    config = _ai_config()
+    enabled = config["enabled"]
     return {
-        "enabled": key_configured,
+        "enabled": enabled,
         "provider": "openai-compatible",
-        "model": model if key_configured else "",
-        "key_configured": key_configured,
-        "message": "AI 服务已配置" if key_configured
-        else "AI 服务未配置，请设置环境变量 WORKOUT_AI_BASE_URL 和 WORKOUT_AI_API_KEY",
+        "model": config["model"] if enabled else "",
+        "base_url": _safe_base_url_label(config["base_url"]) if enabled else "",
+        "key_configured": bool(config["api_key"]),
+        "config_vars": {
+            "credential_configured": bool(config["api_key"]),
+            "base_url_configured": bool(config["base_url_var"]),
+            "model_configured": bool(config["model_var"]),
+        },
+        "message": "AI 服务已配置" if enabled
+        else "AI 服务未配置，请设置 WORKOUT_AI_API_KEY/WORKOUT_AI_BASE_URL/WORKOUT_AI_MODEL，或兼容的 OPENAI/DEEPSEEK/WUAPI 环境变量",
     }
 
 
-@app.post("/api/ai/import-plan")
-def ai_import_plan(payload: AIImportRequest):
-    base_url = os.environ.get("WORKOUT_AI_BASE_URL", "").rstrip("/")
-    api_key = os.environ.get("WORKOUT_AI_API_KEY", "")
-    model = os.environ.get("WORKOUT_AI_MODEL", "gpt-4o-mini")
+def _fallback_ai_preview(prompt: str) -> dict:
+    query = (prompt or "训练计划").strip()[:80] or "训练计划"
+    search_url = _bilibili_search_url(query)
+    return {
+        "status": "fallback",
+        "ai_enabled": False,
+        "draft": None,
+        "fallback": {
+            "query": query,
+            "search_url": search_url,
+            "message": "AI 服务未配置，已提供 Bilibili 搜索回退链接；不会伪造 AI 结果。",
+        },
+        "warnings": ["AI 服务未配置，未调用外部模型"],
+    }
 
-    if not base_url or not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="AI 服务未配置，请设置 WORKOUT_AI_BASE_URL 和 WORKOUT_AI_API_KEY",
-        )
 
-    system_prompt = """你是一个运动训练计划生成助手。根据用户描述生成结构化训练数据 JSON。
+def _draft_response(draft: dict, ai_enabled: bool = True) -> dict:
+    plans_list = []
+    schedule = draft.get("schedule", {})
+    if isinstance(schedule, dict):
+        for date_str, entry in schedule.items():
+            if isinstance(entry, dict):
+                plans_list.append({
+                    "date": date_str,
+                    "type": entry.get("type", "rest"),
+                    "templateId": entry.get("templateId", ""),
+                    "status": entry.get("status", "pending"),
+                    "note": entry.get("note", ""),
+                })
+    return {
+        "status": "draft",
+        "ai_enabled": ai_enabled,
+        "draft": {
+            "title": draft.get("title", ""),
+            "theme": draft.get("theme", ""),
+            "recommendedDate": draft.get("recommendedDate", ""),
+            "exercises": draft.get("exercises", []),
+            "templates": draft.get("templates", []),
+            "plans": plans_list,
+        },
+        "warnings": [],
+    }
+
+
+def _build_ai_import_prompt() -> str:
+    return """你是一个运动训练计划生成助手。根据用户描述生成结构化训练数据 JSON。
 
 输出格式必须严格遵循：
 {
   "version": "1.0",
   "source": "ai_generated",
+  "title": "训练标题",
+  "theme": "训练主题",
+  "recommendedDate": "YYYY-MM-DD",
   "exercises": [
     {
       "id": "英文ID", "name": "动作名称", "category": "分类",
       "bodyParts": ["部位"], "difficulty": "低/中/高",
       "defaultSets": 3, "defaultReps": "12次", "durationSeconds": null,
-      "notes": "说明", "tips": ["要点1"],
-      "videos": [{"id":"vid","title":"标题","platform":"bilibili","url":"https://www.bilibili.com/video/BVxxx","isDefault":true,"remark":""}]
+      "notes": "注意事项", "tips": ["要点1"],
+      "videos": [{"id":"vid","title":"Bilibili 搜索标题","platform":"bilibili","url":"https://search.bilibili.com/all?keyword=搜索词","isDefault":true,"remark":"搜索词或B站链接"}]
     }
   ],
   "templates": [
-    { "id": "模板ID", "name": "名称", "description": "", "exerciseIds": ["动作ID"] }
+    { "id": "模板ID", "name": "名称", "description": "", "exerciseIds": ["动作ID"], "difficulty": "低强度", "estimatedMinutes": 30 }
   ],
   "schedule": {
     "YYYY-MM-DD": { "type": "training", "templateId": "模板ID", "status": "pending", "note": "" }
   }
 }
 
-要求：
-- exercises 至少 1 个动作，每个动作必须有 id（英文字母数字下划线）和 name
-- 默认视频 URL 必须是 bilibili.com 或 b23.tv
+硬性要求：
+- 只输出 JSON，不要 Markdown，不要解释
+- title、theme、recommendedDate 必填
+- exercises 至少 1 个动作，每个动作必须有名称、组数、次数或时长、注意事项
+- 视频只能给 Bilibili 搜索链接或 bilibili.com/b23.tv 链接
+- 严禁输出 YouTube/youtu.be 链接
 - templates 至少 1 个，exerciseIds 必须引用存在的动作 ID
 - schedule 日期只包含训练日
 - 所有文本使用中文"""
 
+
+@app.post("/api/ai/import-plan")
+def ai_import_plan(payload: AIImportRequest):
+    config = _ai_config()
+    if not config["enabled"]:
+        return _fallback_ai_preview(payload.prompt)
+
     try:
-        content = _call_ai_chat(base_url, api_key, model, system_prompt, payload.prompt)
+        content = _call_ai_chat(
+            config["base_url"], config["api_key"], config["model"],
+            _build_ai_import_prompt(), payload.prompt,
+        )
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=f"AI 调用失败，未生成正式导入结果：{exc}")
 
     try:
         draft = json.loads(content)
@@ -1025,46 +1139,31 @@ def ai_import_plan(payload: AIImportRequest):
             detail="AI 生成的草稿校验失败：\n" + "\n".join(errors),
         )
 
-    # 转换 schedule 为 plans 数组
-    plans_list = []
-    schedule = draft.get("schedule", {})
-    if isinstance(schedule, dict):
-        for date_str, entry in schedule.items():
-            if isinstance(entry, dict):
-                plans_list.append({
-                    "date": date_str,
-                    "type": entry.get("type", "rest"),
-                    "templateId": entry.get("templateId", ""),
-                    "status": entry.get("status", "pending"),
-                    "note": entry.get("note", ""),
-                })
+    return _draft_response(draft, ai_enabled=True)
 
-    return {
-        "status": "draft",
-        "draft": {
-            "exercises": draft.get("exercises", []),
-            "templates": draft.get("templates", []),
-            "plans": plans_list,
-        },
-        "warnings": [],
-    }
+
+@app.post("/api/ai/analyze")
+def ai_analyze(payload: AIImportRequest):
+    return ai_import_plan(payload)
 
 
 @app.post("/api/ai/suggest-bilibili-video")
 def ai_suggest_bilibili_video(payload: AISuggestVideoRequest):
-    base_url = os.environ.get("WORKOUT_AI_BASE_URL", "").rstrip("/")
-    api_key = os.environ.get("WORKOUT_AI_API_KEY", "")
-    model = os.environ.get("WORKOUT_AI_MODEL", "gpt-4o-mini")
-
-    if not base_url or not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="AI 服务未配置，请设置 WORKOUT_AI_BASE_URL 和 WORKOUT_AI_API_KEY",
-        )
-
+    config = _ai_config()
     ex_name = payload.exercise_name or ""
     ex_desc = payload.description or ""
     ex_notes = payload.notes or ""
+    if not config["enabled"]:
+        query = ex_name or ex_desc or "训练动作"
+        search_url = _bilibili_search_url(query)
+        return {
+            "status": "fallback",
+            "ai_enabled": False,
+            "query": query,
+            "search_url": search_url,
+            "candidates": [search_url],
+            "message": "AI 服务未配置，返回 Bilibili 搜索回退链接。",
+        }
 
     system_prompt = """你是一个健身教练，帮助用户在B站寻找训练教学视频。
 
@@ -1080,9 +1179,9 @@ def ai_suggest_bilibili_video(payload: AISuggestVideoRequest):
     user_prompt = f"动作名称：{ex_name}\n描述：{ex_desc}\n备注：{ex_notes}"
 
     try:
-        content = _call_ai_chat(base_url, api_key, model, system_prompt, user_prompt, timeout=30)
+        content = _call_ai_chat(config["base_url"], config["api_key"], config["model"], system_prompt, user_prompt, timeout=30)
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=f"AI 调用失败，未生成视频建议：{exc}")
 
     try:
         result = json.loads(content)
@@ -1096,8 +1195,11 @@ def ai_suggest_bilibili_video(payload: AISuggestVideoRequest):
 
     keywords = result.get("keywords", [])
     search_urls = result.get("searchUrls", [])
+    if not isinstance(keywords, list):
+        keywords = []
+    if not isinstance(search_urls, list):
+        search_urls = []
 
-    # 校验所有 searchUrls 必须在 Bilibili 白名单内
     for url in search_urls:
         if not _validate_bilibili_url(url):
             raise HTTPException(
@@ -1105,14 +1207,13 @@ def ai_suggest_bilibili_video(payload: AISuggestVideoRequest):
                 detail=f"AI 返回了非 Bilibili 视频链接（已拒绝）：{url}",
             )
 
-    query = keywords[0] if keywords else ex_name
-    search_url = search_urls[0] if search_urls else (
-        f"https://search.bilibili.com/all?keyword={query}"
-    )
+    query = str(keywords[0]) if keywords else ex_name
+    search_url = str(search_urls[0]) if search_urls else _bilibili_search_url(query)
 
     return {
         "status": "ok",
+        "ai_enabled": True,
         "query": query,
         "search_url": search_url,
-        "candidates": search_urls,
+        "candidates": search_urls or [search_url],
     }
