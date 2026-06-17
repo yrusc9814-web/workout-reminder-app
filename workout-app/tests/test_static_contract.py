@@ -10,6 +10,9 @@ def test_frontend_calls_existing_backend_endpoints():
 
     expected = [
         "/api/health",
+        "/api/ai/health",
+        "/api/ai/import-plan",
+        "/api/ai/suggest-bilibili-video",
         "/api/today",
         "/api/plans/week?date=${isoToday}",
         "/api/plans/month?year=${year}&month=${month}",
@@ -71,3 +74,31 @@ def test_windows_one_click_launcher_exists():
     assert "http://127.0.0.1:3000" in launcher_text
     assert "start_workout_app.cmd" in shortcut_text
     assert "运动提醒 App.lnk" in shortcut_text
+
+
+def test_frontend_has_ai_entry_points():
+    """前端菜单包含 AI 入口，不再显示 第二阶段开放。"""
+    index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
+    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "data-ai-action" in index_html
+    assert "第二阶段开放" not in index_html
+    assert "data-ai-action" in app_js or "aiSearchVideo" in app_js or "checkAiHealth" in app_js
+
+
+def test_frontend_no_hardcoded_youtube():
+    """前端不可包含 hardcoded YouTube 链接。"""
+    index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
+    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    combined = "\n".join([index_html, app_js])
+
+    # 合法 AI 搜索中引用 YouTube 作为拒绝条件是可以的
+    # 检查是否包含了非注释的 youtube.com 链接
+    lines = combined.split("\n")
+    for i, line in enumerate(lines):
+        if "youtube" in line.lower() or "youtu.be" in line.lower():
+            # 只允许在函数名、注释或拒绝条件中出现
+            if not ("reject" in line.lower() or "拒绝" in line or "youtube" in line.lower() and ("validate" in line.lower() or "FORBIDDEN" in line or "refuse" in line.lower())):
+                # 检查是否在引号中有完整的 URL
+                urls = re.findall(r'https?://(?:www\.)?youtube\.com|https?://youtu\.be', line)
+                assert not urls, f"Line {i+1} contains hardcoded YouTube URL: {line.strip()}"

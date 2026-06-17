@@ -443,3 +443,259 @@ def test_dingtalk_todo_permission_denied_returns_clear_status(client, monkeypatc
     assert body["created"] is False
     assert body["enabled"] is True
     assert body["permission"] == "Todo.PersonalTodo.Write"
+
+
+# ── AI 辅助能力测试 ───────────────────────────────────────────────────────
+
+
+def test_ai_health_unconfigured(client, monkeypatch):
+    monkeypatch.delenv("WORKOUT_AI_BASE_URL", raising=False)
+    monkeypatch.delenv("WORKOUT_AI_API_KEY", raising=False)
+
+    response = client.get("/api/ai/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["provider"] == "openai-compatible"
+    assert body["model"] == ""
+    assert body["key_configured"] is False
+    assert "未配置" in body["message"]
+
+
+def test_ai_health_configured(client, monkeypatch):
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "sk-test")
+    monkeypatch.setenv("WORKOUT_AI_MODEL", "gpt-4o-mini")
+
+    response = client.get("/api/ai/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is True
+    assert body["key_configured"] is True
+    assert body["model"] == "gpt-4o-mini"
+    assert "已配置" in body["message"]
+
+
+def test_ai_import_plan_no_key_returns_400(client, monkeypatch):
+    monkeypatch.delenv("WORKOUT_AI_BASE_URL", raising=False)
+    monkeypatch.delenv("WORKOUT_AI_API_KEY", raising=False)
+
+    response = client.post("/api/ai/import-plan", json={"prompt": "生成一份核心训练"})
+
+    assert response.status_code == 400
+    assert "未配置" in response.json()["detail"]
+
+
+VALID_DRAFT_JSON = json.dumps({
+    "version": "1.0",
+    "exercises": [
+        {
+            "id": "pelvic_tilt",
+            "name": "仰卧骨盆后倾",
+            "category": "核心控制",
+            "bodyParts": ["核心"],
+            "difficulty": "低",
+            "defaultSets": 3,
+            "defaultReps": "12次",
+            "durationSeconds": None,
+            "notes": "核心激活",
+            "tips": ["慢一点"],
+            "videos": [{"id": "v1", "title": "教学", "platform": "bilibili", "url": "https://www.bilibili.com/video/BV1xx", "isDefault": True, "remark": ""}],
+        }
+    ],
+    "templates": [
+        {"id": "core_a", "name": "核心A", "description": "", "exerciseIds": ["pelvic_tilt"]}
+    ],
+    "schedule": {
+        "2026-06-22": {"type": "training", "templateId": "core_a", "status": "pending", "note": ""},
+    },
+})
+
+
+def test_ai_import_plan_valid_draft(client, monkeypatch):
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "sk-test")
+
+    def mock_call(base_url, api_key, model, system_prompt, user_prompt, timeout=60):
+        return VALID_DRAFT_JSON
+
+    monkeypatch.setattr("main._call_ai_chat", mock_call)
+
+    response = client.post("/api/ai/import-plan", json={
+        "prompt": "核心训练",
+        "current_data": {"exercises": [], "templates": [], "schedule": {}},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "draft"
+    assert "draft" in body
+    assert isinstance(body["draft"]["exercises"], list)
+    assert isinstance(body["draft"]["templates"], list)
+    assert isinstance(body["draft"]["plans"], list)
+    assert len(body["draft"]["exercises"]) == 1
+    assert len(body["draft"]["templates"]) == 1
+    assert len(body["draft"]["plans"]) == 1
+    assert body["draft"]["plans"][0]["date"] == "2026-06-22"
+    assert body["draft"]["plans"][0]["type"] == "training"
+    assert body["warnings"] == []
+
+
+def test_ai_import_plan_non_json_returns_422(client, monkeypatch):
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "sk-test")
+
+    def mock_call(base_url, api_key, model, system_prompt, user_prompt, timeout=60):
+        return "这不是 JSON"
+
+    monkeypatch.setattr("main._call_ai_chat", mock_call)
+
+    response = client.post("/api/ai/import-plan", json={"prompt": "核心训练"})
+
+    assert response.status_code == 422
+    assert "不是合法 JSON" in response.json()["detail"]
+
+
+def test_ai_import_plan_structural_error_returns_422(client, monkeypatch):
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "sk-test")
+
+    def mock_call(base_url, api_key, model, system_prompt, user_prompt, timeout=60):
+        return json.dumps({
+            "version": "1.0",
+            "exercises": [],  # 空 — 结构错误
+            "templates": [],
+            "schedule": {},
+        })
+
+    monkeypatch.setattr("main._call_ai_chat", mock_call)
+
+    response = client.post("/api/ai/import-plan", json={"prompt": "核心训练"})
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "校验失败" in detail
+    assert "至少需要 1 个动作" in detail
+
+
+def test_ai_import_plan_handles_schedule_to_plans(client, monkeypatch):
+    """测试 schedule 正确转换为 plans 数组。"""
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "sk-test")
+
+    draft = json.loads(VALID_DRAFT_JSON)
+    draft["schedule"]["2026-06-23"] = {"type": "rest", "status": "pending", "note": "休息"}
+
+    def mock_call(base_url, api_key, model, system_prompt, user_prompt, timeout=60):
+        return json.dumps(draft)
+
+    monkeypatch.setattr("main._call_ai_chat", mock_call)
+
+    response = client.post("/api/ai/import-plan", json={"prompt": "核心训练"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["draft"]["plans"]) == 2
+    assert body["draft"]["plans"][0]["date"] == "2026-06-22"
+    assert body["draft"]["plans"][1]["date"] == "2026-06-23"
+    assert body["draft"]["plans"][1]["type"] == "rest"
+
+
+def test_ai_suggest_bilibili_no_key_400(client, monkeypatch):
+    monkeypatch.delenv("WORKOUT_AI_BASE_URL", raising=False)
+    monkeypatch.delenv("WORKOUT_AI_API_KEY", raising=False)
+
+    response = client.post("/api/ai/suggest-bilibili-video", json={
+        "exercise_name": "平板支撑",
+    })
+
+    assert response.status_code == 400
+    assert "未配置" in response.json()["detail"]
+
+
+def test_ai_suggest_bilibili_valid(client, monkeypatch):
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "sk-test")
+
+    def mock_call(base_url, api_key, model, system_prompt, user_prompt, timeout=60):
+        return json.dumps({
+            "keywords": ["平板支撑 教学"],
+            "searchUrls": ["https://search.bilibili.com/all?keyword=平板支撑"],
+            "recommendedTitle": "平板支撑标准动作教学",
+            "note": "初学者建议从30秒开始",
+        })
+
+    monkeypatch.setattr("main._call_ai_chat", mock_call)
+
+    response = client.post("/api/ai/suggest-bilibili-video", json={
+        "exercise_name": "平板支撑",
+        "description": "核心训练动作",
+        "notes": "30秒一组",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["query"] == "平板支撑 教学"
+    assert "bilibili.com" in body["search_url"]
+    assert isinstance(body["candidates"], list)
+    assert len(body["candidates"]) == 1
+
+
+def test_ai_suggest_bilibili_rejects_youtube(client, monkeypatch):
+    monkeypatch.setenv("WORKOUT_AI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("WORKOUT_AI_API_KEY", "sk-test")
+
+    def mock_call(base_url, api_key, model, system_prompt, user_prompt, timeout=60):
+        return json.dumps({
+            "keywords": ["plank"],
+            "searchUrls": ["https://www.youtube.com/watch?v=xxx"],
+            "recommendedTitle": "",
+            "note": "",
+        })
+
+    monkeypatch.setattr("main._call_ai_chat", mock_call)
+
+    response = client.post("/api/ai/suggest-bilibili-video", json={
+        "exercise_name": "plank",
+    })
+
+    assert response.status_code == 422
+    assert "非 Bilibili" in response.json()["detail"]
+
+
+def test_validate_bilibili_url_pure():
+    """纯函数校验：白名单通过，YouTube 拒绝。"""
+    from main import _validate_bilibili_url
+
+    # 白名单通过
+    assert _validate_bilibili_url("https://www.bilibili.com/video/BV1xx")
+    assert _validate_bilibili_url("https://bilibili.com/video/BV1xx")
+    assert _validate_bilibili_url("https://b23.tv/xxx")
+
+    # 拒绝
+    assert not _validate_bilibili_url("")
+    assert not _validate_bilibili_url(None)
+    assert not _validate_bilibili_url("https://www.youtube.com/watch?v=xxx")
+    assert not _validate_bilibili_url("https://youtu.be/xxx")
+    assert not _validate_bilibili_url("https://m.youtube.com/xxx")
+    assert not _validate_bilibili_url("https://example.com/video")
+
+
+def test_validate_ai_draft_pure():
+    """纯函数校验：合法草稿通过，非 JSON 拒绝。"""
+    from main import _validate_ai_draft
+
+    # 不是字典
+    errors = _validate_ai_draft("not a dict")
+    assert len(errors) > 0
+
+    # 空字典 - 缺少很多东西
+    errors = _validate_ai_draft({})
+    assert len(errors) > 0
+
+    # 缺少 exercises
+    errors = _validate_ai_draft({"version": "1.0"})
+    assert any("exercises" in e for e in errors)

@@ -1,6 +1,9 @@
 const STORAGE_KEY = 'workout_planner_data_v1';
 const BACKEND_ENDPOINT_CONTRACT = [
   '/api/health',
+  '/api/ai/health',
+  '/api/ai/import-plan',
+  '/api/ai/suggest-bilibili-video',
   '/api/today',
   '/api/plans/week?date=${isoToday}',
   '/api/plans/month?year=${year}&month=${month}',
@@ -218,7 +221,7 @@ function renderExercises() {
   const items = state.exercises.filter((exercise) => (category === 'all' || exercise.category === category) && (!keyword || exercise.name.toLowerCase().includes(keyword) || exercise.category.toLowerCase().includes(keyword)));
   $('exerciseList').innerHTML = items.map((exercise) => {
     const video = defaultVideo(exercise);
-    return `<article class="data-card"><div><h3>${escapeHtml(exercise.name)}</h3><p>${escapeHtml(exercise.category)} / ${escapeHtml((exercise.bodyParts || []).join('、'))} / ${escapeHtml(exercise.difficulty)}</p><p>默认组次：${escapeHtml(doseText(exercise))}</p><p>默认 B站视频：${video ? escapeHtml(video.title) : '暂无视频链接'}</p></div><div class="card-actions">${video ? `<a class="btn mini" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili</a>` : ''}<button class="btn mini" data-edit-exercise="${escapeHtml(exercise.id)}" type="button">编辑</button><button class="btn mini" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button><button class="btn danger mini" data-delete-exercise="${escapeHtml(exercise.id)}" type="button">删除</button></div></article>`;
+    return `<article class="data-card"><div><h3>${escapeHtml(exercise.name)}</h3><p>${escapeHtml(exercise.category)} / ${escapeHtml((exercise.bodyParts || []).join('、'))} / ${escapeHtml(exercise.difficulty)}</p><p>默认组次：${escapeHtml(doseText(exercise))}</p><p>默认 B站视频：${video ? escapeHtml(video.title) : '暂无视频链接'}</p></div><div class="card-actions">${video ? `<a class="btn mini" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili</a>` : ''}<button class="btn mini" data-edit-exercise="${escapeHtml(exercise.id)}" type="button">编辑</button><button class="btn mini" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button><button class="btn mini secondary" data-ai-search-video="${escapeHtml(exercise.id)}" type="button">AI搜索</button><button class="btn danger mini" data-delete-exercise="${escapeHtml(exercise.id)}" type="button">删除</button></div></article>`;
   }).join('') || '<div class="empty-state">动作库为空，点击新增动作开始维护。</div>';
 }
 
@@ -232,7 +235,7 @@ function renderTemplates() {
 function renderVideoLinks() {
   $('videoLinkList').innerHTML = state.exercises.map((exercise) => {
     const videos = exercise.videos || [];
-    return `<article class="video-group"><h3>${escapeHtml(exercise.name)}</h3>${videos.length ? videos.map((video) => `<div class="video-row"><div><strong>${escapeHtml(video.title)} ${video.isDefault ? '· 默认' : ''}</strong><span>${escapeHtml(video.url)}</span></div><div><button class="btn mini" data-default-video="${escapeHtml(exercise.id)}::${escapeHtml(video.id)}" type="button">设为默认</button><a class="btn mini" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili</a></div></div>`).join('') : '<p>暂无视频链接</p>'}<button class="btn mini" data-add-video="${escapeHtml(exercise.id)}" type="button">添加B站视频</button></article>`;
+    return `<article class="video-group"><h3>${escapeHtml(exercise.name)}</h3>${videos.length ? videos.map((video) => `<div class="video-row"><div><strong>${escapeHtml(video.title)} ${video.isDefault ? '· 默认' : ''}</strong><span>${escapeHtml(video.url)}</span></div><div><button class="btn mini" data-default-video="${escapeHtml(exercise.id)}::${escapeHtml(video.id)}" type="button">设为默认</button><a class="btn mini" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili</a></div></div>`).join('') : '<p>暂无视频链接</p>'}<button class="btn mini" data-add-video="${escapeHtml(exercise.id)}" type="button">添加B站视频</button><button class="btn mini secondary" data-ai-search-video="${escapeHtml(exercise.id)}" type="button">AI搜索</button></article>`;
   }).join('');
 }
 
@@ -342,6 +345,9 @@ function attachEvents() {
     const target = event.target;
     if (target.dataset.pageLink) switchPage(target.dataset.pageLink);
     if (target.dataset.aiDisabled !== undefined) alert('第二阶段开放');
+    if (target.dataset.aiAction === 'import') { switchPage('settings'); const box = $('aiImportPrompt'); if (box) box.scrollIntoView({ behavior: 'smooth' }); }
+    if (target.dataset.aiAction === 'search-video') openAiVideoSearchDialog(null);
+    if (target.dataset.aiSearchVideo) openAiVideoSearchDialog(target.dataset.aiSearchVideo);
     if (target.dataset.startTraining !== undefined || target.id === 'startTodayTop') startTrainingSession();
     if (target.dataset.expandToday !== undefined) renderTodayCard('dashboardToday', true);
     if (target.dataset.showDetail !== undefined) switchPage('today');
@@ -377,6 +383,16 @@ function attachEvents() {
   $('openImportExport').addEventListener('click', () => switchPage('settings'));
   $('resetLocalData').addEventListener('click', () => { if (confirm('确认重置为默认种子数据？')) { state = defaultData(); saveData(); render(); } });
   $('sendDingTalk').addEventListener('click', sendDingTalk);
+  // AI 事件
+  $('aiTestConnection').addEventListener('click', checkAiHealth);
+  $('aiGenerateDraft').addEventListener('click', generateAiDraft);
+  $('aiConfirmImport').addEventListener('click', confirmAiImport);
+  $('aiCancelImport').addEventListener('click', cancelAiImport);
+  $('aiVideoSearchConfirm').addEventListener('click', confirmAiVideoSearch);
+  $('aiVideoSearchRefresh').addEventListener('click', () => {
+    const exId = $('aiVideoSearchDialog').dataset.exerciseId || null;
+    openAiVideoSearchDialog(exId);
+  });
 }
 
 function saveExerciseFromForm(event) {
@@ -478,6 +494,196 @@ async function sendDingTalk() {
   } catch (error) { $('reminderResult').textContent = `发送失败：${error.message}`; }
 }
 
+// ── AI 辅助能力 ───────────────────────────────────────────────────────────
+
+async function checkAiHealth() {
+  const statusEl = $('aiStatus');
+  statusEl.textContent = '检测中...';
+  try {
+    const response = await fetch('/api/ai/health');
+    const data = await response.json();
+    if (data.enabled) {
+      statusEl.textContent = `AI 服务已配置（${data.model || '未知模型'}）`;
+      statusEl.style.color = 'var(--green)';
+    } else {
+      statusEl.textContent = 'AI 服务未配置';
+      statusEl.style.color = 'var(--yellow)';
+    }
+  } catch (error) {
+    statusEl.textContent = `检测失败：${error.message}`;
+    statusEl.style.color = 'var(--red)';
+  }
+}
+
+async function generateAiDraft() {
+  const prompt = $('aiImportPrompt').value.trim();
+  if (!prompt) { alert('请先输入训练需求描述'); return; }
+  const resultEl = $('aiDraftResult');
+  const errorEl = $('aiImportError');
+  resultEl.style.display = 'none';
+  errorEl.style.display = 'none';
+  const btn = $('aiGenerateDraft');
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  try {
+    const response = await fetch('/api/ai/import-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, current_data: state }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+      throw new Error(err.detail || `请求失败：${response.status}`);
+    }
+    const data = await response.json();
+    // 存为草稿
+    window.__aiDraft = data;
+    const draft = data.draft;
+    const counts = {
+      exercises: draft.exercises?.length || 0,
+      templates: draft.templates?.length || 0,
+      plans: draft.plans?.length || 0,
+    };
+    $('aiDraftPreview').textContent = JSON.stringify(draft, null, 2);
+    $('aiDraftErrors').innerHTML = (data.warnings || []).length
+      ? `<strong>警告：</strong><br/>${data.warnings.map((w) => escapeHtml(w)).join('<br/>')}`
+      : `<span style="color:var(--green)">校验通过 — ${counts.exercises} 个动作、${counts.templates} 个模板、${counts.plans} 天计划</span>`;
+    resultEl.style.display = 'block';
+  } catch (error) {
+    errorEl.textContent = `生成失败：${error.message}`;
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '生成草稿';
+  }
+}
+
+function confirmAiImport() {
+  const data = window.__aiDraft;
+  if (!data) return;
+  const draft = data.draft;
+  // 合并 exercises
+  for (const ex of draft.exercises || []) {
+    const idx = state.exercises.findIndex((e) => e.id === ex.id);
+    if (idx >= 0) state.exercises[idx] = ex;
+    else state.exercises.push(ex);
+  }
+  // 合并 templates
+  for (const tmpl of draft.templates || []) {
+    const idx = state.templates.findIndex((t) => t.id === tmpl.id);
+    if (idx >= 0) state.templates[idx] = tmpl;
+    else state.templates.push(tmpl);
+  }
+  // 合并 plans
+  for (const plan of draft.plans || []) {
+    if (plan.date) {
+      state.schedule[plan.date] = {
+        type: plan.type || 'rest',
+        templateId: plan.templateId || undefined,
+        status: plan.status || 'pending',
+        note: plan.note || '',
+      };
+    }
+  }
+  saveData();
+  render();
+  $('aiDraftResult').style.display = 'none';
+  $('aiImportPrompt').value = '';
+  window.__aiDraft = null;
+  alert('导入完成！');
+}
+
+function cancelAiImport() {
+  $('aiDraftResult').style.display = 'none';
+  $('aiImportError').style.display = 'none';
+  window.__aiDraft = null;
+}
+
+async function openAiVideoSearchDialog(exerciseId) {
+  const dialog = $('aiVideoSearchDialog');
+  const nameEl = $('aiVideoSearchExerciseName');
+  const suggestionsEl = $('aiVideoSearchSuggestions');
+  const urlInput = $('aiVideoSearchFinalUrl');
+  dialog.dataset.exerciseId = exerciseId || '';
+
+  if (!exerciseId) {
+    // 从侧边栏触发 — 先选动作
+    const ids = state.exercises.map((e) => e.id);
+    if (!ids.length) { alert('动作库为空，请先添加动作。'); return; }
+    const chosen = prompt('为哪个动作搜索视频？输入动作 ID：\n' + ids.join(', '));
+    if (!chosen) return;
+    exerciseId = chosen.trim();
+    dialog.dataset.exerciseId = exerciseId;
+  }
+
+  const exercise = exerciseById(exerciseId);
+  if (!exercise) { alert('未找到该动作'); return; }
+  nameEl.textContent = `动作：${exercise.name}（${exercise.category}）`;
+  urlInput.value = '';
+  suggestionsEl.innerHTML = '搜索中...';
+
+  try {
+    const response = await fetch('/api/ai/suggest-bilibili-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        exercise_name: exercise.name,
+        description: exercise.notes || '',
+        notes: (exercise.tips || []).join('；'),
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+      // 未配置 AI 时，生成默认搜索链接
+      if (response.status === 400) {
+        const query = encodeURIComponent(exercise.name);
+        suggestionsEl.innerHTML = `
+          <p>AI 服务未配置，已生成基础搜索链接：</p>
+          <a href="https://search.bilibili.com/all?keyword=${query}" target="_blank" rel="noopener noreferrer">B站搜索「${escapeHtml(exercise.name)}」</a>
+        `;
+        urlInput.value = `https://search.bilibili.com/all?keyword=${query}`;
+        dialog.showModal();
+        return;
+      }
+      throw new Error(err.detail || `请求失败：${response.status}`);
+    }
+    const data = await response.json();
+    suggestionsEl.innerHTML = `
+      <p>搜索关键词：<strong>${escapeHtml(data.query)}</strong></p>
+      <p>B站搜索链接：<a href="${escapeHtml(data.search_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(data.search_url)}</a></p>
+      ${data.candidates?.length ? `<p>建议的视频链接：</p><ul>${data.candidates.map((c) => `<li><a href="${escapeHtml(c)}" target="_blank">${escapeHtml(c)}</a></li>`).join('')}</ul>` : ''}
+      <p style="margin-top:8px;color:var(--muted)">请手动确认或修改最终链接后点击「确认使用」。</p>
+    `;
+    urlInput.value = data.search_url || '';
+  } catch (error) {
+    suggestionsEl.innerHTML = `<span style="color:var(--red)">搜索失败：${escapeHtml(error.message)}</span>`;
+  }
+  dialog.showModal();
+}
+
+function confirmAiVideoSearch(event) {
+  event.preventDefault();
+  const dialog = $('aiVideoSearchDialog');
+  const exerciseId = dialog.dataset.exerciseId;
+  const url = $('aiVideoSearchFinalUrl').value.trim();
+  if (!exerciseId || !url) { alert('请填写视频链接'); return; }
+  const exercise = exerciseById(exerciseId);
+  if (!exercise) { alert('动作已不存在'); return; }
+  exercise.videos = exercise.videos || [];
+  exercise.videos.push({
+    id: uid('vid'),
+    title: exercise.name + ' 教学视频',
+    platform: 'bilibili',
+    url,
+    isDefault: !exercise.videos.some((v) => v.isDefault),
+    remark: '由 AI 搜索添加',
+  });
+  saveData();
+  render();
+  dialog.close();
+  alert('视频链接已添加！');
+}
 loadHealth();
+checkAiHealth();
 attachEvents();
 render();
