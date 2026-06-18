@@ -286,6 +286,12 @@ def write_log(db: Session, plan_id: int, state: str, notes: Optional[str]) -> di
     return log_item(row)
 
 
+@app.get("/session.html", include_in_schema=False)
+@app.head("/session.html", include_in_schema=False)
+def session_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "session.html")
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}

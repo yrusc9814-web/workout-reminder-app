@@ -33,6 +33,7 @@ const today = new Date();
 const isoToday = today.toISOString().slice(0, 10);
 let currentPage = 'dashboard';
 let visibleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+let startupState = 'loading';
 let state = loadData();
 let session = null;
 
@@ -98,25 +99,12 @@ function normalizeData(data) {
 }
 
 function loadData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const seeded = defaultData();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-      return seeded;
-    }
-    return normalizeData(JSON.parse(raw));
-  } catch (error) {
-    console.error('本地数据损坏，已重新初始化', error);
-    const seeded = defaultData();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-    return seeded;
-  }
+  const fallback = defaultData();
+  return normalizeData(fallback);
 }
 
 function saveData() {
   state.updatedAt = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   updateStorageUsage();
 }
 
@@ -140,20 +128,41 @@ function validateBilibiliUrl(url) {
 }
 
 function updateStorageUsage() {
-  const bytes = new Blob([localStorage.getItem(STORAGE_KEY) || '']).size;
-  $('storageUsage').textContent = `${(bytes / 1024).toFixed(1)} KB / 5 MB`;
+  const payload = JSON.stringify(state || {});
+  const bytes = new Blob([payload]).size;
+  $('storageUsage').textContent = `API 缓存 ${(bytes / 1024).toFixed(1)} KB`;
 }
 
 async function loadHealth() {
+  startupState = 'loading';
   try {
-    const response = await fetch('/api/health');
-    if (!response.ok) throw new Error(String(response.status));
+    const [healthResponse, todayResponse] = await Promise.all([
+      fetch('/api/health'),
+      fetch('/api/today'),
+    ]);
+    if (!healthResponse.ok) throw new Error(String(healthResponse.status));
+    if (!todayResponse.ok) throw new Error(String(todayResponse.status));
+    const todayPayload = await todayResponse.json();
+    const nextState = defaultData();
+    if (todayPayload?.date) {
+      nextState.schedule[todayPayload.date] = {
+        type: todayPayload.is_training ? 'training' : 'rest',
+        templateId: todayPayload.is_training ? 'core_stability' : undefined,
+        status: 'pending',
+        note: todayPayload.notes || '',
+      };
+    }
+    state = normalizeData(nextState);
+    startupState = 'api_ready';
     $('health').className = 'status-pill ok';
     $('health').textContent = '后端正常';
+    startupState = 'ready';
   } catch (error) {
+    startupState = 'ready';
     $('health').className = 'status-pill warn';
-    $('health').textContent = '本地前端可用';
+    $('health').textContent = '后端未就绪';
   }
+  updateStorageUsage();
 }
 
 function switchPage(page) {
@@ -335,6 +344,7 @@ function renderTrainingSession() {
 
 function render() {
   updateStorageUsage();
+  if ($('health')) $('health').dataset.startupState = startupState;
   renderTodayCard('dashboardToday');
   renderTodayCard('todayDetail', true);
   renderDashboardManagement();
@@ -358,9 +368,8 @@ function openPlanDialog(date) {
 
 function openExerciseDialog(id = null) {
   const exercise = id ? exerciseById(id) : { id: '', name: '', category: '核心控制', bodyParts: ['核心'], difficulty: '低', defaultSets: 3, defaultReps: '10次', durationSeconds: null, notes: '', tips: [], videos: [] };
-  $('exerciseForm').innerHTML = `<h2>${id ? '编辑动作' : '新增动作'}</h2><label>动作 ID<input name="id" value="${escapeHtml(exercise.id)}" ${id ? 'readonly' : ''} required pattern="[A-Za-z0-9_]+" /></label><label>动作名称<input name="name" value="${escapeHtml(exercise.name)}" required /></label><label>分类<input name="category" value="${escapeHtml(exercise.category)}" required /></label><label>训练部位<input name="bodyParts" value="${escapeHtml((exercise.bodyParts || []).join('、'))}" /></label><label>难度<select name="difficulty"><option ${exercise.difficulty === '低' ? 'selected' : ''}>低</option><option ${exercise.difficulty === '中' ? 'selected' : ''}>中</option><option ${exercise.difficulty === '高' ? 'selected' : ''}>高</option></select></label><label>默认组数<input name="defaultSets" type="number" min="1" value="${escapeHtml(exercise.defaultSets)}" /></label><label>动作类型<select name="motionType"><option value="reps" ${exercise.durationSeconds ? '' : 'selected'}>次数型</option><option value="duration" ${exercise.durationSeconds ? 'selected' : ''}>计时型</option></select></label><label>默认次数<input name="defaultReps" value="${escapeHtml(exercise.defaultReps || '')}" /></label><label>默认时长秒数<input name="durationSeconds" type="number" min="1" value="${escapeHtml(exercise.durationSeconds || '')}" /></label><label>动作备注<textarea name="notes">${escapeHtml(exercise.notes || '')}</textarea></label><label>动作要点（每行一条）<textarea name="tips">${escapeHtml((exercise.tips || []).join('
-'))}</textarea></label><div class="modal-actions"><button class="btn secondary" type="button" data-close-modal>取消</button><button class="btn primary" type="submit">保存</button></div>`;
-  $('exerciseDialog').dataset.editingId = id || '';
+  $('exerciseForm').innerHTML = `<h2>${id ? '编辑动作' : '新增动作'}</h2><label>动作 ID<input name="id" value="${escapeHtml(exercise.id)}" ${id ? 'readonly' : ''} required pattern="[A-Za-z0-9_]+" /></label><label>动作名称<input name="name" value="${escapeHtml(exercise.name)}" required /></label><label>分类<input name="category" value="${escapeHtml(exercise.category)}" required /></label><label>训练部位<input name="bodyParts" value="${escapeHtml((exercise.bodyParts || []).join('、'))}" /></label><label>难度<select name="difficulty"><option ${exercise.difficulty === '低' ? 'selected' : ''}>低</option><option ${exercise.difficulty === '中' ? 'selected' : ''}>中</option><option ${exercise.difficulty === '高' ? 'selected' : ''}>高</option></select></label><label>默认组数<input name="defaultSets" type="number" min="1" value="${escapeHtml(exercise.defaultSets)}" /></label><label>动作类型<select name="motionType"><option value="reps" ${exercise.durationSeconds ? '' : 'selected'}>次数型</option><option value="duration" ${exercise.durationSeconds ? 'selected' : ''}>计时型</option></select></label><label>默认次数<input name="defaultReps" value="${escapeHtml(exercise.defaultReps || '')}" /></label><label>默认时长秒数<input name="durationSeconds" type="number" min="1" value="${escapeHtml(exercise.durationSeconds || '')}" /></label><label>动作备注<textarea name="notes">${escapeHtml(exercise.notes || '')}</textarea></label><label>动作要点（每行一条）<textarea name="tips">${escapeHtml((exercise.tips || []).join('\n'))}</textarea></label><div class="modal-actions"><button class="btn secondary" type="button" data-close-modal>取消</button><button class="btn primary" type="submit">保存</button></div>`;
+
   $('exerciseDialog').showModal();
 }
 
@@ -822,8 +831,33 @@ function confirmAiVideoSearch(event) {
   dialog.close();
   alert('视频链接已添加！');
 }
-loadHealth();
-checkAiHealth();
-attachEvents();
-render();
+async function bootstrapApp() {
+  render();
+  attachEvents();
+  await loadHealth();
+  checkAiHealth();
+  render();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    bootstrapApp().catch((error) => {
+      console.error('bootstrap failed', error);
+      const healthEl = $('health');
+      if (healthEl) {
+        healthEl.className = 'status-pill warn';
+        healthEl.textContent = '前端启动失败';
+      }
+    });
+  }, { once: true });
+} else {
+  bootstrapApp().catch((error) => {
+    console.error('bootstrap failed', error);
+    const healthEl = $('health');
+    if (healthEl) {
+      healthEl.className = 'status-pill warn';
+      healthEl.textContent = '前端启动失败';
+    }
+  });
+}
 
