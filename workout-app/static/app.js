@@ -165,6 +165,38 @@ async function loadHealth() {
   updateStorageUsage();
 }
 
+function updateApp(reason, options = {}) {
+  const page = options.page || currentPage;
+  if (page === 'trainingSession') {
+    renderTrainingSession();
+  } else if (page === 'dashboard') {
+    renderDashboard();
+  } else {
+    render();
+  }
+}
+
+function renderDashboard() {
+  renderTodayCard('dashboardToday');
+  renderStats();
+  renderTodayVideos();
+  renderWeek();
+  renderCalendar('monthCalendar');
+  renderExercises();
+  renderTemplates();
+}
+
+function dispatchSession(action, payload) {
+  if (!session && action !== 'END_SESSION') return;
+  switch (action) {
+    case 'COMPLETE_SET': completeSet(payload); break;
+    case 'NEXT_EXERCISE': nextExercise(); break;
+    case 'PREV_EXERCISE': prevExercise(); break;
+    case 'SKIP_EXERCISE': skipExercise(); break;
+    case 'END_SESSION': finishTraining('partial'); break;
+  }
+}
+
 function switchPage(page) {
   currentPage = page;
   $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.page === page));
@@ -343,6 +375,7 @@ function renderTrainingSession() {
 }
 
 function render() {
+  if (currentPage === 'trainingSession') { renderTrainingSession(); return; }
   updateStorageUsage();
   if ($('health')) $('health').dataset.startupState = startupState;
   renderTodayCard('dashboardToday');
@@ -422,15 +455,16 @@ function finishTraining(status = 'done') {
   switchPage('dashboard');
   const summaryEl = document.getElementById('trainingSummaryBanner');
   if (summaryEl) {
-    summaryEl.style.display = 'block';
+    summaryEl.classList.remove('is-hidden');
+    summaryEl.classList.add('is-visible');
     summaryEl.innerHTML = `<div class="summary-banner-inner session-summary"><strong>训练完成摘要</strong><span>模板：${escapeHtml(summary.templateName)} | 完成动作：${summary.completed.length} 个 | 跳过动作：${summary.skipped.length} 个 | 完成组数：${summary.totalSetsDone} | 状态：${statusText(summary.status)}</span><button id="dismissSummaryBanner" class="btn mini secondary" type="button">关闭</button></div>`;
-    setTimeout(() => { summaryEl.style.display = 'none'; }, 10000);
+    setTimeout(() => { summaryEl.classList.add('is-hidden'); summaryEl.classList.remove('is-visible'); }, 10000);
   }
 }
 
 function dismissTrainingSummary() {
   const el = document.getElementById('trainingSummaryBanner');
-  if (el) el.style.display = 'none';
+  if (el) el.classList.add('is-hidden');
 }
 
 function validateImport(data) {
@@ -471,14 +505,14 @@ function attachEvents() {
     const closeModalEl = target.closest('[data-close-modal]'); if (closeModalEl) closeModalEl.closest('dialog').close();
     if (target.id === 'prevMonth' || target.id === 'prevMonthPage') { visibleMonth.setMonth(visibleMonth.getMonth() - 1); render(); }
     if (target.id === 'nextMonth' || target.id === 'nextMonthPage') { visibleMonth.setMonth(visibleMonth.getMonth() + 1); render(); }
-    if (target.closest('[data-complete-set]')) completeSet();
-    if (target.closest('[data-next-exercise]')) nextExercise();
-    if (target.closest('[data-prev-exercise]')) prevExercise();
-    if (target.closest('[data-skip-exercise]')) skipExercise();
-    if (target.closest('[data-rest]')) { session.status = 'resting'; renderTrainingSession(); }
-    if (target.closest('[data-pause-session]')) { session.status = session.status === 'paused' ? 'in_progress' : 'paused'; renderTrainingSession(); }
+    if (target.closest('[data-complete-set]')) dispatchSession('COMPLETE_SET');
+    if (target.closest('[data-next-exercise]')) dispatchSession('NEXT_EXERCISE');
+    if (target.closest('[data-prev-exercise]')) dispatchSession('PREV_EXERCISE');
+    if (target.closest('[data-skip-exercise]')) dispatchSession('SKIP_EXERCISE');
+    if (target.closest('[data-rest]')) { session.status = 'resting'; updateApp('session:rest'); }
+    if (target.closest('[data-pause-session]')) { session.status = session.status === 'paused' ? 'in_progress' : 'paused'; updateApp('session:pause'); }
     if (target.closest('[data-end-session]') && confirm('确认结束本次训练？当前训练进度会保存为未完成。')) finishTraining('partial');
-    const jumpEl = target.closest('[data-jump-exercise]'); if (jumpEl) { session.currentExerciseIndex = Number(jumpEl.dataset.jumpExercise); session.currentSetIndex = 0; session.status = 'in_progress'; renderTrainingSession(); }
+    const jumpEl = target.closest('[data-jump-exercise]'); if (jumpEl) { session.currentExerciseIndex = Number(jumpEl.dataset.jumpExercise); session.currentSetIndex = 0; session.status = 'in_progress'; updateApp('session:jump'); }
     if (target.id === 'dismissSummaryBanner') dismissTrainingSummary();
   });
   $('exerciseSearch').addEventListener('input', renderExercises);
@@ -582,10 +616,10 @@ function completeSet() {
   const exercise = exercises[session.currentExerciseIndex];
   session.totalSetsDone = (session.totalSetsDone || 0) + 1;
   if (session.currentSetIndex < exercise.defaultSets - 1) { session.currentSetIndex += 1; session.status = 'resting'; } else { session.completed.push(exercise.id); if (session.currentExerciseIndex < exercises.length - 1) nextExercise(); else finishTraining('done'); }
-  renderTrainingSession();
+  updateApp('session:set-complete');
 }
-function nextExercise() { const template = templateById(session.templateId); const exercises = templateExercises(template); if (session.currentExerciseIndex < exercises.length - 1) { session.currentExerciseIndex += 1; session.currentSetIndex = 0; session.status = 'in_progress'; renderTrainingSession(); } else finishTraining('done'); }
-function prevExercise() { if (session.currentExerciseIndex > 0) { session.currentExerciseIndex -= 1; session.currentSetIndex = 0; session.status = 'in_progress'; renderTrainingSession(); } }
+function nextExercise() { const template = templateById(session.templateId); const exercises = templateExercises(template); if (session.currentExerciseIndex < exercises.length - 1) { session.currentExerciseIndex += 1; session.currentSetIndex = 0; session.status = 'in_progress'; updateApp('session:next'); } else finishTraining('done'); }
+function prevExercise() { if (session.currentExerciseIndex > 0) { session.currentExerciseIndex -= 1; session.currentSetIndex = 0; session.status = 'in_progress'; updateApp('session:prev'); } }
 function skipExercise() { const template = templateById(session.templateId); const exercises = templateExercises(template); session.skipped.push(exercises[session.currentExerciseIndex].id); nextExercise(); }
 
 function previewImport() {
@@ -645,14 +679,14 @@ async function checkAiHealth() {
     const data = await response.json();
     if (data.enabled) {
       statusEl.textContent = `AI 服务已配置（${data.model || '未知模型'}）`;
-      statusEl.style.color = 'var(--green)';
+      statusEl.className = 'status-ok';
     } else {
       statusEl.textContent = 'AI 服务未配置';
-      statusEl.style.color = 'var(--yellow)';
+      statusEl.className = 'status-warn';
     }
   } catch (error) {
     statusEl.textContent = `检测失败：${error.message}`;
-    statusEl.style.color = 'var(--red)';
+    statusEl.className = 'status-error';
   }
 }
 
@@ -661,8 +695,8 @@ async function generateAiDraft() {
   if (!prompt) { alert('请先输入训练需求描述'); return; }
   const resultEl = $('aiDraftResult');
   const errorEl = $('aiImportError');
-  resultEl.style.display = 'none';
-  errorEl.style.display = 'none';
+  resultEl.classList.add('is-hidden');
+  errorEl.classList.add('is-hidden');
   const btn = $('aiGenerateDraft');
   btn.disabled = true;
   btn.textContent = '生成中...';
@@ -688,11 +722,11 @@ async function generateAiDraft() {
     $('aiDraftPreview').textContent = JSON.stringify(draft, null, 2);
     $('aiDraftErrors').innerHTML = (data.warnings || []).length
       ? `<strong>警告：</strong><br/>${data.warnings.map((w) => escapeHtml(w)).join('<br/>')}`
-      : `<span style="color:var(--green)">校验通过 — ${counts.exercises} 个动作、${counts.templates} 个模板、${counts.plans} 天计划</span>`;
-    resultEl.style.display = 'block';
+      : `<span class="status-ok">校验通过 — ${counts.exercises} 个动作、${counts.templates} 个模板、${counts.plans} 天计划</span>`;
+    resultEl.classList.remove('is-hidden');
   } catch (error) {
     errorEl.textContent = `生成失败：${error.message}`;
-    errorEl.style.display = 'block';
+    errorEl.classList.remove('is-hidden');
   } finally {
     btn.disabled = false;
     btn.textContent = '生成草稿';
@@ -735,15 +769,15 @@ function confirmAiImport() {
   }
   saveData();
   render();
-  $('aiDraftResult').style.display = 'none';
+  $('aiDraftResult').classList.add('is-hidden');
   $('aiImportPrompt').value = '';
   window.__aiDraft = null;
   alert('导入完成！');
 }
 
 function cancelAiImport() {
-  $('aiDraftResult').style.display = 'none';
-  $('aiImportError').style.display = 'none';
+  $('aiDraftResult').classList.add('is-hidden');
+  $('aiImportError').classList.add('is-hidden');
   window.__aiDraft = null;
 }
 
@@ -800,7 +834,7 @@ async function openAiVideoSearchDialog(exerciseId) {
       <p>搜索关键词：<strong>${escapeHtml(data.query)}</strong></p>
       <p>B站搜索链接：<a href="${escapeHtml(data.search_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(data.search_url)}</a></p>
       ${data.candidates?.length ? `<p>建议的视频链接：</p><ul>${data.candidates.map((c) => `<li><a href="${escapeHtml(c)}" target="_blank">${escapeHtml(c)}</a></li>`).join('')}</ul>` : ''}
-      <p style="margin-top:8px;color:var(--muted)">请手动确认或修改最终链接后点击「确认使用」。</p>
+      <p class="helper-text">请手动确认或修改最终链接后点击「确认使用」。</p>
     `;
     urlInput.value = data.search_url || '';
   } catch (error) {

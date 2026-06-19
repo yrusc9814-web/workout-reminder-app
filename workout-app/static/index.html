@@ -149,7 +149,7 @@
             <pre id="reminderResult"></pre>
           </section>
         </div>
-        <section class="glass-card" style="margin-top:18px">
+        <section class="glass-card">
           <div class="section-head"><h2>AI 辅助能力（第二阶段）</h2></div>
           <div class="ai-card">
             <div class="ai-status-bar">
@@ -157,22 +157,22 @@
               <button id="aiTestConnection" class="btn mini secondary" type="button">测试连接</button>
             </div>
             <div id="aiImportSection">
-              <h3 style="margin:16px 0 8px">AI 辅助导入训练计划</h3>
-              <p class="info-box" style="margin-bottom:12px">描述你的训练需求，AI 将生成训练数据草稿。预览确认后才会写入本地存储。</p>
-              <textarea id="aiImportPrompt" placeholder='例如："生成一份每周三次的核心控制训练计划，包含仰卧骨盆后倾、死虫式、臀桥和Bird Dog，每次约30分钟低强度。"' rows="4" style="min-height:80px"></textarea>
-              <div class="button-row" style="margin:10px 0">
+              <h3 class="subsection-title">AI 辅助导入训练计划</h3>
+              <p class="info-box">描述你的训练需求，AI 将生成训练数据草稿。预览确认后才会写入本地存储。</p>
+              <textarea id="aiImportPrompt" class="textarea-sm" placeholder='例如："生成一份每周三次的核心控制训练计划，包含仰卧骨盆后倾、死虫式、臀桥和Bird Dog，每次约30分钟低强度。"' rows="4"></textarea>
+              <div class="button-row form-actions">
                 <button id="aiGenerateDraft" class="btn primary" type="button">生成草稿</button>
               </div>
-              <div id="aiDraftResult" style="display:none">
-                <h4 style="margin:12px 0 8px">草稿预览</h4>
-                <pre id="aiDraftPreview" style="max-height:300px"></pre>
-                <div id="aiDraftErrors" style="color:var(--red);margin:8px 0"></div>
+              <div id="aiDraftResult" class="is-hidden">
+                <h4 class="preview-title">草稿预览</h4>
+                <pre id="aiDraftPreview" class="pre-scroll-sm"></pre>
+                <div id="aiDraftErrors" class="form-error"></div>
                 <div class="button-row">
                   <button id="aiConfirmImport" class="btn primary" type="button">确认导入</button>
                   <button id="aiCancelImport" class="btn secondary" type="button">取消</button>
                 </div>
               </div>
-              <div id="aiImportError" class="info-box" style="color:var(--red);display:none;margin-top:8px"></div>
+              <div id="aiImportError" class="info-box error is-hidden"></div>
             </div>
           </div>
         </section>
@@ -193,13 +193,13 @@
   <dialog id="aiVideoSearchDialog" class="modal">
     <form method="dialog" id="aiVideoSearchForm" class="modal-form">
       <h2>AI 搜索B站视频</h2>
-      <p id="aiVideoSearchExerciseName" style="margin-bottom:12px"></p>
-      <div id="aiVideoSearchSuggestions" class="info-box" style="margin-bottom:12px"></div>
+      <p id="aiVideoSearchExerciseName" class="modal-subtitle"></p>
+      <div id="aiVideoSearchSuggestions" class="info-box modal-section"></div>
       <label>最终B站链接（AI 建议后手动确认/修改）
         <input id="aiVideoSearchFinalUrl" name="url" placeholder="https://www.bilibili.com/video/BV..." />
       </label>
       <div class="modal-actions">
-        <button id="aiVideoSearchRefresh" class="btn secondary" type="button" style="margin-right:auto">重新搜索</button>
+        <button id="aiVideoSearchRefresh" class="btn secondary push-left" type="button">重新搜索</button>
         <button class="btn secondary" type="button" data-close-modal>取消</button>
         <button id="aiVideoSearchConfirm" class="btn primary" type="submit">确认使用</button>
       </div>
