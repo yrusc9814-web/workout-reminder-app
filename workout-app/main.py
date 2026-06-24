@@ -673,6 +673,7 @@ class ExercisePayload(BaseModel):
     duration_seconds: int | None = None
     durationSeconds: int | None = None
     notes: str | None = None
+    benefit: str | None = None
     tips: str | list[str] | None = None
     video_url: str | None = None
     videos: list[dict] | None = None
@@ -690,6 +691,7 @@ class ExercisePayload(BaseModel):
             "default_reps": self.defaultReps if self.defaultReps is not None else self.default_reps,
             "duration_seconds": self.durationSeconds if self.durationSeconds is not None else self.duration_seconds,
             "notes": self.notes,
+            "benefit": self.benefit,
             "tips": "|".join(tips) if isinstance(tips, list) else tips,
             "video_url": default_video.get("url") or self.video_url,
         }
@@ -706,6 +708,7 @@ def exercise_to_dict(ex: Exercise) -> dict:
         "default_reps": ex.default_reps,
         "duration_seconds": ex.duration_seconds,
         "notes": ex.notes,
+        "benefit": ex.benefit,
         "tips": ex.tips,
         "video_url": ex.video_url,
     }

@@ -102,6 +102,7 @@ class Exercise(Base):
     default_reps = Column(String(20), nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
+    benefit = Column(Text, nullable=True)
     tips = Column(Text, nullable=True)
     video_url = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -320,10 +321,16 @@ def get_db():
 
 def ensure_schema_columns():
     inspector = inspect(engine)
-    columns = {column["name"] for column in inspector.get_columns("workout_exercises")}
-    if "video_url" not in columns:
+    # workout_exercises table
+    we_columns = {column["name"] for column in inspector.get_columns("workout_exercises")}
+    if "video_url" not in we_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE workout_exercises ADD COLUMN video_url VARCHAR(500)"))
+    # exercises table — benefit column
+    ex_columns = {column["name"] for column in inspector.get_columns("exercises")}
+    if "benefit" not in ex_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE exercises ADD COLUMN benefit TEXT"))
 
 
 def create_tables():
@@ -384,11 +391,11 @@ def _seed_plan(db, plan_date, is_training_day):
 
 
 SEED_EXERCISES = [
-    {"name": "仰卧骨盆时钟", "category": "核心控制", "body_parts": "核心", "difficulty": "低", "default_sets": 1, "default_reps": None, "duration_seconds": 180, "notes": "仰卧屈膝，想象骨盆是一只时钟，缓慢做前后、左右和绕圈倾斜", "tips": "慢一点|不要憋气|感受骨盆微动", "video_url": "https://www.bilibili.com/video/BV1X625B5EWd/"},
-    {"name": "支撑臀桥停留", "category": "髋部稳定", "body_parts": "臀部,核心", "difficulty": "低", "default_sets": 2, "default_reps": None, "duration_seconds": 20, "notes": "脚掌踩稳，轻轻抬起髋部并短暂停留", "tips": "不顶腰|保持呼吸|收紧臀部", "video_url": "https://www.bilibili.com/video/BV1Jg4y1z7Nm/"},
-    {"name": "侧卧髋外展", "category": "髋部稳定", "body_parts": "臀部,腿部", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "侧卧保持骨盆稳定，小幅抬起上侧腿", "tips": "骨盆稳定|节奏放慢", "video_url": "https://www.bilibili.com/video/BV1No4y1h7NH/"},
-    {"name": "死虫式脚跟点地", "category": "核心控制", "body_parts": "核心", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "仰卧收紧核心，左右交替让脚跟轻点地面", "tips": "腰背贴地|均匀呼吸", "video_url": "https://www.bilibili.com/video/BV1Bu411V7rW/"},
-    {"name": "坐姿抬腿", "category": "髋部稳定", "body_parts": "髋部,核心", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "坐稳后左右交替抬膝，躯干保持安静", "tips": "不耸肩|不后仰", "video_url": "https://www.bilibili.com/video/BV1Rv4y1d7XM/"},
+    {"name": "仰卧骨盆时钟", "category": "核心控制", "body_parts": "核心", "difficulty": "低", "default_sets": 1, "default_reps": None, "duration_seconds": 180, "notes": "仰卧屈膝，想象骨盆是一只时钟，缓慢做前后、左右和绕圈倾斜", "benefit": "主要激活腹横肌与骨盆底肌，改善骨盆前倾，增强腰椎-骨盆带的神经肌肉控制能力，适合久坐人群日常矫正。", "tips": "慢一点|不要憋气|感受骨盆微动", "video_url": "https://www.bilibili.com/video/BV1X625B5EWd/"},
+    {"name": "支撑臀桥停留", "category": "髋部稳定", "body_parts": "臀部,核心", "difficulty": "低", "default_sets": 2, "default_reps": None, "duration_seconds": 20, "notes": "脚掌踩稳，轻轻抬起髋部并短暂停留", "benefit": "主要刺激臀大肌与腘绳肌，改善髋伸肌群募集模式，纠正臀部\"失忆症\"，减轻腰椎在日常负重中的压力。", "tips": "不顶腰|保持呼吸|收紧臀部", "video_url": "https://www.bilibili.com/video/BV1Jg4y1z7Nm/"},
+    {"name": "侧卧髋外展", "category": "髋部稳定", "body_parts": "臀部,腿部", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "侧卧保持骨盆稳定，小幅抬起上侧腿", "benefit": "主要激活臀中肌与髋外展肌群，增强骨盆侧向稳定性，改善步态中髋关节的侧向控制能力。", "tips": "骨盆稳定|节奏放慢", "video_url": "https://www.bilibili.com/video/BV1No4y1h7NH/"},
+    {"name": "死虫式脚跟点地", "category": "核心控制", "body_parts": "核心", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "仰卧收紧核心，左右交替让脚跟轻点地面", "benefit": "训练核心抗伸展能力，强化腹横肌与多裂肌协同，提升脊柱在四肢运动中的稳定性，减少下背代偿风险。", "tips": "腰背贴地|均匀呼吸", "video_url": "https://www.bilibili.com/video/BV1Bu411V7rW/"},
+    {"name": "坐姿抬腿", "category": "髋部稳定", "body_parts": "髋部,核心", "difficulty": "低", "default_sets": 2, "default_reps": "6次/侧", "duration_seconds": None, "notes": "坐稳后左右交替抬膝，躯干保持安静", "benefit": "主要激活髋屈肌群与核心稳定肌群，改善坐姿下的躯干控制能力，增强下肢独立运动时的骨盆稳定性。", "tips": "不耸肩|不后仰", "video_url": "https://www.bilibili.com/video/BV1Rv4y1d7XM/"},
 ]
 
 SEED_TEMPLATES = [

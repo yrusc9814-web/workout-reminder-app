@@ -74,11 +74,11 @@ function defaultData() {
     version: '1.0',
     updatedAt: new Date().toISOString(),
     exercises: [
-      { id: 'pelvic_tilt', name: '仰卧骨盆后倾', category: '核心控制', bodyParts: ['核心', '腰腹'], difficulty: '低', defaultSets: 3, defaultReps: '12次', durationSeconds: null, notes: '适合核心激活和骨盆控制。', tips: ['仰卧屈膝，双脚踩稳', '腰背轻轻贴向地面', '动作慢，不要憋气'], videos: [{ id: 'video_pelvic_tilt_001', title: '仰卧骨盆后倾教学', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1X625B5EWd/', isDefault: true, remark: '适合初学者' }] },
-      { id: 'dead_bug', name: '死虫 Dead Bug', category: '核心控制', bodyParts: ['核心', '腰腹'], difficulty: '低', defaultSets: 3, defaultReps: '10次', durationSeconds: null, notes: '保持腰背贴地，动作慢一点。', tips: ['腰背贴地', '手脚交替伸展', '动作放慢，不要借力', '保持核心收紧，均匀呼吸'], videos: [{ id: 'video_dead_bug_001', title: '死虫核心训练教学', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1Bu411V7rW/', isDefault: true, remark: '核心控制入门' }, { id: 'video_dead_bug_002', title: '死虫动作细节讲解', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1y5411L7Yx/', isDefault: false, remark: '备用视频' }] },
-      { id: 'glute_bridge', name: '臀桥', category: '髋部稳定', bodyParts: ['臀部', '核心'], difficulty: '低', defaultSets: 3, defaultReps: '15次', durationSeconds: null, notes: '发力时收紧臀部，避免腰部代偿。', tips: ['双脚踩稳', '发力时收紧臀部', '不要用腰顶起来'], videos: [{ id: 'video_glute_bridge_001', title: '臀桥标准动作教学', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1Jg4y1z7Nm/', isDefault: true, remark: '臀部激活' }] },
-      { id: 'bird_dog', name: 'Bird Dog', category: '核心控制', bodyParts: ['核心', '背部'], difficulty: '低', defaultSets: 3, defaultReps: '10次/侧', durationSeconds: null, notes: '保持骨盆稳定，手脚慢慢伸展。', tips: ['四点支撑', '不要塌腰', '左右交替伸展'], videos: [{ id: 'video_bird_dog_001', title: 'Bird Dog 动作教学', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1No4y1h7NH/', isDefault: true, remark: '核心稳定' }] },
-      { id: 'plank', name: '平板支撑', category: '核心控制', bodyParts: ['核心', '肩部'], difficulty: '中', defaultSets: 3, defaultReps: null, durationSeconds: 30, notes: '计时型动作，保持身体一条直线。', tips: ['肘在肩下', '核心收紧', '不憋气'], videos: [{ id: 'video_plank_001', title: '平板支撑入门', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1Rv4y1d7XM/', isDefault: true, remark: '计时型动作' }] },
+      { id: 'pelvic_tilt', name: '仰卧骨盆后倾', category: '核心控制', bodyParts: ['核心', '腰腹'], difficulty: '低', defaultSets: 3, defaultReps: '12次', durationSeconds: null, notes: '适合核心激活和骨盆控制。', benefit: '主要激活腹横肌与骨盆底肌，改善骨盆前倾，增强腰椎-骨盆带的神经肌肉控制能力，适合久坐人群日常矫正。', tips: ['仰卧屈膝，双脚踩稳', '腰背轻轻贴向地面', '动作慢，不要憋气'], videos: [{ id: 'video_pelvic_tilt_001', title: '仰卧骨盆后倾教学', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1X625B5EWd/', isDefault: true, remark: '适合初学者' }] },
+      { id: 'dead_bug', name: '死虫 Dead Bug', category: '核心控制', bodyParts: ['核心', '腰腹'], difficulty: '低', defaultSets: 3, defaultReps: '10次', durationSeconds: null, notes: '保持腰背贴地，动作慢一点。', benefit: '训练核心抗伸展能力，强化腹横肌与多裂肌协同，提升脊柱在四肢运动中的稳定性，减少下背代偿风险。', tips: ['腰背贴地', '手脚交替伸展', '动作放慢，不要借力', '保持核心收紧，均匀呼吸'], videos: [{ id: 'video_dead_bug_001', title: '死虫核心训练教学', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1Bu411V7rW/', isDefault: true, remark: '核心控制入门' }, { id: 'video_dead_bug_002', title: '死虫动作细节讲解', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1y5411L7Yx/', isDefault: false, remark: '备用视频' }] },
+      { id: 'glute_bridge', name: '臀桥', category: '髋部稳定', bodyParts: ['臀部', '核心'], difficulty: '低', defaultSets: 3, defaultReps: '15次', durationSeconds: null, notes: '发力时收紧臀部，避免腰部代偿。', benefit: '主要刺激臀大肌与腘绳肌，改善髋伸肌群募集模式，纠正臀部"失忆症"，减轻腰椎在日常负重中的压力。', tips: ['双脚踩稳', '发力时收紧臀部', '不要用腰顶起来'], videos: [{ id: 'video_glute_bridge_001', title: '臀桥标准动作教学', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1Jg4y1z7Nm/', isDefault: true, remark: '臀部激活' }] },
+      { id: 'bird_dog', name: 'Bird Dog', category: '核心控制', bodyParts: ['核心', '背部'], difficulty: '低', defaultSets: 3, defaultReps: '10次/侧', durationSeconds: null, notes: '保持骨盆稳定，手脚慢慢伸展。', benefit: '训练核心抗旋转与脊柱动态稳定能力，增强肩-髋交叉协调模式，改善姿势控制与平衡能力。', tips: ['四点支撑', '不要塌腰', '左右交替伸展'], videos: [{ id: 'video_bird_dog_001', title: 'Bird Dog 动作教学', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1No4y1h7NH/', isDefault: true, remark: '核心稳定' }] },
+      { id: 'plank', name: '平板支撑', category: '核心控制', bodyParts: ['核心', '肩部'], difficulty: '中', defaultSets: 3, defaultReps: null, durationSeconds: 30, notes: '计时型动作，保持身体一条直线。', benefit: '强化整体核心肌群耐力，包括腹直肌、腹横肌、竖脊肌与肩胛稳定肌群，提升躯干在静态承重下的刚性。', tips: ['肘在肩下', '核心收紧', '不憋气'], videos: [{ id: 'video_plank_001', title: '平板支撑入门', platform: 'bilibili', url: 'https://www.bilibili.com/video/BV1Rv4y1d7XM/', isDefault: true, remark: '计时型动作' }] },
     ],
     templates: [{ id: 'core_stability', name: '核心控制 + 髋部稳定训练', description: '专注核心稳定与髋部控制，适合日常训练与康复巩固。', exerciseIds, difficulty: '低强度', estimatedMinutes: 35 }],
     schedule,
@@ -91,7 +91,11 @@ function normalizeData(data) {
   return {
     version: data?.version || '1.0',
     updatedAt: data?.updatedAt || new Date().toISOString(),
-    exercises: Array.isArray(data?.exercises) ? data.exercises : fallback.exercises,
+    exercises: (Array.isArray(data?.exercises) ? data.exercises : fallback.exercises)
+      .map((ex) => ({
+        ...ex,
+        benefit: ex.benefit || '',
+      })),
     templates: Array.isArray(data?.templates) ? data.templates : fallback.templates,
     schedule: data?.schedule && typeof data.schedule === 'object' ? data.schedule : fallback.schedule,
     logs: Array.isArray(data?.logs) ? data.logs : [],
@@ -219,7 +223,7 @@ function renderTodayCard(targetId, full = false) {
     return;
   }
   const visible = full ? exercises : exercises.slice(0, 3);
-  target.innerHTML = `<p class="eyebrow">今日训练</p><h2>${escapeHtml(template?.name || '当前计划引用的训练模板不存在')}</h2><div class="hero-meta"><span>训练时长：${template?.estimatedMinutes || 35} 分钟</span><span>难度：${escapeHtml(template?.difficulty || '低强度')}</span><span>状态：${statusText(plan.status)}</span><span>完成进度：${plan.status === 'done' ? '100%' : '0%'}</span></div><ol class="mini-actions">${visible.map((exercise) => `<li><strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(doseText(exercise))}</span>${defaultVideo(exercise) ? `<a href="${escapeHtml(defaultVideo(exercise).url)}" target="_blank" rel="noopener noreferrer">B站直达</a>` : '<button data-add-video="'+escapeHtml(exercise.id)+'" type="button">添加视频</button>'}</li>`).join('')}</ol>${exercises.length > 3 && !full ? '<button class="text-btn" data-expand-today type="button">展开全部动作</button>' : ''}<div class="button-row"><button class="btn secondary" data-show-detail type="button">查看动作详情</button><button class="btn primary" data-start-training type="button">开始训练</button></div>`;
+  target.innerHTML = `<p class="eyebrow">今日训练</p><h2>${escapeHtml(template?.name || '当前计划引用的训练模板不存在')}</h2><div class="hero-meta"><span>训练时长：${template?.estimatedMinutes || 35} 分钟</span><span>难度：${escapeHtml(template?.difficulty || '低强度')}</span><span>状态：${statusText(plan.status)}</span><span>完成进度：${plan.status === 'done' ? '100%' : '0%'}</span></div><ol class="mini-actions">${visible.map((exercise) => `<li><strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(doseText(exercise))}</span>${defaultVideo(exercise) ? `<a href="${escapeHtml(defaultVideo(exercise).url)}" target="_blank" rel="noopener noreferrer">B站直达</a>` : '<button data-add-video="'+escapeHtml(exercise.id)+'" type="button">添加视频</button>'}${exercise.benefit ? `<small class="benefit-text">${escapeHtml(exercise.benefit)}</small>` : ''}</li>`).join('')}</ol>${exercises.length > 3 && !full ? '<button class="text-btn" data-expand-today type="button">展开全部动作</button>' : ''}<div class="button-row"><button class="btn secondary" data-show-detail type="button">查看动作详情</button><button class="btn primary" data-start-training type="button">开始训练</button></div>`;
 }
 
 function renderStats() {
@@ -284,7 +288,7 @@ function renderExercises() {
   const items = state.exercises.filter((exercise) => (category === 'all' || exercise.category === category) && (!keyword || exercise.name.toLowerCase().includes(keyword) || exercise.category.toLowerCase().includes(keyword)));
   $('exerciseList').innerHTML = items.map((exercise) => {
     const video = defaultVideo(exercise);
-    return `<article class="data-card"><div><h3>${escapeHtml(exercise.name)}</h3><p>${escapeHtml(exercise.category)} / ${escapeHtml((exercise.bodyParts || []).join('、'))} / ${escapeHtml(exercise.difficulty)}</p><p>默认组次：${escapeHtml(doseText(exercise))}</p><p>默认 B站视频：${video ? escapeHtml(video.title) : '暂无视频链接'}</p></div><div class="card-actions">${video ? `<a class="btn mini" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili</a>` : ''}<button class="btn mini" data-edit-exercise="${escapeHtml(exercise.id)}" type="button">编辑</button><button class="btn mini" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button><button class="btn mini secondary" data-ai-search-video="${escapeHtml(exercise.id)}" type="button">AI搜索</button><button class="btn danger mini" data-delete-exercise="${escapeHtml(exercise.id)}" type="button">删除</button></div></article>`;
+    return `<article class="data-card"><div><h3>${escapeHtml(exercise.name)}</h3><p>${escapeHtml(exercise.category)} / ${escapeHtml((exercise.bodyParts || []).join('、'))} / ${escapeHtml(exercise.difficulty)}</p><p>默认组次：${escapeHtml(doseText(exercise))}</p><p>默认 B站视频：${video ? escapeHtml(video.title) : '暂无视频链接'}</p>${exercise.benefit ? `<p class="benefit-line">${escapeHtml(exercise.benefit)}</p>` : ''}</div><div class="card-actions">${video ? `<a class="btn mini" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili</a>` : ''}<button class="btn mini" data-edit-exercise="${escapeHtml(exercise.id)}" type="button">编辑</button><button class="btn mini" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button><button class="btn mini secondary" data-ai-search-video="${escapeHtml(exercise.id)}" type="button">AI搜索</button><button class="btn danger mini" data-delete-exercise="${escapeHtml(exercise.id)}" type="button">删除</button></div></article>`;
   }).join('') || '<div class="empty-state">动作库为空，点击新增动作开始维护。</div>';
 }
 
@@ -400,8 +404,8 @@ function openPlanDialog(date) {
 }
 
 function openExerciseDialog(id = null) {
-  const exercise = id ? exerciseById(id) : { id: '', name: '', category: '核心控制', bodyParts: ['核心'], difficulty: '低', defaultSets: 3, defaultReps: '10次', durationSeconds: null, notes: '', tips: [], videos: [] };
-  $('exerciseForm').innerHTML = `<h2>${id ? '编辑动作' : '新增动作'}</h2><label>动作 ID<input name="id" value="${escapeHtml(exercise.id)}" ${id ? 'readonly' : ''} required pattern="[A-Za-z0-9_]+" /></label><label>动作名称<input name="name" value="${escapeHtml(exercise.name)}" required /></label><label>分类<input name="category" value="${escapeHtml(exercise.category)}" required /></label><label>训练部位<input name="bodyParts" value="${escapeHtml((exercise.bodyParts || []).join('、'))}" /></label><label>难度<select name="difficulty"><option ${exercise.difficulty === '低' ? 'selected' : ''}>低</option><option ${exercise.difficulty === '中' ? 'selected' : ''}>中</option><option ${exercise.difficulty === '高' ? 'selected' : ''}>高</option></select></label><label>默认组数<input name="defaultSets" type="number" min="1" value="${escapeHtml(exercise.defaultSets)}" /></label><label>动作类型<select name="motionType"><option value="reps" ${exercise.durationSeconds ? '' : 'selected'}>次数型</option><option value="duration" ${exercise.durationSeconds ? 'selected' : ''}>计时型</option></select></label><label>默认次数<input name="defaultReps" value="${escapeHtml(exercise.defaultReps || '')}" /></label><label>默认时长秒数<input name="durationSeconds" type="number" min="1" value="${escapeHtml(exercise.durationSeconds || '')}" /></label><label>动作备注<textarea name="notes">${escapeHtml(exercise.notes || '')}</textarea></label><label>动作要点（每行一条）<textarea name="tips">${escapeHtml((exercise.tips || []).join('\n'))}</textarea></label><div class="modal-actions"><button class="btn secondary" type="button" data-close-modal>取消</button><button class="btn primary" type="submit">保存</button></div>`;
+  const exercise = id ? exerciseById(id) : { id: '', name: '', category: '核心控制', bodyParts: ['核心'], difficulty: '低', defaultSets: 3, defaultReps: '10次', durationSeconds: null, notes: '', benefit: '', tips: [], videos: [] };
+  $('exerciseForm').innerHTML = `<h2>${id ? '编辑动作' : '新增动作'}</h2><label>动作 ID<input name="id" value="${escapeHtml(exercise.id)}" ${id ? 'readonly' : ''} required pattern="[A-Za-z0-9_]+" /></label><label>动作名称<input name="name" value="${escapeHtml(exercise.name)}" required /></label><label>分类<input name="category" value="${escapeHtml(exercise.category)}" required /></label><label>训练部位<input name="bodyParts" value="${escapeHtml((exercise.bodyParts || []).join('、'))}" /></label><label>难度<select name="difficulty"><option ${exercise.difficulty === '低' ? 'selected' : ''}>低</option><option ${exercise.difficulty === '中' ? 'selected' : ''}>中</option><option ${exercise.difficulty === '高' ? 'selected' : ''}>高</option></select></label><label>默认组数<input name="defaultSets" type="number" min="1" value="${escapeHtml(exercise.defaultSets)}" /></label><label>动作类型<select name="motionType"><option value="reps" ${exercise.durationSeconds ? '' : 'selected'}>次数型</option><option value="duration" ${exercise.durationSeconds ? 'selected' : ''}>计时型</option></select></label><label>默认次数<input name="defaultReps" value="${escapeHtml(exercise.defaultReps || '')}" /></label><label>默认时长秒数<input name="durationSeconds" type="number" min="1" value="${escapeHtml(exercise.durationSeconds || '')}" /></label><label>动作备注<textarea name="notes">${escapeHtml(exercise.notes || '')}</textarea></label><label>训练目的/预期效果<textarea name="benefit" class="textarea-sm">${escapeHtml(exercise.benefit || '')}</textarea></label><label>动作要点（每行一条）<textarea name="tips">${escapeHtml((exercise.tips || []).join('\\n'))}</textarea></label><div class="modal-actions"><button class="btn secondary" type="button" data-close-modal>取消</button><button class="btn primary" type="submit">保存</button></div>`;
 
   $('exerciseDialog').showModal();
 }
@@ -543,7 +547,7 @@ function saveExerciseFromForm(event) {
   const form = new FormData(event.target);
   const id = form.get('id').trim();
   const motionType = form.get('motionType');
-  const exercise = { id, name: form.get('name').trim(), category: form.get('category').trim(), bodyParts: form.get('bodyParts').split(/[、,，]/).map((x) => x.trim()).filter(Boolean), difficulty: form.get('difficulty'), defaultSets: Number(form.get('defaultSets') || 1), defaultReps: motionType === 'reps' ? form.get('defaultReps').trim() : null, durationSeconds: motionType === 'duration' ? Number(form.get('durationSeconds') || 30) : null, notes: form.get('notes'), tips: form.get('tips').split('\n').map((x) => x.trim()).filter(Boolean), videos: exerciseById(id)?.videos || [] };
+  const exercise = { id, name: form.get('name').trim(), category: form.get('category').trim(), bodyParts: form.get('bodyParts').split(/[、,，]/).map((x) => x.trim()).filter(Boolean), difficulty: form.get('difficulty'), defaultSets: Number(form.get('defaultSets') || 1), defaultReps: motionType === 'reps' ? form.get('defaultReps').trim() : null, durationSeconds: motionType === 'duration' ? Number(form.get('durationSeconds') || 30) : null, notes: form.get('notes'), benefit: form.get('benefit'), tips: form.get('tips').split('\n').map((x) => x.trim()).filter(Boolean), videos: exerciseById(id)?.videos || [] };
   const existing = state.exercises.findIndex((item) => item.id === id);
   if (existing >= 0) state.exercises[existing] = exercise; else state.exercises.push(exercise);
   saveData(); $('exerciseDialog').close(); render();
@@ -639,7 +643,7 @@ function previewImport() {
     const overlap = incomingDates.filter((d) => existingDates.includes(d));
     let overlapWarning = '';
     if (overlap.length) {
-      overlapWarning = `<p style="color:var(--orange);margin-top:8px">⚠ 以下日期已有计划，导入将覆盖：${overlap.slice(0, 5).join(', ')}${overlap.length > 5 ? ` 等共 ${overlap.length} 天` : ''}</p>`;
+      overlapWarning = `<p class="import-warning">⚠ 以下日期已有计划，导入将覆盖：${overlap.slice(0, 5).join(', ')}${overlap.length > 5 ? ` 等共 ${overlap.length} 天` : ''}</p>`;
     }
     const hasErrors = result.errors.length > 0;
     $('importPreview').innerHTML = `<strong>导入预览</strong><p>动作数量：${result.counts.exercises} | 模板数量：${result.counts.templates} | 计划数量：${result.counts.schedule} | 错误数量：${result.errors.length}</p>${templatePreviews}${hasErrors ? `<pre>${escapeHtml(result.errors.join('\n'))}</pre>` : '<button id="confirmImport" class="btn primary" type="button">确认导入</button>'}${overlapWarning}`;
@@ -838,7 +842,7 @@ async function openAiVideoSearchDialog(exerciseId) {
     `;
     urlInput.value = data.search_url || '';
   } catch (error) {
-    suggestionsEl.innerHTML = `<span style="color:var(--red)">搜索失败：${escapeHtml(error.message)}</span>`;
+    suggestionsEl.innerHTML = `<span class="status-error">搜索失败：${escapeHtml(error.message)}</span>`;
   }
   dialog.showModal();
 }
