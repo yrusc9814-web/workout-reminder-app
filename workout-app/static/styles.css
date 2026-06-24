@@ -246,7 +246,7 @@ pre { white-space: pre-wrap; word-break: break-word; padding: 14px; border-radiu
 .manage-card > div { display: flex; flex-direction: column; justify-content: space-between; flex: 1; min-height: 88px; }
 .manage-icon { width: 40px; height: 40px; border-radius: var(--radius-md); display: grid; place-items: center; background: linear-gradient(135deg, var(--primary), #22c55e); color: #fff; font-weight: 900; font-size: 17px; flex-shrink: 0; }
 .manage-card h3 { margin: 0 0 4px; font-size: var(--font-h3); }
-.manage-card p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.manage-card p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; min-height: 3em; }
 .manage-stat { display: inline-block; margin-top: 6px; padding: 4px 8px; border-radius: var(--radius-sm); background: rgba(37,99,235,.08); color: var(--primary-dark); font-size: 12px; font-weight: 700; }
 
 /* ── P1: benefit 文字 ─────────────────────────────────── */
