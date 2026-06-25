@@ -27,8 +27,10 @@ const BACKEND_ENDPOINT_CONTRACT = [
   '/api/templates/${template_id}',
   '/api/training/complete',
   '/api/plans/${plan_id}',
-];const $ = (id) => document.getElementById(id);
+];
+const $ = (id) => document.getElementById(id);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+const THEME_STORAGE_KEY = 'workout_theme_mode_v1';
 const today = new Date();
 const isoToday = today.toISOString().slice(0, 10);
 let currentPage = 'dashboard';
@@ -36,6 +38,8 @@ let visibleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let startupState = 'loading';
 let state = loadData();
 let session = null;
+let themeMode = 'system';
+let systemThemeMedia = null;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
@@ -137,6 +141,63 @@ function updateStorageUsage() {
   $('storageUsage').textContent = `API 缓存 ${(bytes / 1024).toFixed(1)} KB`;
 }
 
+function getExerciseRemark(exercise) {
+  if (!exercise) return '';
+  return [exercise.notes, exercise.benefit, Array.isArray(exercise.tips) ? exercise.tips.join('；') : exercise.tips]
+    .map((item) => String(item || '').trim())
+    .find(Boolean) || '';
+}
+
+function getSystemTheme() {
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function getResolvedTheme(mode = themeMode) {
+  return mode === 'system' ? getSystemTheme() : mode;
+}
+
+function updateThemeUI() {
+  const status = $('themeStatus');
+  const hint = $('themeModeHint');
+  const resolved = getResolvedTheme();
+  if (status) status.textContent = themeMode === 'system' ? `跟随系统 · 当前${resolved === 'dark' ? '深色' : '浅色'}` : (themeMode === 'dark' ? '深色' : '浅色');
+  if (hint) hint.textContent = themeMode === 'system' ? `当前使用跟随系统模式，系统偏好为${resolved === 'dark' ? '深色' : '浅色'}。` : `当前已切换为${themeMode === 'dark' ? '深色' : '浅色'}模式，并保存在 localStorage。`;
+  $$('[data-theme-option]').forEach((button) => {
+    const active = button.dataset.themeOption === themeMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-checked', active ? 'true' : 'false');
+  });
+}
+
+function applyTheme(mode = themeMode) {
+  themeMode = ['light', 'dark', 'system'].includes(mode) ? mode : 'system';
+  const resolved = getResolvedTheme(themeMode);
+  document.body.dataset.theme = resolved;
+  document.documentElement.style.colorScheme = resolved;
+  updateThemeUI();
+}
+
+function setTheme(mode) {
+  window.localStorage.setItem(THEME_STORAGE_KEY, mode);
+  applyTheme(mode);
+}
+
+function initTheme() {
+  themeMode = window.localStorage.getItem(THEME_STORAGE_KEY) || 'system';
+  if (!window.localStorage.getItem(THEME_STORAGE_KEY)) {
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }
+  if (window.matchMedia) {
+    systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+    if (typeof systemThemeMedia.addEventListener === 'function') {
+      systemThemeMedia.addEventListener('change', () => {
+        if (themeMode === 'system') applyTheme('system');
+      });
+    }
+  }
+  applyTheme(themeMode);
+}
+
 async function loadHealth() {
   startupState = 'loading';
   try {
@@ -223,7 +284,7 @@ function renderTodayCard(targetId, full = false) {
     return;
   }
   const visible = full ? exercises : exercises.slice(0, 3);
-  target.innerHTML = `<p class="eyebrow">今日训练</p><h2>${escapeHtml(template?.name || '当前计划引用的训练模板不存在')}</h2><div class="hero-meta"><span>训练时长：${template?.estimatedMinutes || 35} 分钟</span><span>难度：${escapeHtml(template?.difficulty || '低强度')}</span><span>状态：${statusText(plan.status)}</span><span>完成进度：${plan.status === 'done' ? '100%' : '0%'}</span></div><ol class="mini-actions">${visible.map((exercise) => `<li><strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(doseText(exercise))}</span>${defaultVideo(exercise) ? `<a href="${escapeHtml(defaultVideo(exercise).url)}" target="_blank" rel="noopener noreferrer">B站直达</a>` : '<button data-add-video="'+escapeHtml(exercise.id)+'" type="button">添加视频</button>'}${exercise.benefit ? `<small class="benefit-text">${escapeHtml(exercise.benefit)}</small>` : ''}</li>`).join('')}</ol>${exercises.length > 3 && !full ? '<button class="text-btn" data-expand-today type="button">展开全部动作</button>' : ''}<div class="button-row"><button class="btn secondary" data-show-detail type="button">查看动作详情</button><button class="btn primary" data-start-training type="button">开始训练</button></div>`;
+  target.innerHTML = `<p class="eyebrow">今日训练</p><h2>${escapeHtml(template?.name || '当前计划引用的训练模板不存在')}</h2><div class="hero-meta"><span>训练时长：${template?.estimatedMinutes || 35} 分钟</span><span>难度：${escapeHtml(template?.difficulty || '低强度')}</span><span>状态：${statusText(plan.status)}</span><span>完成进度：${plan.status === 'done' ? '100%' : '0%'}</span></div><ol class="mini-actions">${visible.map((exercise) => { const remark = getExerciseRemark(exercise); return `<li><strong>${escapeHtml(exercise.name)}</strong><span>${escapeHtml(doseText(exercise))}</span>${defaultVideo(exercise) ? `<a href="${escapeHtml(defaultVideo(exercise).url)}" target="_blank" rel="noopener noreferrer">B站直达</a>` : '<button data-add-video="'+escapeHtml(exercise.id)+'" type="button">添加视频</button>'}${exercise.benefit ? `<small class="benefit-text">${escapeHtml(exercise.benefit)}</small>` : ''}${remark ? `<small class="exercise-note-inline"><strong>备注：</strong>${escapeHtml(remark)}</small>` : ''}</li>`; }).join('')}</ol>${exercises.length > 3 && !full ? '<button class="text-btn" data-expand-today type="button">展开全部动作</button>' : ''}<div class="button-row"><button class="btn secondary" data-show-detail type="button">查看动作详情</button><button class="btn primary" data-start-training type="button">开始训练</button></div>`;
 }
 
 function renderStats() {
@@ -288,14 +349,15 @@ function renderExercises() {
   const items = state.exercises.filter((exercise) => (category === 'all' || exercise.category === category) && (!keyword || exercise.name.toLowerCase().includes(keyword) || exercise.category.toLowerCase().includes(keyword)));
   $('exerciseList').innerHTML = items.map((exercise) => {
     const video = defaultVideo(exercise);
-    return `<article class="data-card"><div><h3>${escapeHtml(exercise.name)}</h3><p>${escapeHtml(exercise.category)} / ${escapeHtml((exercise.bodyParts || []).join('、'))} / ${escapeHtml(exercise.difficulty)}</p><p>默认组次：${escapeHtml(doseText(exercise))}</p><p>默认 B站视频：${video ? escapeHtml(video.title) : '暂无视频链接'}</p>${exercise.benefit ? `<p class="benefit-line">${escapeHtml(exercise.benefit)}</p>` : ''}</div><div class="card-actions">${video ? `<a class="btn mini" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili</a>` : ''}<button class="btn mini" data-edit-exercise="${escapeHtml(exercise.id)}" type="button">编辑</button><button class="btn mini" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button><button class="btn mini secondary" data-ai-search-video="${escapeHtml(exercise.id)}" type="button">AI搜索</button><button class="btn danger mini" data-delete-exercise="${escapeHtml(exercise.id)}" type="button">删除</button></div></article>`;
+    const remark = getExerciseRemark(exercise);
+    return `<article class="data-card"><div><h3>${escapeHtml(exercise.name)}</h3><p>${escapeHtml(exercise.category)} / ${escapeHtml((exercise.bodyParts || []).join('、'))} / ${escapeHtml(exercise.difficulty)}</p><p>默认组次：${escapeHtml(doseText(exercise))}</p><p>默认 B站视频：${video ? escapeHtml(video.title) : '暂无视频链接'}</p>${exercise.benefit ? `<p class="benefit-line">${escapeHtml(exercise.benefit)}</p>` : ''}${remark ? `<p class="exercise-note"><strong>备注：</strong>${escapeHtml(remark)}</p>` : ''}</div><div class="card-actions">${video ? `<a class="btn mini" href="${escapeHtml(video.url)}" target="_blank" rel="noopener noreferrer">打开Bilibili</a>` : ''}<button class="btn mini" data-edit-exercise="${escapeHtml(exercise.id)}" type="button">编辑</button><button class="btn mini" data-add-video="${escapeHtml(exercise.id)}" type="button">添加视频</button><button class="btn mini secondary" data-ai-search-video="${escapeHtml(exercise.id)}" type="button">AI搜索</button><button class="btn danger mini" data-delete-exercise="${escapeHtml(exercise.id)}" type="button">删除</button></div></article>`;
   }).join('') || '<div class="empty-state">动作库为空，点击新增动作开始维护。</div>';
 }
 
 function renderTemplates() {
   $('templateList').innerHTML = state.templates.map((template) => {
     const exercises = templateExercises(template);
-    return `<article class="template-card"><h3>${escapeHtml(template.name)}</h3><p>${escapeHtml(template.description || '')}</p><div class="hero-meta"><span>${exercises.length} 个动作</span><span>约 ${template.estimatedMinutes || 30} 分钟</span><span>${escapeHtml(template.difficulty || '低强度')}</span></div><ol>${exercises.map((exercise) => `<li>${escapeHtml(exercise.name)} · ${escapeHtml(doseText(exercise))}</li>`).join('')}</ol><div class="card-actions"><button class="btn mini" data-edit-template="${escapeHtml(template.id)}" type="button">编辑模板</button><button class="btn danger mini" data-delete-template="${escapeHtml(template.id)}" type="button">删除模板</button></div></article>`;
+    return `<article class="template-card"><h3>${escapeHtml(template.name)}</h3><p>${escapeHtml(template.description || '')}</p><div class="hero-meta"><span>${exercises.length} 个动作</span><span>约 ${template.estimatedMinutes || 30} 分钟</span><span>${escapeHtml(template.difficulty || '低强度')}</span></div><ol>${exercises.map((exercise) => `<li>${escapeHtml(exercise.name)} · ${escapeHtml(doseText(exercise))}${getExerciseRemark(exercise) ? `<span class="template-note-list"><strong>备注：</strong>${escapeHtml(getExerciseRemark(exercise))}</span>` : ''}</li>`).join('')}</ol><div class="card-actions"><button class="btn mini" data-edit-template="${escapeHtml(template.id)}" type="button">编辑模板</button><button class="btn danger mini" data-delete-template="${escapeHtml(template.id)}" type="button">删除模板</button></div></article>`;
   }).join('') || '<div class="empty-state">模板为空，请新建训练模板。</div>';
 }
 
@@ -351,6 +413,7 @@ function renderTrainingSession() {
         <p class="eyebrow">当前动作卡片</p>
         <h3>${escapeHtml(exercise.name)}</h3>
         <p>目标：${escapeHtml(exercise.category)} · ${escapeHtml(doseText(exercise))} · 当前第 ${session.currentSetIndex + 1} / ${exercise.defaultSets} 组</p>
+        ${getExerciseRemark(exercise) ? `<p class="exercise-note"><strong>备注：</strong>${escapeHtml(getExerciseRemark(exercise))}</p>` : ''}
         <ul>${(exercise.tips || []).map((tip) => `<li>${escapeHtml(tip)}</li>`).join('')}</ul>
         <div class="button-row">
           <button class="btn primary" id="completeExerciseButton" data-complete-set type="button">完成按钮</button>
@@ -499,10 +562,10 @@ function attachEvents() {
     if (target.closest('[data-show-detail]')) switchPage('today');
     const editPlanEl = target.closest('[data-edit-plan]'); if (editPlanEl) openPlanDialog(editPlanEl.dataset.editPlan);
     const editExerciseEl = target.closest('[data-edit-exercise]'); if (editExerciseEl) openExerciseDialog(editExerciseEl.dataset.editExercise);
-    if (target.id === 'addExercise') openExerciseDialog();
+    if (target.id === 'addExercise' || target.id === 'addExerciseTop') openExerciseDialog();
     const addVideoEl = target.closest('[data-add-video]'); if (addVideoEl) openVideoDialog(addVideoEl.dataset.addVideo);
     const editTemplateEl = target.closest('[data-edit-template]'); if (editTemplateEl) openTemplateDialog(editTemplateEl.dataset.editTemplate);
-    if (target.id === 'addTemplate') openTemplateDialog();
+    if (target.id === 'addTemplate' || target.id === 'addTemplateTop') openTemplateDialog();
     const deleteExerciseEl = target.closest('[data-delete-exercise]'); if (deleteExerciseEl) deleteExercise(deleteExerciseEl.dataset.deleteExercise);
     const deleteTemplateEl = target.closest('[data-delete-template]'); if (deleteTemplateEl) deleteTemplate(deleteTemplateEl.dataset.deleteTemplate);
     const defaultVideoEl = target.closest('[data-default-video]'); if (defaultVideoEl) setDefaultVideo(...defaultVideoEl.dataset.defaultVideo.split('::'));
@@ -518,6 +581,7 @@ function attachEvents() {
     if (target.closest('[data-end-session]') && confirm('确认结束本次训练？当前训练进度会保存为未完成。')) finishTraining('partial');
     const jumpEl = target.closest('[data-jump-exercise]'); if (jumpEl) { session.currentExerciseIndex = Number(jumpEl.dataset.jumpExercise); session.currentSetIndex = 0; session.status = 'in_progress'; updateApp('session:jump'); }
     if (target.id === 'dismissSummaryBanner') dismissTrainingSummary();
+    const themeOption = target.closest('[data-theme-option]'); if (themeOption) setTheme(themeOption.dataset.themeOption);
   });
   $('exerciseSearch').addEventListener('input', renderExercises);
   $('exerciseFilter').addEventListener('change', renderExercises);
@@ -870,6 +934,7 @@ function confirmAiVideoSearch(event) {
   alert('视频链接已添加！');
 }
 async function bootstrapApp() {
+  initTheme();
   render();
   attachEvents();
   await loadHealth();

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>运动提醒 App｜运动训练计划管理</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260615-planner-v1" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260624-r2" />
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -36,6 +36,11 @@
         <span>后端数据源已连接</span>
         <strong id="storageUsage">状态检测中</strong>
         <small>统一读取 API / 会话状态</small>
+      </div>
+      <div class="local-status theme-status-card">
+        <span>当前主题</span>
+        <strong id="themeStatus">跟随系统</strong>
+        <small id="fontEvidence">字体栈：Microsoft YaHei UI / Microsoft YaHei / PingFang SC / Inter / system-ui</small>
       </div>
     </aside>
 
@@ -82,6 +87,17 @@
       </section>
 
       <section class="page" data-page-panel="today">
+        <header class="page-header glass-card compact-header">
+          <div>
+            <p class="eyebrow">今日训练</p>
+            <h2>今日训练安排</h2>
+            <p>查看今日动作详情、训练备注与相关视频。</p>
+          </div>
+          <div class="page-header-actions">
+            <button class="btn primary" data-start-training type="button">开始训练</button>
+            <button class="btn secondary" data-page-link="dashboard" type="button">返回仪表盘</button>
+          </div>
+        </header>
         <div class="two-column">
           <article class="glass-card" id="todayDetail"></article>
           <aside class="glass-card">
@@ -92,6 +108,16 @@
       </section>
 
       <section class="page" data-page-panel="week">
+        <header class="page-header glass-card compact-header">
+          <div>
+            <p class="eyebrow">周计划</p>
+            <h2>本周训练路线</h2>
+            <p>统一查看本周训练日、休息日与完成状态。</p>
+          </div>
+          <div class="page-header-actions">
+            <button class="btn secondary" data-page-link="dashboard" type="button">返回仪表盘</button>
+          </div>
+        </header>
         <section class="glass-card">
           <div class="section-head"><h2>本周计划</h2><span class="legend"><i class="dot training"></i>训练日 <i class="dot rest"></i>休息日</span></div>
           <div id="weekPlan" class="week-editor"></div>
@@ -99,6 +125,16 @@
       </section>
 
       <section class="page" data-page-panel="month">
+        <header class="page-header glass-card compact-header">
+          <div>
+            <p class="eyebrow">月计划</p>
+            <h2>月度训练计划</h2>
+            <p>查看月度安排、统计概览与每日执行状态。</p>
+          </div>
+          <div class="page-header-actions">
+            <button class="btn secondary" data-page-link="dashboard" type="button">返回仪表盘</button>
+          </div>
+        </header>
         <section class="glass-card">
           <div class="section-head"><h2>月计划</h2><div><button id="prevMonthPage" class="ghost-btn" type="button">上一月</button><button id="nextMonthPage" class="ghost-btn" type="button">下一月</button></div></div>
           <div id="monthStats" class="metric-grid slim"></div>
@@ -107,6 +143,16 @@
       </section>
 
       <section class="page" data-page-panel="exerciseLibrary">
+        <header class="page-header glass-card compact-header">
+          <div>
+            <p class="eyebrow">动作库</p>
+            <h2>动作库管理</h2>
+            <p>维护动作名称、备注、训练要点与 Bilibili 视频链接。</p>
+          </div>
+          <div class="page-header-actions">
+            <button id="addExerciseTop" class="btn primary" type="button">+ 新增动作</button>
+          </div>
+        </header>
         <section class="glass-card">
           <div class="section-head wrap">
             <div><h2>动作库</h2><p>动作是数据源，视频必须绑定在动作上。</p></div>
@@ -117,8 +163,18 @@
       </section>
 
       <section class="page" data-page-panel="templateManager">
+        <header class="page-header glass-card compact-header">
+          <div>
+            <p class="eyebrow">训练模板</p>
+            <h2>训练模板管理</h2>
+            <p>组合动作与备注信息，形成可复用的训练方案。</p>
+          </div>
+          <div class="page-header-actions">
+            <button id="addTemplateTop" class="btn primary" type="button">+ 新建模板</button>
+          </div>
+        </header>
         <section class="glass-card">
-          <div class="section-head"><h2>训练模板</h2><button id="addTemplate" class="btn primary" type="button">+ 新建模板</button></div>
+          <div class="section-head"><h2>训练模板</h2></div>
           <div id="templateList" class="template-grid"></div>
         </section>
       </section>
@@ -131,6 +187,16 @@
       </section>
 
       <section class="page" data-page-panel="settings">
+        <header class="page-header glass-card compact-header">
+          <div>
+            <p class="eyebrow">设置</p>
+            <h2>应用设置与数据管理</h2>
+            <p>切换主题模式，管理 JSON 导入导出与钉钉提醒验收。</p>
+          </div>
+          <div class="page-header-actions">
+            <button class="btn secondary" data-page-link="dashboard" type="button">返回仪表盘</button>
+          </div>
+        </header>
         <div class="two-column">
           <section class="glass-card">
             <div class="section-head"><h2>JSON 导入 / 导出</h2></div>
@@ -141,6 +207,15 @@
             </div>
             <textarea id="jsonBox" placeholder="导出的 JSON 或待导入 JSON"></textarea>
             <div id="importPreview" class="info-box"></div>
+          </section>
+          <section class="glass-card">
+            <div class="section-head"><h2>主题显示</h2></div>
+            <div class="theme-switcher" id="themeSwitcher" role="radiogroup" aria-label="主题模式切换">
+              <button class="theme-option" data-theme-option="light" type="button" role="radio" aria-checked="false">浅色</button>
+              <button class="theme-option" data-theme-option="dark" type="button" role="radio" aria-checked="false">深色</button>
+              <button class="theme-option" data-theme-option="system" type="button" role="radio" aria-checked="true">跟随系统</button>
+            </div>
+            <p class="info-box" id="themeModeHint">当前使用跟随系统模式，首次加载将自动匹配系统偏好。</p>
           </section>
           <section class="glass-card">
             <div class="section-head"><h2>钉钉提醒验收</h2></div>
@@ -206,6 +281,6 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js?v=20260622-ui-v3.3"></script>
+  <script src="/static/app.js?v=20260624-r2"></script>
 </body>
 </html>
