@@ -269,7 +269,7 @@ pre { white-space: pre-wrap; word-break: break-word; padding: 14px; border-radiu
 .progress-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.25); }
 
 .management-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; align-items: stretch; }
-.manage-card { display: flex; gap: 14px; align-items: flex-start; padding: 18px; border-radius: 20px; background: var(--panel-soft); border: 1px solid var(--line); cursor: pointer; transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
+.manage-card { display: flex; gap: 14px; align-items: flex-start; padding: 18px; border-radius: 20px; background: var(--panel-soft); border: 1px solid var(--line); box-shadow: var(--shadow-normal); cursor: pointer; transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
 .manage-card:hover { transform: translateY(-2px); opacity: 0.98; }
 .manage-card > div { display: flex; flex-direction: column; justify-content: space-between; flex: 1; min-height: 88px; }
 .manage-icon { width: 40px; height: 40px; border-radius: var(--radius-md); display: grid; place-items: center; background: linear-gradient(135deg, var(--primary), #22c55e); color: #fff; font-weight: 900; font-size: 17px; flex-shrink: 0; }
