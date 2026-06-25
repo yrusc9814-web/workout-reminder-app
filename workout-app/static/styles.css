@@ -96,6 +96,24 @@ body[data-theme='dark'] {
   --shadow-brand: 0 10px 24px rgba(37, 99, 235, 0.28);
 }
 
+/* ── 深色模式组件级覆盖（避免浅色残留） ────────────────── */
+body[data-theme='dark'] .ambient-one { background: rgba(30, 64, 120, 0.4); }
+body[data-theme='dark'] .ambient-two { background: rgba(45, 65, 100, 0.35); }
+body[data-theme='dark'] .status-pill.pending { background: rgba(148,163,184,.22); color: #cbd5e1; }
+body[data-theme='dark'] .status-pill.ok { background: rgba(34,197,94,.18); color: #86efac; }
+body[data-theme='dark'] .status-pill.warn { background: rgba(251,146,60,.18); color: #fdba74; }
+body[data-theme='dark'] .session-list li.active { background: rgba(37,99,235,.18); border-color: rgba(37,99,235,.35); }
+body[data-theme='dark'] .hero-meta span, body[data-theme='dark'] .rest-suggestions span, body[data-theme='dark'] .legend { background: rgba(37,99,235,.16); color: #93c5fd; }
+body[data-theme='dark'] .calendar-day.today { background: rgba(37,99,235,.22); border-color: rgba(37,99,235,.45); }
+body[data-theme='dark'] .calendar-day.completed { background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.3); }
+body[data-theme='dark'] .week-card.completed { background: rgba(34,197,94,.08); border-color: rgba(34,197,94,.25); }
+body[data-theme='dark'] .set-badge.set-complete { background: rgba(34,197,94,.18); color: #86efac; }
+body[data-theme='dark'] .modal::backdrop { background: rgba(2,6,23,.55); }
+body[data-theme='dark'] .btn.warning { color: #fdba74; background: rgba(249,115,22,.16); }
+body[data-theme='dark'] .btn.danger { color: #fca5a5; background: rgba(220,38,38,.16); }
+body[data-theme='dark'] .hero-card { background: linear-gradient(135deg, var(--panel-strong), rgba(30, 41, 59, 0.85)); }
+body[data-theme='dark'] pre { background: #1e293b; color: #93c5fd; }
+
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
@@ -270,7 +288,7 @@ pre { white-space: pre-wrap; word-break: break-word; padding: 14px; border-radiu
 .progress-fill { height: 100%; background: linear-gradient(90deg, var(--primary), #22c55e); border-radius: var(--radius-pill); transition: width var(--motion-normal) var(--ease-out); }
 .progress-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.25); }
 
-.management-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; align-items: stretch; }
+.management-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; align-items: stretch; }
 .manage-card { display: flex; gap: 14px; align-items: flex-start; padding: 18px; border-radius: 20px; background: var(--panel-soft); border: 1px solid var(--line); box-shadow: var(--shadow-normal); cursor: pointer; transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
 .manage-card:hover { transform: translateY(-2px); opacity: 0.98; }
 .manage-card > div { display: flex; flex-direction: column; justify-content: space-between; flex: 1; min-height: 88px; }
@@ -375,6 +393,7 @@ pre { white-space: pre-wrap; word-break: break-word; padding: 14px; border-radiu
   .planner-shell { width: min(100% - 16px, 1500px); margin: 8px auto; }
   .glass-card, .sidebar { border-radius: var(--radius-lg); padding: var(--card-padding-sm); }
   .nav-list { grid-template-columns: repeat(2, 1fr); }
+  .management-grid { grid-template-columns: repeat(2, 1fr); }
   .metric-grid { grid-template-columns: 1fr; }
   .week-route, .week-editor { grid-template-columns: repeat(7, minmax(120px, 1fr)); overflow-x: auto; }
   .calendar-grid { grid-template-columns: repeat(7, minmax(80px, 1fr)); overflow-x: auto; }
