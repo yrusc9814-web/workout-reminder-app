@@ -104,6 +104,10 @@ body[data-theme='dark'] .status-pill.ok { background: rgba(34,197,94,.18); color
 body[data-theme='dark'] .status-pill.warn { background: rgba(251,146,60,.18); color: #fdba74; }
 body[data-theme='dark'] .session-list li.active { background: rgba(37,99,235,.18); border-color: rgba(37,99,235,.35); }
 body[data-theme='dark'] .hero-meta span, body[data-theme='dark'] .rest-suggestions span, body[data-theme='dark'] .legend { background: rgba(37,99,235,.16); color: #93c5fd; }
+body[data-theme='dark'] .week-card.today { background: linear-gradient(135deg, rgba(37,99,235,.18), var(--panel-strong)); }
+body[data-theme='dark'] .week-card.rest { color: #94a3b8; }
+body[data-theme='dark'] .calendar-day.training { border-color: rgba(34,197,94,.35); }
+body[data-theme='dark'] .week-card.training { box-shadow: inset 0 0 0 1px rgba(34,197,94,.3); }
 body[data-theme='dark'] .calendar-day.today { background: rgba(37,99,235,.22); border-color: rgba(37,99,235,.45); }
 body[data-theme='dark'] .calendar-day.completed { background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.3); }
 body[data-theme='dark'] .week-card.completed { background: rgba(34,197,94,.08); border-color: rgba(34,197,94,.25); }
@@ -190,7 +194,7 @@ a { color: inherit; }
 .page.active { display: block; }
 .page.active > .two-column, .page.active > .glass-card, .page.active > section { margin-bottom: 0; }
 .page.active > * + * { margin-top: var(--section-gap); }
-.dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(320px, .85fr); gap: 20px; align-items: stretch; }
+.dashboard-grid { display: grid; grid-template-columns: 1fr; gap: 20px; align-items: stretch; }
 .glass-card { border-radius: 22px; padding: 20px; }
 .hero-card { min-height: 280px; display: flex; flex-direction: column; justify-content: center; background: linear-gradient(135deg, var(--panel-strong), rgba(221, 231, 246, 0.85)); box-shadow: var(--shadow-normal); }
 .hero-card h2, .current-exercise h3 { margin: 8px 0; font-size: var(--font-h2); letter-spacing: -.04em; }
@@ -198,6 +202,7 @@ a { color: inherit; }
 .hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .hero-meta span, .rest-suggestions span, .legend { padding: 8px 11px; border-radius: var(--radius-pill); background: rgba(37,99,235,.09); color: #1e40af; font-weight: 700; font-size: 13px; }
 .stack { display: grid; gap: 20px; }
+.dashboard-grid .stack { grid-template-columns: repeat(2, 1fr); }
 .compact-card { min-height: 0; }
 .wide-card { grid-column: 1 / -1; }
 .two-column { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr); gap: 20px; }
@@ -292,7 +297,7 @@ pre { white-space: pre-wrap; word-break: break-word; padding: 14px; border-radiu
 .manage-card { display: flex; gap: 14px; align-items: flex-start; padding: 18px; border-radius: 20px; background: var(--panel-soft); border: 1px solid var(--line); box-shadow: var(--shadow-normal); cursor: pointer; transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
 .manage-card:hover { transform: translateY(-2px); opacity: 0.98; }
 .manage-card > div { display: flex; flex-direction: column; justify-content: space-between; flex: 1; min-height: 88px; }
-.manage-icon { width: 40px; height: 40px; border-radius: var(--radius-md); display: grid; place-items: center; background: linear-gradient(135deg, var(--primary), #22c55e); color: #fff; font-weight: 900; font-size: 17px; flex-shrink: 0; }
+.manage-icon { width: 40px; height: 40px; border-radius: var(--radius-md); display: grid; place-items: center; background: rgba(37,99,235,.12); color: var(--primary-dark); font-weight: 900; font-size: 17px; flex-shrink: 0; }
 .manage-card h3 { margin: 0 0 4px; font-size: var(--font-h3); }
 .manage-card p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; min-height: 3em; }
 .manage-stat { display: inline-block; margin-top: 6px; padding: 4px 8px; border-radius: var(--radius-sm); background: rgba(37,99,235,.08); color: var(--primary-dark); font-size: 12px; font-weight: 700; }
