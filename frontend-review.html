@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>运动提醒 App｜前端审核版</title>
+  <link rel="stylesheet" href="static/styles.css?v=20260713-welcome" />
+  <style>
+    /* Review build: no API, no database, deterministic demo data. */
+    .review-shell{min-height:100vh}.review-page{display:none}.review-page.active{display:block}
+    .review-dashboard{display:grid;gap:20px}.review-management{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+    .review-management article{padding:20px;border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--panel-soft);min-height:132px;display:grid;align-content:space-between}
+    .review-management svg{width:34px;height:34px;color:var(--primary)}.review-management strong{font-size:17px}.review-management small{color:var(--muted)}
+    .review-actions{display:flex;flex-wrap:wrap;gap:10px}.review-list{display:grid;gap:0;margin:0;padding:0;list-style:none}.review-list li{display:grid;grid-template-columns:1fr auto;gap:8px;padding:14px 0;border-bottom:1px solid var(--line)}
+    .review-list li:last-child{border-bottom:0}.review-video{color:var(--primary);font-weight:700;text-decoration:none}.review-note{margin:8px 0 0;color:var(--muted);font-size:13px}
+    @media(max-width:959px){.review-management{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:639px){.review-management{grid-template-columns:1fr}}
+  </style>
+</head>
+<body class="theme-light" data-theme="light">
+  <div class="fitness-background" aria-hidden="true"><span class="fitness-photo-bg"></span></div>
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <div class="planner-shell review-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand-block"><span class="brand-mark" aria-hidden="true">✚</span><strong>运动提醒 App</strong></div>
+      <nav class="nav-list" id="reviewNav">
+        <button class="nav-item active" data-review-page="dashboard" type="button">仪表盘</button>
+        <button class="nav-item" data-review-page="today" type="button">今日训练</button>
+        <button class="nav-item" data-review-page="week" type="button">周计划</button>
+        <button class="nav-item" data-review-page="month" type="button">月计划</button>
+        <button class="nav-item" data-review-page="exercise" type="button">动作库</button>
+        <button class="nav-item" data-review-page="templates" type="button">训练模板</button>
+        <button class="nav-item" data-review-page="videos" type="button">视频链接</button>
+        <button class="nav-item" data-review-page="settings" type="button">设置</button>
+      </nav>
+      <div class="sidebar-support"><details class="sidebar-collapse" open><summary>辅助工具</summary><div class="ai-panel"><button class="ai-button" type="button">生成训练计划</button><button class="ai-button" type="button">分析训练表现</button><button class="ai-button" type="button">推荐动作 / 视频</button></div></details><details class="sidebar-collapse" open><summary>系统状态</summary><div class="local-status"><span class="status-ok">演示模式</span><strong>无数据库</strong></div><div class="local-status"><span>当前主题</span><strong>浅色</strong></div></details></div>
+    </aside>
+    <main class="main-panel">
+      <section class="review-page active" data-review-panel="dashboard">
+        <header class="topbar glass-card" data-role="dashboard-welcome"><h1>运动提醒 App · 运动训练计划管理</h1><aside class="top-welcome" aria-label="欢迎回来"><img src="static/assets/welcome-sheep.png" alt="欢迎回来，WELCOME BACK" /></aside></header>
+        <div class="review-dashboard">
+          <article class="hero-card glass-card"><h2>髋部稳定与核心控制</h2><div class="hero-meta"><span>训练时长：35 分钟</span><span>难度：低强度</span><span>状态：待开始</span><span>完成进度：0%</span></div><ul class="review-list"><li><strong>仰卧骨盆时钟</strong><span>1 组 × 180 秒</span><a class="review-video" href="#videos">▶ 查看示范</a></li><li><strong>支撑臀桥停留</strong><span>2 组 × 20 秒</span><a class="review-video" href="#videos">▶ 查看示范</a></li><li><strong>侧卧髋外展</strong><span>2 组 × 6 次/侧</span><a class="review-video" href="#videos">▶ 查看示范</a></li></ul><p class="review-note">今天的训练重点是稳定骨盆、改善髋前倾，并用低强度动作建立控制感。</p><div class="review-actions"><button class="btn secondary" type="button">查看动作详情</button><button class="btn primary" type="button">开始训练</button></div></article>
+          <section class="glass-card"><div class="section-head"><h2>管理中心</h2></div><div class="review-management"><article><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5m0 14h16M8 16v-5m4 5V7m4 9v-8"/></svg><strong>训练统计</strong><small>本月 12 个训练日</small></article><article><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg><strong>训练模板</strong><small>4 个可用模板</small></article><article><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 5h14v14H5zM8 9h8M8 13h5"/></svg><strong>动作库</strong><small>28 个动作</small></article><article><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 8 6 4-6 4V8Z"/><rect x="3" y="5" width="18" height="14" rx="3"/></svg><strong>视频链接</strong><small>16 个示范视频</small></article></div></section>
+          <div class="two-column"><section class="glass-card compact-card"><div class="section-head"><h2>月度统计</h2><span>2026 年 7 月</span></div><div class="metric-grid"><div><strong>12</strong><span>训练日</span></div><div><strong>86%</strong><span>完成率</span></div><div><strong>4</strong><span>连续周</span></div></div></section><section class="glass-card compact-card"><div class="section-head"><h2>今日相关视频</h2></div><ul class="review-list"><li><strong>髋部稳定基础</strong><a class="review-video" href="#videos">查看示范</a></li><li><strong>训练后拉伸</strong><a class="review-video" href="#videos">查看示范</a></li></ul></section></div>
+          <section class="glass-card"><div class="section-head"><h2>本周训练路线</h2><button class="text-btn" type="button" data-review-page-link="week">查看周计划</button></div><div class="week-route"><div class="week-card"><strong>周一</strong><span>核心稳定</span><b>已完成</b></div><div class="week-card"><strong>周二</strong><span>恢复拉伸</span><b>休息日</b></div><div class="week-card"><strong>周三</strong><span>髋部控制</span><b>今天</b></div><div class="week-card"><strong>周四</strong><span>上肢力量</span><b>待开始</b></div><div class="week-card"><strong>周五</strong><span>灵活性</span><b>待开始</b></div></div></section>
+        </div>
+      </section>
+      <section class="review-page" data-review-panel="today"><section class="glass-card"><h2>今日训练</h2><p>当前为前端演示数据，页面不连接数据库。</p><button class="btn primary" type="button">开始训练</button></section></section>
+      <section class="review-page" data-review-panel="week"><section class="glass-card"><h2>周计划</h2><div class="week-route"><div class="week-card"><strong>周一</strong><span>核心稳定</span></div><div class="week-card"><strong>周三</strong><span>髋部控制</span></div><div class="week-card"><strong>周五</strong><span>灵活性</span></div></div></section></section>
+      <section class="review-page" data-review-panel="month"><section class="glass-card"><h2>月计划</h2><div class="calendar-grid"><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div></div></section></section>
+      <section class="review-page" data-review-panel="exercise"><section class="glass-card"><h2>动作库</h2><div class="template-grid"><article class="data-card"><strong>仰卧骨盆时钟</strong><span>核心稳定</span></article><article class="data-card"><strong>支撑臀桥停留</strong><span>臀腿激活</span></article><article class="data-card"><strong>侧卧髋外展</strong><span>髋部控制</span></article></div></section></section>
+      <section class="review-page" data-review-panel="templates"><section class="glass-card"><h2>训练模板</h2><div class="template-grid"><article class="template-card"><h3>髋部稳定与核心控制</h3><p>35 分钟 · 低强度</p><button class="btn secondary" type="button">查看模板</button></article><article class="template-card"><h3>恢复拉伸</h3><p>20 分钟 · 恢复</p><button class="btn secondary" type="button">查看模板</button></article></div></section></section>
+      <section class="review-page" data-review-panel="videos"><section class="glass-card"><h2>视频链接</h2><ul class="review-list"><li><strong>髋部稳定基础</strong><a class="review-video" href="#">▶ 查看示范</a></li><li><strong>训练后拉伸</strong><a class="review-video" href="#">▶ 查看示范</a></li></ul></section></section>
+      <section class="review-page" data-review-panel="settings"><section class="glass-card"><h2>设置</h2><p>当前为前端审核版，所有操作均为演示，不会写入数据库。</p><button class="btn secondary" id="themeToggle" type="button">切换深色主题</button></section></section>
+    </main>
+  </div>
+  <script>
+    (() => {
+      const buttons = [...document.querySelectorAll('[data-review-page]')];
+      const panels = [...document.querySelectorAll('[data-review-panel]')];
+      const show = (name) => { panels.forEach((p) => p.classList.toggle('active', p.dataset.reviewPanel === name)); buttons.forEach((b) => b.classList.toggle('active', b.dataset.reviewPage === name)); window.scrollTo({top:0,behavior:'smooth'}); };
+      buttons.forEach((b) => b.addEventListener('click', () => show(b.dataset.reviewPage)));
+      document.querySelectorAll('[data-review-page-link]').forEach((b) => b.addEventListener('click', () => show(b.dataset.reviewPageLink)));
+      document.getElementById('themeToggle')?.addEventListener('click', () => { const dark = document.body.dataset.theme === 'dark'; document.body.dataset.theme = dark ? 'light' : 'dark'; document.body.classList.toggle('theme-dark', !dark); document.body.classList.toggle('theme-light', dark); });
+    })();
+  </script>
+</body>
+</html>
