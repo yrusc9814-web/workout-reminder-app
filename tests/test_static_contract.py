@@ -37,38 +37,16 @@ def test_ai_analyze_route_is_registered():
 
 def test_frontend_primary_copy_is_chinese():
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
-    visible_copy = "\n".join([index_html, app_js])
 
-    forbidden_copy = [
-        "Workout Reminder App",
-        "Progress",
-        "This week",
-        "Month list",
-        "Mock reminder",
-        "Activity",
-        "Complete",
-        "Skip",
-        "Postpone",
-        "Rest day",
-        "Hip stability",
-        "Supine pelvic clock",
-        "Supported bridge hold",
-        "Side-lying hip abduction",
-        "Dead bug heel taps",
-        "Seated hip march",
-    ]
-    # Normalize: remove JS identifiers, function names, and quoted strings so we test only visible copy.
-    visible_clean = re.sub(r'[a-zA-Z_][a-zA-Z0-9_]*\s*\(', ' ', visible_copy)
-    visible_clean = re.sub(r'[\'"`]([^\'"]{0,30})[\'"`]', ' ', visible_clean)
-    # Also strip HTML data-* attributes which are not user-visible copy
-    visible_clean = re.sub(r'data-[a-z]+(?:-[a-z]+)*', ' ', visible_clean)
-    for text in forbidden_copy:
-        assert text not in visible_clean
-
-    assert re.search(r'运动提醒 App', visible_copy)
-    assert re.search(r'今日训练', visible_copy)
-    assert re.search(r'打开.*Bilibili', visible_copy)
+    assert "轻动日记·管理界面 v25" in index_html
+    assert "<h1 class=\"welcome-title\">轻动日记</h1>" in index_html
+    assert "今日训练" in index_html
+    assert "开始训练" in index_html
+    assert "动作库" in index_html
+    assert "月计划" in index_html
+    assert "AI健身教练" in index_html
+    assert "Workout Reminder App" not in index_html
+    assert "运动提醒 App" not in index_html
 
 
 def test_windows_one_click_launcher_exists():
@@ -101,75 +79,54 @@ def test_frontend_backend_endpoint_contract_updated():
 
 
 def test_frontend_dashboard_has_all_management_entries():
-    """仪表盘入口可管理动作库、训练模板、训练计划。"""
+    """v25 主导航覆盖日/周/月计划、动作库、训练方案、AI 与设置。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
 
-    # 导航栏包含所有管理页面入口
-    page_entries = ["exerciseLibrary", "templateManager", "videoLinks"]
-    for entry in page_entries:
-        assert entry in index_html, f"缺少页面入口：{entry}"
-
-    # 首页仪表盘包含编辑计划入口
-    # 仪表盘有编辑计划功能（在 app.js 中动态绑定）
-    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
-    assert "data-edit-plan" in app_js
-
-    # 管理中心网格区域
-    assert "dashboardManagement" in app_js or "dashboardManagement" in index_html
-    assert "manage-card" in app_js
-    assert "动作库管理" in app_js
-    assert "训练模板管理" in app_js
-    assert "训练计划管理" in app_js
-    assert "导入 / 导出数据" in app_js or "导入" in app_js
+    assert 'data-nav="day"' in index_html
+    assert 'data-nav="week"' in index_html
+    assert 'data-view="month"' in index_html
+    assert 'data-view="library"' in index_html
+    assert 'data-view="template"' in index_html
+    assert 'data-view="ai"' in index_html
+    assert 'data-view="settings"' in index_html
+    assert 'id="view-home"' in index_html
+    assert 'id="view-month"' in index_html
+    assert 'id="view-library"' in index_html
+    assert 'id="view-template"' in index_html
+    assert 'id="view-ai"' in index_html
+    assert 'id="view-settings"' in index_html
+    assert "动作库" in index_html
+    assert "训练方案" in index_html
+    assert "AI健身教练" in index_html
 
 
 def test_light_theme_has_independent_fitness_background_layer():
-    """浅色模式背景必须有独立 fitness 图层，不依赖负 z-index body 伪元素。"""
+    """v25 使用内置字体、天空层和欢迎屏作为正式视觉层，不再依赖旧 fitness 背景卡。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
-    styles_css = (APP_DIR / "static" / "styles.css").read_text(encoding="utf-8")
 
-    assert 'body class="theme-light" data-theme="light"' in index_html
-    assert "fitness-background" in index_html
-    assert "fitness-photo-bg" in index_html
-    assert "document.body.dataset.theme = resolved" in app_js
-    assert "theme-light" in app_js and "theme-dark" in app_js
-    assert ".fitness-background" in styles_css
-    assert "body::before" not in styles_css
-    assert "body::after" not in styles_css
-    assert "z-index: 0" in styles_css
-    assert ".planner-shell { position: relative; z-index: 1;" in styles_css
-    assert "/static/assets/fitness-photo-bg.png" in styles_css
-    assert "fitness-bg-pose" not in index_html
-    assert "filter: saturate" in styles_css and "brightness" in styles_css
+    assert 'src: url("/static/assets/fonts/AaTouChiKeAiChangDaDe.woff2")' in index_html
+    assert 'id="welcomeScreen"' in index_html
+    assert 'class="welcome-screen"' in index_html
+    assert 'class="sky-layer"' in index_html
+    assert "/static/assets/images/sheep-logo.webp" in index_html
+    assert "/static/assets/images/clouds/cloud-main.webp" in index_html
+    assert "body.theme-dark" in index_html
+    assert "fitness-photo-bg" not in index_html
 
 
 def test_dashboard_management_cards_use_explicit_visual_layers():
-    """管理中心卡片必须输出 background/overlay/icon/content 显式层。"""
+    """v25 首页使用日计划 hero 与导航药丸，而不是旧管理中心分层卡片。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
-    styles_css = (APP_DIR / "static" / "styles.css").read_text(encoding="utf-8")
 
-    assert 'data-card-contract="background overlay icon content"' in index_html
-    for layer in [
-        "manage-bg-layer",
-        "manage-overlay-layer",
-        "manage-icon-layer",
-        "manage-content-layer",
-    ]:
-        assert layer in app_js
-        assert f".{layer}" in styles_css
-
-    assert 'data-card-layered="true"' in app_js
-    assert '<button class="manage-card"' in app_js
-    assert "display: flex; align-items: center; justify-content: center" in styles_css
-    assert "width: 44px; height: 44px" in styles_css
-    assert "width: 22px; height: 22px" in styles_css
-    assert "--manage-icon-bg" in styles_css
-    assert ".manage-bg-layer { inset: 0; z-index: 0;" in styles_css
-    assert ".manage-overlay-layer { inset: 0; z-index: 1;" in styles_css
-    assert re.search(r"\.manage-icon-layer\s*\{[^}]*z-index:\s*2;", styles_css)
-    assert re.search(r"\.manage-content-layer\s*\{[^}]*z-index:\s*3;[^}]*text-align:\s*center;", styles_css)
+    assert 'class="topnav glass phase2-nav"' in index_html
+    assert 'class="nav-pills"' in index_html
+    assert 'class="nav-pill"' in index_html
+    assert 'id="dayHero"' in index_html
+    assert 'id="todayTitle"' in index_html
+    assert ">今日训练<" in index_html
+    assert 'id="startTodayBtn"' in index_html
+    assert ">开始训练<" in index_html
+    assert 'data-card-contract="background overlay icon content"' not in index_html
 
 
 def test_dashboard_month_stats_have_icon_rich_layout():
@@ -186,19 +143,17 @@ def test_dashboard_month_stats_have_icon_rich_layout():
 
 
 def test_sidebar_support_sections_are_collapsible_and_clean():
-    """辅助工具和系统状态可折叠，且不显示冗余说明文案。"""
+    """v25 用「更多」折叠菜单承载动作库、训练方案、AI 与设置。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    styles_css = (APP_DIR / "static" / "styles.css").read_text(encoding="utf-8")
 
-    assert '<details class="sidebar-collapse" open>' in index_html
-    assert "<summary>辅助工具</summary>" in index_html
-    assert "<summary>系统状态</summary>" in index_html
-    assert "sidebar-collapse:not([open]) summary::after" in styles_css
-    assert "字体栈" not in index_html
-    assert "fontEvidence" not in index_html
-    assert "从需求生成可导入草稿" not in index_html
-    assert "读取训练记录生成建议" not in index_html
-    assert "为动作补齐 Bilibili 链接" not in index_html
+    assert 'id="moreMenu"' in index_html
+    assert "<summary>更多</summary>" in index_html
+    assert 'data-view="library"' in index_html
+    assert 'data-view="template"' in index_html
+    assert 'data-view="ai"' in index_html
+    assert 'data-view="settings"' in index_html
+    assert "辅助工具" not in index_html
+    assert "系统状态" not in index_html
 
 
 def test_dashboard_month_trend_moves_above_today_videos():
@@ -218,24 +173,16 @@ def test_dashboard_month_trend_moves_above_today_videos():
 
 
 def test_dashboard_only_uses_a_static_welcome_image():
-    """欢迎栏只属于仪表盘，欢迎文字和勾选均由静态图提供。"""
+    """v25 欢迎屏使用正式小羊 logo 与云层素材，点击后进入日计划。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
-    styles_css = (APP_DIR / "static" / "styles.css").read_text(encoding="utf-8")
 
-    assert 'class="top-welcome"' in index_html
-    assert 'data-role="dashboard-welcome"' in index_html
-    assert 'src="/static/assets/welcome-sheep.png"' in index_html
-    assert '<span>欢迎回来</span>' not in index_html
-    assert '<strong>WELCOME BACK</strong>' not in index_html
-    assert 'id="health"' not in index_html
-    assert "top-mini-action" not in index_html
-    assert 'id="openImportExport"' not in index_html
-    assert 'id="startTodayTop"' not in index_html
-    assert "renderWelcomeTaskArt" not in app_js
-    assert "task-character" not in app_js
-    assert ".top-welcome img" in styles_css
-    assert ".top-welcome { display: none; }" not in styles_css
+    assert 'id="welcomeScreen"' in index_html
+    assert 'src="/static/assets/images/sheep-logo.webp"' in index_html
+    assert "<h1 class=\"welcome-title\">轻动日记</h1>" in index_html
+    assert 'class="welcome-btn"' in index_html
+    assert "轻动起来吧" in index_html
+    assert "welcome-sheep.png" not in index_html
+    assert "WELCOME BACK" not in index_html
 
 
 def test_month_page_hides_duplicate_stats_icons():
@@ -336,12 +283,17 @@ def test_frontend_week_month_shows_completion_status():
 
 
 def test_frontend_exercise_template_crud_dialogs():
-    """动作库/模板/计划编辑对话框存在。"""
+    """v25 动作库、训练方案与日计划编辑入口存在于正式页面结构中。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
 
-    assert "exerciseDialog" in index_html
-    assert "templateDialog" in index_html
-    assert "planDialog" in index_html
+    assert 'id="view-library"' in index_html
+    assert 'id="libGrid"' in index_html
+    assert 'id="libSearch"' in index_html
+    assert 'id="newExerciseBtn"' in index_html
+    assert 'id="view-template"' in index_html
+    assert 'id="todayDetailBtn"' in index_html
+    assert ">编辑今日清单<" in index_html
+    assert 'id="clearTodayBtn"' in index_html
 
 
 def test_frontend_no_auto_overwrite_localstorage():
@@ -353,13 +305,19 @@ def test_frontend_no_auto_overwrite_localstorage():
 
 
 def test_frontend_has_has_entry_points():
-    """前端菜单包含 AI 入口，不再显示 第二阶段开放。"""
+    """v25 菜单包含 AI 教练入口，并接线统一 session 完成契约。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
 
-    assert "data-ai-action" in index_html
+    assert 'data-view="ai"' in index_html
+    assert 'id="view-ai"' in index_html
+    assert "AI健身教练" in index_html
+    assert 'id="chatInput"' in index_html
+    assert 'id="chatSendBtn"' in index_html
+    assert "/api/session/start" in index_html
+    assert "/api/session/update" in index_html
+    assert "/api/session/complete" in index_html
+    assert "/api/logs/complete" not in index_html
     assert "第二阶段开放" not in index_html
-    assert "data-ai-action" in app_js or "aiSearchVideo" in app_js or "checkAiHealth" in app_js
 
 
 def test_frontend_has_bilibili_url_validation():

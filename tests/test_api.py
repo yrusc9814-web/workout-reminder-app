@@ -21,7 +21,10 @@ def test_root_returns_html(client):
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "运动提醒 App" in response.text or "训练面板" in response.text
+    assert "轻动日记" in response.text
+    assert "v25" in response.text
+    assert "今日训练" in response.text
+    assert 'id="startTodayBtn"' in response.text
 
 
 def test_today_endpoint_exists_and_returns_shape(client):
