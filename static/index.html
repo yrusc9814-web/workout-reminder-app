@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>轻动日记·管理界面 v25 · rehearsal preview</title>
+  <title>轻动日记·管理界面 v25</title>
   <style>
     @font-face {
       font-family: "Aa偷吃可爱长大的-项目内置";
@@ -149,93 +149,63 @@
       border-radius: var(--radius-sm);
     }
 
-    /* ═══ 欢迎动效 v16：云海沉浮·小羊破云而出 ═══
-       深浅同构：底色固定为夜幕，天光层（sky-fade）用变量驱动，
-       浅色渐显为白昼天空，深色渐显为夜空提亮，不再需要深色补丁。 */
+    /* ═══ 欢迎动效：Q弹物理风 ═══ */
     .welcome-screen {
       position: fixed; inset: 0; z-index: 9999;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: linear-gradient(180deg, #10182a 0%, #1c2a44 45%, #2a3a55 100%);
-      transition: opacity .6s ease, visibility .6s ease;
+      background: linear-gradient(135deg, #ffb7c5 0%, #ffdde1 50%, #b4e4f5 100%);
+      transition: opacity .5s ease, transform .5s cubic-bezier(0.28, 0.84, 0.42, 1), visibility .5s ease;
       overflow: hidden;
     }
-    .welcome-screen.welcome-out { opacity: 0; visibility: hidden; pointer-events: none; }
-    .welcome-screen .sky-fade {
-      position: absolute; inset: 0; z-index: 0; opacity: 0;
-      background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-soft) 58%, var(--cream) 100%);
-      transition: opacity 1.1s ease .9s;
+    .welcome-screen.welcome-out {
+      opacity: 0;
+      visibility: hidden;
       pointer-events: none;
+      transform: scale(1.15);
     }
-    .welcome-screen.sky-reveal .sky-fade { opacity: 1; }
-    /* v23：云朵视觉由本地透明 PNG 提供，容器只承担位置与 transform / opacity 动画。 */
-    .welcome-cloud {
-      position: absolute; z-index: 2;
-      overflow: visible;
-      pointer-events: none;
+    /* 气泡升级为内发光毛玻璃 */
+    .bouncy-deco {
+      position: absolute; border-radius: 50%; z-index: 1;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      background: linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0.1) 100%);
+      box-shadow: inset -2px -2px 6px rgba(255,255,255,0.4), inset 2px 2px 12px rgba(255,255,255,0.9), 0 8px 24px rgba(255,183,197,0.3);
+      animation: floatBubble 4s ease-in-out infinite alternate;
+      transition: margin 0.2s ease-out;
     }
-    .welcome-cloud img {
-      display: block;
-      user-select: none;
+    .deco-1 { width: 140px; height: 140px; top: 10%; left: 15%; animation-delay: 0s; }
+    .deco-2 { width: 80px; height: 80px; top: 30%; right: 20%; animation-delay: 1s; }
+    .deco-3 { width: 60px; height: 60px; bottom: 25%; left: 25%; animation-delay: 0.5s; }
+    .deco-4 { width: 180px; height: 180px; bottom: 10%; right: 10%; animation-delay: 1.5s; }
+
+    @keyframes floatBubble {
+      0% { transform: translateY(0) scale(1); opacity: 0.85; }
+      100% { transform: translateY(-20px) scale(1.05); opacity: 1; }
     }
-    /* 主动画云：只定宽，高度随原图比例；远景云保持容器尺寸 + contain，避免本轮误改远景布局。 */
-    .welcome-cloud:not(.dist) img {
-      width: 100%; height: auto;
+
+    /* 新增粉色空心爱心尾迹 */
+    .heart-trail {
+      position: absolute; z-index: 9998; pointer-events: none;
+      display: flex; align-items: center; justify-content: center;
+      filter: drop-shadow(0 2px 6px rgba(255, 255, 255, 0.8));
+      animation: heartFloat 0.9s cubic-bezier(0.25, 1, 0.5, 1) forwards;
     }
-    .welcome-cloud.dist img {
+    .heart-trail svg {
       width: 100%; height: 100%;
-      object-fit: contain;
     }
-    /* 四朵主动画云：共用同一张图3素材；只改宽度/位置制造构图差，保持原图宽高比。 */
-    .welcome-cloud.wc-1 {
-      width: 420px; top: 11%; left: 3%;
-      --cloud-start-opacity: .78; --cloud-end-opacity: .9;
-      /* 聚拢落点：Logo 左上，不穿过中心 */
-      --dx: 21.5vw; --dy: 4vh; --sx: 110vw; --sy: 30vh;
-      animation: cloudGather 1s .1s cubic-bezier(.4,0,.2,1) both;
-    }
-    .welcome-cloud.wc-2 {
-      width: 320px; top: 25%; right: 4%;
-      --cloud-start-opacity: .76; --cloud-end-opacity: .86;
-      /* 聚拢落点：Logo 右上，略高略远 */
-      --dx: -22vw; --dy: -10.1vh; --sx: -110vw; --sy: 26vh;
-      animation: cloudGather 1s .15s cubic-bezier(.4,0,.2,1) both;
-    }
-    .welcome-cloud.wc-3 {
-      width: 400px; left: 4%; bottom: 24%;
-      --cloud-start-opacity: .82; --cloud-end-opacity: .93;
-      /* 聚拢落点：Logo 左下，横向更深、纵向错开 */
-      --dx: 19.4vw; --dy: -3vh; --sx: 110vw; --sy: -44vh;
-      animation: cloudGather 1s .05s cubic-bezier(.4,0,.2,1) both;
-    }
-    .welcome-cloud.wc-4 {
-      width: 340px; right: 4%; bottom: 13%;
-      --cloud-start-opacity: .76; --cloud-end-opacity: .88;
-      /* 聚拢落点：Logo 右下，略低 */
-      --dx: -22.3vw; --dy: -13.1vh; --sx: -110vw; --sy: -42vh;
-      animation: cloudGather 1s .2s cubic-bezier(.4,0,.2,1) both;
-    }
-    /* scatter 的 from 与 gather 的 to 完全一致，避免阶段切换跳帧 */
-    .welcome-screen.clouds-scatter .welcome-cloud:not(.dist) { animation: cloudScatter .8s cubic-bezier(.33,0,.2,1) both; }
-    .welcome-screen.clouds-scatter .welcome-cloud.wc-2:not(.dist) { animation-delay: .05s; }
-    .welcome-screen.clouds-scatter .welcome-cloud.wc-3:not(.dist) { animation-delay: .1s; }
-    .welcome-screen.clouds-scatter .welcome-cloud.wc-4:not(.dist) { animation-delay: .08s; }
-    .welcome-ripple {
-      position: absolute; width: 120px; height: 120px; border-radius: 50%;
-      border: 3px solid rgba(124,185,168,.6);
-      transform: scale(0); opacity: 0; animation: rippleOut 1s .9s ease-out both;
-    }
-    .welcome-ripple-2 {
-      position: absolute; width: 160px; height: 160px; border-radius: 50%;
-      border: 2px solid rgba(124,185,168,.3);
-      transform: scale(0); opacity: 0; animation: rippleOut 1.2s 1.0s ease-out both;
+    @keyframes heartFloat {
+      0% { transform: translate(-50%, -50%) scale(0.5) rotate(0deg); opacity: 1; }
+      100% { transform: translate(-50%, calc(-50% - 40px)) scale(1.3) rotate(15deg); opacity: 0; }
     }
     .welcome-logo {
       position: relative; z-index: 3;
-      width: 88px; height: 88px; border-radius: 26px; overflow: hidden;
-      border: 3px solid rgba(255,255,255,.95);
-      box-shadow: 0 0 0 0 rgba(124,185,168,.5);
-      animation: logoBurst .5s .85s cubic-bezier(.34,1.56,.64,1) both;
-      background: rgba(255,252,245,.96);
+      /* 尺寸从 100px 放大至 144px */
+      width: 144px; height: 144px;
+      border-radius: 50%; overflow: hidden;
+      /* 边框随之微微加粗增加质感 */
+      border: 5px solid #ffffff;
+      box-shadow: 0 12px 30px rgba(255, 130, 160, 0.45);
+      background: #ffffff;
+      animation: bouncyDrop 0.9s cubic-bezier(0.28, 0.84, 0.42, 1) both;
     }
     .welcome-logo img {
       display: block;
@@ -244,71 +214,70 @@
     }
     .welcome-title {
       position: relative; z-index: 3;
-      margin-top: 18px; font-size: 28px; font-weight: 800; color: #fff;
-      letter-spacing: .03em; text-shadow: 0 2px 12px rgba(30,40,80,.4);
-      animation: welcomeFade 1s 1.3s ease both;
+      /* 顶部间距略微加大以适应大头像 */
+      margin-top: 24px;
+      /* 字号从 30px 提升至 44px */
+      font-size: 44px;
+      font-weight: 800;
+      color: #ffffff;
+      /* 字间距大幅拉开，让整体视觉变“长” */
+      letter-spacing: .2em;
+      /* 补偿字间距带来的右侧偏移，确保绝对居中 */
+      margin-left: .2em;
+      text-shadow: 0 4px 16px rgba(255, 123, 146, 0.6);
+      animation: popIn 0.7s 0.25s cubic-bezier(0.28, 0.84, 0.42, 1) both;
     }
     .welcome-btn {
       position: relative; z-index: 3;
-      margin-top: 26px; padding: 12px 32px; border: none; border-radius: 999px;
-      background: linear-gradient(135deg, var(--sage, #7cb9a8), var(--sage-deep, #5a9a88));
-      color: var(--on-accent); font-family: var(--font); font-size: 15px; font-weight: 700; cursor: pointer;
-      box-shadow: 0 8px 24px rgba(124,185,168,.45);
-      animation: welcomeFade 1s 1.8s ease both;
-      transition: transform .2s, box-shadow .2s;
+      margin-top: 28px; padding: 14px 38px; border: none; border-radius: 999px;
+      background: linear-gradient(135deg, #ff7b92, #ff5376);
+      color: #ffffff; font-family: var(--font); font-size: 16px; font-weight: 700; cursor: pointer;
+      box-shadow: 0 10px 25px rgba(255, 83, 118, 0.45);
+      animation: popIn 0.7s 0.4s cubic-bezier(0.28, 0.84, 0.42, 1) both;
+      transition: transform .25s cubic-bezier(0.28, 0.84, 0.42, 1), box-shadow .25s ease;
     }
-    .welcome-btn:hover { transform: scale(1.06); box-shadow: 0 12px 28px rgba(124,185,168,.55); }
-    /* v23：远景装饰云，使用本地透明 PNG，保持小尺寸、低存在感与缓慢漂浮。 */
-    .welcome-cloud.dist {
-      position: absolute; z-index: 1; pointer-events: none;
-      animation: cloudDrift 24s ease-in-out infinite;
+    .welcome-btn:hover {
+      transform: translateY(-4px) scale(1.1);
+      box-shadow: 0 16px 32px rgba(255, 83, 118, 0.6);
     }
-    /* 5 朵远景云：复用 3 张较轻素材，以尺寸、位置与透明度拉开距离。 */
-    .welcome-cloud.dist.dc-1 {
-      width: 180px; height: 90px; top: 7%; left: 12%; opacity: .58;
-      animation-duration: 26s; animation-delay: 0s;
+    .welcome-btn:active {
+      transform: translateY(1px) scale(0.96);
     }
-    .welcome-cloud.dist.dc-2 {
-      width: 170px; height: 82px; top: 12%; right: 15%; opacity: .54;
-      animation-duration: 22s; animation-delay: 3s;
+
+    @keyframes bouncyDrop {
+      0% {
+        opacity: 0;
+        transform: translateY(-240px) scaleX(0.7) scaleY(1.3);
+      }
+      60% {
+        opacity: 1;
+        transform: translateY(20px) scaleX(1.25) scaleY(0.8);
+      }
+      80% {
+        transform: translateY(-8px) scaleX(0.92) scaleY(1.08);
+      }
+      92% {
+        transform: translateY(3px) scaleX(1.04) scaleY(0.96);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scaleX(1) scaleY(1);
+      }
     }
-    .welcome-cloud.dist.dc-3 {
-      width: 190px; height: 106px; left: 2%; bottom: 34%; opacity: .52;
-      animation-duration: 28s; animation-delay: 1.5s;
+    @keyframes popIn {
+      0% {
+        opacity: 0;
+        transform: scale(0.4) translateY(20px);
+      }
+      70% {
+        opacity: 1;
+        transform: scale(1.1) translateY(-4px);
+      }
+      100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
     }
-    .welcome-cloud.dist.dc-4 {
-      width: 150px; height: 75px; right: 5%; bottom: 22%; opacity: .5;
-      animation-duration: 24s; animation-delay: 4.5s;
-    }
-    .welcome-cloud.dist.dc-5 {
-      width: 210px; height: 70px; bottom: 6%; left: 26%; opacity: .5;
-      animation-duration: 30s; animation-delay: 2.5s;
-    }
-    /* 页面隐藏时由 JS 暂停持续漂浮，避免后台标签继续消耗 GPU */
-    .welcome-screen.motion-paused .welcome-cloud.dist { animation-play-state: paused; }
-    @keyframes cloudDrift {
-      0%, 100% { transform: translate(0, 0); }
-      50%      { transform: translate(14px, -7px); }
-    }
-    /* 移动端：独立调整主云与远景云，保持中心主体清楚且不产生横向溢出。 */
-    @media (max-width: 720px) {
-      /* 手机端独立聚拢落点：上下错位 + 左右分侧，避免竖排/穿 Logo */
-      .welcome-cloud.wc-1 { width: 270px; top: 12%; left: 1%; --dx: -13.8vw; --dy: -1.3vh; }
-      .welcome-cloud.wc-2 { width: 235px; top: 27%; right: 0%; --dx: 9.6vw; --dy: -17.8vh; }
-      .welcome-cloud.wc-3 { width: 290px; left: 1%; bottom: 24%; --dx: -18.9vw; --dy: -2.8vh; }
-      .welcome-cloud.wc-4 { width: 220px; right: 0%; bottom: 14%; --dx: 6.4vw; --dy: -12.1vh; }
-      .welcome-cloud.dist.dc-1 { width: 112px; height: 56px; top: 7%; left: 7%; }
-      .welcome-cloud.dist.dc-2 { width: 108px; height: 52px; top: 10%; right: 8%; }
-      .welcome-cloud.dist.dc-3 { width: 120px; height: 67px; left: 1%; bottom: 32%; }
-      .welcome-cloud.dist.dc-4 { width: 98px; height: 49px; right: 2%; bottom: 24%; }
-      .welcome-cloud.dist.dc-5 { width: 140px; height: 47px; bottom: 6%; left: 24%; }
-    }
-    /* gather 结束与 scatter 起始必须同为 scale(.68)，避免阶段切换比例跳变 */
-    @keyframes cloudGather { from{transform:translate(0,0) scale(1);opacity:var(--cloud-start-opacity);} to{transform:translate(var(--dx),var(--dy)) scale(.68);opacity:var(--cloud-end-opacity);} }
-    @keyframes cloudScatter { from{transform:translate(var(--dx),var(--dy)) scale(.68);opacity:var(--cloud-end-opacity);} to{transform:translate(var(--sx),var(--sy)) scale(.42);opacity:0;} }
-    @keyframes logoBurst { from{opacity:0;transform:scale(0) rotate(-10deg);} 70%{transform:scale(1.2) rotate(3deg);} to{opacity:1;transform:scale(1) rotate(0);} }
-    @keyframes rippleOut { 0%{transform:scale(0);opacity:.8;} 100%{transform:scale(3);opacity:0;} }
-    @keyframes welcomeFade { from{opacity:0;transform:translateY(8px);} to{opacity:1;transform:translateY(0);} }
 
     .sky-layer {
       position: fixed;
@@ -1299,10 +1268,11 @@
     }
     .cal-cell {
       aspect-ratio: 1 / 1; border-radius: var(--radius-md);
-      border: 1.5px solid var(--line-soft);
+      border: 2px solid var(--line-soft);
       background: rgba(255,255,255,.35);
-      display: grid; grid-template-rows: auto 1fr auto;
-      padding: 8px; cursor: pointer; position: relative;
+      display: grid; grid-template-rows: auto auto auto;
+      align-content: center; gap: 4px;
+      padding: 6px 7px; cursor: pointer; position: relative;
       transition: transform .18s var(--spring), box-shadow .18s ease;
     }
     .cal-cell:hover {
@@ -1310,15 +1280,16 @@
       border-color: rgba(124,185,168,.5);
     }
     .cal-cell .d-num {
-      font-size: 14px; font-weight: 800; color: var(--brown-soft);
+      font-size: 15px; font-weight: 800; color: var(--brown);
+      letter-spacing: .02em; line-height: 1.15;
     }
     .cal-cell .d-dot {
       width: 8px; height: 8px; border-radius: 50%; margin: 2px auto 0;
       background: transparent;
     }
     .cal-cell .d-badge {
-      font-size: 10px; font-weight: 800; text-align: center;
-      color: var(--brown-soft); opacity: .8;
+      font-size: 10px; font-weight: 700; text-align: center;
+      color: var(--brown-soft); opacity: .65;
     }
     /* 状态 */
     .cal-cell.done {
@@ -1339,7 +1310,7 @@
 
     .cal-cell.rest {
       background: transparent;
-      border: 1.5px dashed rgba(212,196,154,.35);
+      border: 2px dashed rgba(212,196,154,.35);
       box-shadow: none;
     }
     .cal-cell.rest .d-dot { display: none; }
@@ -1358,7 +1329,7 @@
     }
     .cal-cell.future { opacity: .55; }
     .cal-cell.empty {
-      background: transparent; border: 1.5px dashed rgba(212,196,154,.25);
+      background: transparent; border: 2px dashed rgba(212,196,154,.25);
       cursor: default;
     }
     .cal-cell.empty:hover { transform: none; box-shadow: none; }
@@ -1500,7 +1471,7 @@
       appearance: none; cursor: pointer; font: inherit; font-weight: 800;
       font-size: 14px; padding: 10px 18px; border-radius: var(--radius-pill);
       border: 1.5px solid var(--line-soft); background: var(--surface-3);
-      color: var(--brown-soft); transition: all .15s ease;
+      color: var(--brown-soft); transition: background-color .15s ease, color .15s ease, border-color .15s ease;
       display: inline-flex; align-items: center; gap: 6px;
     }
     .cat-tab:hover { background: var(--surface-hover); color: var(--brown); }
@@ -1797,6 +1768,35 @@
       display: block; font-size: 11px; font-weight: 600; color: var(--brown-soft);
       margin-top: 2px;
     }
+    /* 设置页底部入口：正式卡片样式（与 setting-row 同级视觉），不再是裸按钮工具条 */
+    .settings-shortcut {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px; width: 100%; text-align: left;
+      padding: 14px 16px; border-radius: var(--radius-md);
+      background: var(--surface-1); border: 1px solid var(--line-soft);
+      font: inherit; color: inherit; cursor: pointer;
+      transition: transform .18s var(--spring), box-shadow .18s ease, border-color .18s ease, background-color .18s ease;
+    }
+    .settings-shortcut > span:first-child { min-width: 0; }
+    .settings-shortcut strong {
+      display: block; font-size: 14px; font-weight: 800; color: var(--brown);
+    }
+    .settings-shortcut small {
+      display: block; font-size: 11px; font-weight: 600; color: var(--brown-soft);
+      margin-top: 2px;
+    }
+    .settings-shortcut-arrow {
+      flex: 0 0 auto; color: var(--brown-soft); font-size: 18px;
+      transition: color .18s ease, transform .18s ease;
+    }
+    .settings-shortcut:hover {
+      background: var(--surface-hover);
+      border-color: rgba(124,185,168,.45);
+      box-shadow: var(--shadow);
+      transform: translateY(-1px);
+    }
+    .settings-shortcut:hover .settings-shortcut-arrow { color: var(--sage-deep); }
+    .settings-shortcut:active { transform: translateY(0); }
     /* 开关 */
     .switch {
       position: relative; width: 46px; height: 26px; flex: 0 0 auto;
@@ -1840,7 +1840,7 @@
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     }
     .goal-card .goal-desc .g-tag {
-      font-size: 11px; font-weight: 800; 
+      font-size: 11px; font-weight: 800;
       background: rgba(133,205,202,.18); color: #2f7d78;
       border: 1px solid rgba(133,205,202,.4);
       padding: 2px 10px; border-radius: var(--radius-pill);
@@ -2370,7 +2370,7 @@
     .calendar { gap: 5px; margin-top: 10px; }
     .cal-wd { padding: 2px 0; }
     .cal-cell { aspect-ratio: auto; min-height: 92px; height: 92px; padding: 6px 7px; }
-    .cal-cell .d-num { font-size: 13px; }
+    .cal-cell .d-num { font-size: 14px; }
     .cal-cell .d-dot { width: 7px; height: 7px; margin-top: 1px; }
     .cal-cell .d-badge { font-size: 10px; line-height: 1.2; }
     .session-sidebar-head { align-items: center; }
@@ -2609,28 +2609,20 @@
 </head>
 <body>
   <div id="welcomeScreen" class="welcome-screen">
-    <!-- 天光渐显层（浅色=白昼天空 / 深色=夜空提亮） -->
-    <div class="sky-fade" aria-hidden="true"></div>
-    <!-- 4朵聚拢云：图片负责视觉，容器继续负责动画。 -->
-    <div class="welcome-cloud wc-1"><img src="/static/assets/images/clouds/cloud-main.webp" alt="" draggable="false" /></div>
-    <div class="welcome-cloud wc-2"><img src="/static/assets/images/clouds/cloud-main.webp" alt="" draggable="false" /></div>
-    <div class="welcome-cloud wc-3"><img src="/static/assets/images/clouds/cloud-main.webp" alt="" draggable="false" /></div>
-    <div class="welcome-cloud wc-4"><img src="/static/assets/images/clouds/cloud-main.webp" alt="" draggable="false" /></div>
-    <!-- 涟漪 -->
-    <div class="welcome-ripple"></div>
-    <div class="welcome-ripple-2"></div>
-    <!-- 主体 -->
-    <div class="welcome-logo">
-      <img src="/static/assets/images/sheep-logo.webp" alt="轻动日记小羊 logo" decoding="async" />
+    <!-- 装饰气泡 -->
+    <div class="bouncy-deco deco-1" aria-hidden="true"></div>
+    <div class="bouncy-deco deco-2" aria-hidden="true"></div>
+    <div class="bouncy-deco deco-3" aria-hidden="true"></div>
+    <div class="bouncy-deco deco-4" aria-hidden="true"></div>
+
+    <!-- 主体视差包裹层 -->
+    <div class="welcome-center" style="position: relative; z-index: 3; display: flex; flex-direction: column; align-items: center; transition: transform 0.2s ease-out;">
+      <div class="welcome-logo">
+        <img src="/static/assets/images/sheep-logo.webp" alt="轻动日记小羊 logo" decoding="async" />
+      </div>
+      <h1 class="welcome-title">轻动日记</h1>
+      <button class="welcome-btn" type="button">开启轻盈时刻 ✦</button>
     </div>
-    <h1 class="welcome-title">轻动日记</h1>
-    <button class="welcome-btn" type="button">轻动起来吧 ➡</button>
-    <!-- 远景装饰云：本地透明素材，只缓慢漂浮，不参与中央聚拢。 -->
-    <div class="welcome-cloud dist dc-1" aria-hidden="true"><img src="/static/assets/images/clouds/cloud-compact.png" alt="" draggable="false" /></div>
-    <div class="welcome-cloud dist dc-2" aria-hidden="true"><img src="/static/assets/images/clouds/cloud-mid.png" alt="" draggable="false" /></div>
-    <div class="welcome-cloud dist dc-3" aria-hidden="true"><img src="/static/assets/images/clouds/cloud-puffy.png" alt="" draggable="false" /></div>
-    <div class="welcome-cloud dist dc-4" aria-hidden="true"><img src="/static/assets/images/clouds/cloud-compact.png" alt="" draggable="false" /></div>
-    <div class="welcome-cloud dist dc-5" aria-hidden="true"><img src="/static/assets/images/clouds/cloud-wide.png" alt="" draggable="false" /></div>
   </div>
   <div class="sky-layer" aria-hidden="true">
     <span class="cloud cloud-1"></span>
@@ -2729,7 +2721,7 @@
           </div>
           <div class="progress-track" id="dayProgressTrack" role="list"></div>
           <div class="progress-steps" id="dayProgressSteps" aria-hidden="true"></div>
-          <p class="progress-caption" id="dayProgressCaption">亮格 = 当前动作；右侧封面跟着亮格走。</p>
+          <p class="progress-caption" id="dayProgressCaption"></p>
         </div>
 
         <!-- 空态 -->
@@ -3241,64 +3233,77 @@
 
   <script>
     (function () {
-      // ── 欢迎屏入场动效 ──
+      // ── 欢迎屏动效：退场、视差与星芒尾迹 ──
       var welcomeScreen = document.getElementById('welcomeScreen');
       if (welcomeScreen) {
-        // v23：gather→scatter 以最后一朵主云 cloudGather 结束为准，避免 1000ms 硬切打断未完成的 gather
-        var welcomeRevealTimer = null;
-        var gatherEndHandler = null;
-        var lastGatherCloud = welcomeScreen.querySelector('.welcome-cloud.wc-4');
-        var startScatterReveal = function() {
-          if (!welcomeScreen || welcomeScreen.classList.contains('welcome-out')) return;
-          if (welcomeRevealTimer) { clearTimeout(welcomeRevealTimer); welcomeRevealTimer = null; }
-          if (gatherEndHandler && lastGatherCloud) {
-            lastGatherCloud.removeEventListener('animationend', gatherEndHandler);
-            gatherEndHandler = null;
-          }
-          welcomeScreen.classList.add('clouds-scatter', 'sky-reveal');
-        };
-        var preferReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        if (preferReduced) {
-          // reduced-motion 下无 cloudGather，保留短时序触发 sky-reveal
-          welcomeRevealTimer = setTimeout(startScatterReveal, 200);
-        } else if (lastGatherCloud) {
-          gatherEndHandler = function(e) {
-            if (e.animationName !== 'cloudGather') return;
-            startScatterReveal();
-          };
-          lastGatherCloud.addEventListener('animationend', gatherEndHandler);
-          // 兜底：覆盖 wc-4 的 1s + .2s delay，防止 animationend 丢失
-          welcomeRevealTimer = setTimeout(startScatterReveal, 1300);
-        } else {
-          welcomeRevealTimer = setTimeout(startScatterReveal, 1200);
-        }
-        // v23：页面不可见时暂停欢迎屏持续漂浮装饰（仅 transform/opacity），恢复可见时继续
-        var onVisibilityChange = function() {
-          if (document.hidden) welcomeScreen.classList.add('motion-paused');
-          else welcomeScreen.classList.remove('motion-paused');
-        };
-        document.addEventListener('visibilitychange', onVisibilityChange);
         var dismissWelcome = function() {
-          if (welcomeRevealTimer) { clearTimeout(welcomeRevealTimer); welcomeRevealTimer = null; }
-          if (gatherEndHandler && lastGatherCloud) {
-            lastGatherCloud.removeEventListener('animationend', gatherEndHandler);
-            gatherEndHandler = null;
-          }
           welcomeScreen.classList.add('welcome-out');
           welcomeScreen.addEventListener('transitionend', function() {
             welcomeScreen.style.display = 'none';
-            // v23：欢迎屏关闭后停止所有仅为其服务的任务，不再消耗 CPU/GPU
-            welcomeScreen.classList.remove('motion-paused');
-            document.removeEventListener('visibilitychange', onVisibilityChange);
           }, { once: true });
         };
+        // 点击退场
         welcomeScreen.addEventListener('click', dismissWelcome);
+
+        var decos = welcomeScreen.querySelectorAll('.bouncy-deco');
+        var centerBox = welcomeScreen.querySelector('.welcome-center');
+
+        // 鼠标移动监听：生成视差与星星
+        welcomeScreen.addEventListener('mousemove', function(e) {
+          var x = (e.clientX - window.innerWidth / 2) / 30;
+          var y = (e.clientY - window.innerHeight / 2) / 30;
+
+          // 1. 气泡交错视差
+          decos.forEach(function(deco, index) {
+            var depth = (index % 2 === 0) ? 1.5 : -1.2;
+            deco.style.marginLeft = (x * depth) + 'px';
+            deco.style.marginTop = (y * depth) + 'px';
+          });
+
+          // 2. 中心主体同向悬浮
+          if (centerBox) {
+            centerBox.style.transform = 'translate(' + (x * 0.4) + 'px, ' + (y * 0.4) + 'px)';
+          }
+
+          // 3. 高频生成粉紫空心爱心尾迹
+          if (!welcomeScreen.dataset.heartThrottle) {
+            welcomeScreen.dataset.heartThrottle = 'true';
+            // 降低节流时间，提高爱心生成密度
+            setTimeout(function() { welcomeScreen.dataset.heartThrottle = ''; }, 24);
+
+            var heart = document.createElement('div');
+            heart.className = 'heart-trail';
+
+            // 加入随机坐标偏移，让爱心呈散落状而非死板的一条直线
+            var offsetX = (Math.random() - 0.5) * 24;
+            var offsetY = (Math.random() - 0.5) * 24;
+            heart.style.left = (e.clientX + offsetX) + 'px';
+            heart.style.top = (e.clientY + offsetY) + 'px';
+
+            // 随机缩放尺寸 16px ~ 30px，保证可见度
+            var size = 16 + Math.random() * 14;
+            heart.style.width = size + 'px';
+            heart.style.height = size + 'px';
+
+            // 粉紫色系池
+            var colors = ['#ff7b92', '#ff9eb1', '#d87bff'];
+            heart.style.color = colors[Math.floor(Math.random() * colors.length)];
+
+            // 插入 SVG 空心爱心图标
+            heart.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>';
+
+            welcomeScreen.appendChild(heart);
+
+            // 动画结束后清理 DOM
+            setTimeout(function() { if (heart.parentNode) heart.parentNode.removeChild(heart); }, 900);
+          }
+        });
       }
 
       var views = document.querySelectorAll('.page-view');
       var pills = document.querySelectorAll('.nav-pill');
 
-      function showView(name) {
+      function showView(name, opts) {
         views.forEach(function (v) {
           v.classList.toggle('active', v.id === 'view-' + name);
         });
@@ -3318,7 +3323,8 @@
           if (morePage) moreNav.setAttribute('aria-current', 'page');
           else moreNav.removeAttribute('aria-current');
         }
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        // 视图切换默认滚回顶部；日/周页内定位（navHome）由调用方关闭，避免先滚顶再定位的双重滚动
+        if (!opts || !opts.noScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
       // 顶部 nav pill：日/周/月是 view-home 内的锚点，用 data-nav 页内滚动
@@ -3331,7 +3337,7 @@
       });
       // 日/周/月：切到首页并平滑滚到对应段落
       function navHome(nav) {
-        showView('home');
+        showView('home', { noScroll: true });
         pills.forEach(function (q) { q.removeAttribute('aria-current'); });
         var active = document.querySelector('.nav-pill[data-nav="' + nav + '"]');
         if (active) active.setAttribute('aria-current', 'page');
@@ -4273,19 +4279,25 @@
         });
         return label;
       }
+      // F 项：renderTodayPlan 高频渲染链路 —— 稳定 DOM 引用缓存（全部为页面静态节点，生命周期与页面一致）
+      var todayPlanElCache = {};
+      function todayPlanEl(id) {
+        if (!(id in todayPlanElCache)) todayPlanElCache[id] = document.getElementById(id);
+        return todayPlanElCache[id];
+      }
       function renderTodayPlan() {
-        var list = document.getElementById('todayPlanList');
-        var title = document.getElementById('todayTitle');
-        var meta = document.getElementById('todayMeta');
-        var summary = document.getElementById('todaySummary');
-        var emptyHero = document.getElementById('dayEmptyHero');
-        var heroContent = document.getElementById('dayHeroContent');
-        var heroVideo = document.getElementById('dayHeroVideo');
-        var heroProgress = document.getElementById('dayHeroProgress');
-        var detailPanel = document.getElementById('dayDetailPanel');
-        var statusPill = document.getElementById('todayStatusPill');
-        var countPill = document.getElementById('todayCountPill');
-        var startBtn = document.getElementById('startTodayBtn');
+        var list = todayPlanEl('todayPlanList');
+        var title = todayPlanEl('todayTitle');
+        var meta = todayPlanEl('todayMeta');
+        var summary = todayPlanEl('todaySummary');
+        var emptyHero = todayPlanEl('dayEmptyHero');
+        var heroContent = todayPlanEl('dayHeroContent');
+        var heroVideo = todayPlanEl('dayHeroVideo');
+        var heroProgress = todayPlanEl('dayHeroProgress');
+        var detailPanel = todayPlanEl('dayDetailPanel');
+        var statusPill = todayPlanEl('todayStatusPill');
+        var countPill = todayPlanEl('todayCountPill');
+        var startBtn = todayPlanEl('startTodayBtn');
         var duration = todayPlan.reduce(function(sum, item) { return sum + item.time; }, 0);
         if (todayStepIndex >= todayPlan.length) todayStepIndex = Math.max(0, todayPlan.length - 1);
 
@@ -4340,10 +4352,10 @@
 
         // 右侧当前动作视频
         var currentName = getTodayCurrentName();
-        var dayVideoName = document.getElementById('dayVideoName');
-        var dayVideoCap = document.getElementById('dayVideoCap');
-        var dayVideoHint = document.getElementById('dayVideoHint');
-        var dayVideoThumb = document.getElementById('dayVideoThumb');
+        var dayVideoName = todayPlanEl('dayVideoName');
+        var dayVideoCap = todayPlanEl('dayVideoCap');
+        var dayVideoHint = todayPlanEl('dayVideoHint');
+        var dayVideoThumb = todayPlanEl('dayVideoThumb');
         var dayVideoBadge = dayVideoThumb ? dayVideoThumb.querySelector('.play-badge') : null;
         var detail = exerciseDetails[currentName];
         // P1-1：仅 verified（真实验配）动作才显示“可播放 + AI 已验配”；否则显示无资料空态且不可点击。
@@ -4362,11 +4374,11 @@
         }
 
         // 进度条
-        var track = document.getElementById('dayProgressTrack');
-        var steps = document.getElementById('dayProgressSteps');
-        var progressLabel = document.getElementById('dayProgressLabel');
-        var progressStat = document.getElementById('dayProgressStat');
-        var progressCaption = document.getElementById('dayProgressCaption');
+        var track = todayPlanEl('dayProgressTrack');
+        var steps = todayPlanEl('dayProgressSteps');
+        var progressLabel = todayPlanEl('dayProgressLabel');
+        var progressStat = todayPlanEl('dayProgressStat');
+        var progressCaption = todayPlanEl('dayProgressCaption');
         var n = todayPlan.length;
         var stepNo = todayPlan.length ? (todayStepIndex + 1) : 0;
         if (progressLabel) progressLabel.textContent = '今日 ' + n + ' 个动作 · 按顺序完成';
@@ -4387,7 +4399,7 @@
           }).join('');
         }
         if (progressCaption) {
-          progressCaption.innerHTML = '亮格 = 当前动作；右侧封面跟着亮格走。现在：<em>第 ' + stepNo + ' 格 · ' + escapeHtml(currentName) + '</em>';
+          progressCaption.innerHTML = n ? '当前动作：<em>' + escapeHtml(currentName) + '</em>' : '';
         }
 
         // 详情编辑清单
@@ -4396,7 +4408,7 @@
             return '<div class="today-item"><span class="ti-num">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.spec) + ' · 约 ' + item.time + ' 分钟</small></div><button class="icon-btn" type="button" data-remove-today="' + escapeHtml(item.name) + '" title="移除动作">×</button></div>';
           }).join('');
         }
-        var editMeta = document.getElementById('todayEditMeta');
+        var editMeta = todayPlanEl('todayEditMeta');
         if (editMeta) editMeta.textContent = todayPlan.length + ' 个动作 · 约 ' + duration + ' 分钟 · 增删后上方首页同步刷新';
       }
       function startPlan(plan) {
@@ -4982,7 +4994,7 @@
         list.innerHTML = html;
         if (hint) {
           if (todayPlanInfo) {
-            hint.innerHTML = '已选 <strong>' + (today.getMonth() + 1) + '/' + today.getDate() + ' · ' + (todayPlanInfo.status === 'rest' ? '休息日' : '今日 · ' + todayPlanInfo.title) + '</strong> →点击加载该日训练计划';
+            hint.innerHTML = '已选 <strong>' + (today.getMonth() + 1) + '/' + today.getDate() + ' · ' + (todayPlanInfo.status === 'rest' ? '休息日' : '今日 · ' + todayPlanInfo.title) + '</strong>';
           } else {
             hint.innerHTML = '本周 <strong>' + formatDateKey(weekDates[0]) + ' → ' + formatDateKey(weekDates[6]) + '</strong>';
           }
@@ -5250,7 +5262,7 @@
         var remotePlans = {};
         v25Remote.templates.forEach(function (template) {
           var items = (template.exercises || []).map(function (ex) { return ex.name + ' · ' + (ex.default_reps || (ex.duration_seconds ? Math.round(ex.duration_seconds / 60) + ' 分钟' : '按动作说明')); });
-          remotePlans['remote_' + template.id] = { id: 'remote_' + template.id, title: template.name, time: template.estimated_minutes || 30, intensity: template.difficulty || '低强度', scene: '后端模板', reason: template.description || '来自 rehearsal 模板 API', items: items };
+          remotePlans['remote_' + template.id] = { id: 'remote_' + template.id, title: template.name, time: template.estimated_minutes || 30, intensity: template.difficulty || '低强度', scene: '后端模板', reason: template.description || '来自模板 API', items: items };
         });
         mergeTrainingPlans();
         Object.keys(remotePlans).forEach(function (id) { trainingPlans[id] = remotePlans[id]; });
@@ -5321,7 +5333,7 @@
       function v25MigrationPreview() {
         v25ApiFetch('/api/migration/catalog/v24/preview', { method: 'POST' }).then(function (data) {
           var payload = { source_sha256: data.source_sha256, preview_hash: data.preview_hash, affected_fingerprint: data.affected_fingerprint };
-          openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>v24 动作库迁移预览</h3><p>源条目 ' + data.source_count + ' 条，已有 ' + data.existing_count + ' 条，将新增 ' + data.create_count + ' 条。</p></div></div><div class="safety-note">预览不会修改 rehearsal 数据库；用户已有同名动作不会被覆盖。</div><div class="modal-actions"><button class="btn primary" type="button" data-v25-catalog-commit="' + escapeHtml(JSON.stringify(payload)) + '">提交迁移</button><button class="btn ghost" type="button" data-modal-close>取消</button></div>');
+          openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>v24 动作库迁移预览</h3><p>源条目 ' + data.source_count + ' 条，已有 ' + data.existing_count + ' 条，将新增 ' + data.create_count + ' 条。</p></div></div><div class="safety-note">预览不会修改数据库；用户已有同名动作不会被覆盖。</div><div class="modal-actions"><button class="btn primary" type="button" data-v25-catalog-commit="' + escapeHtml(JSON.stringify(payload)) + '">提交迁移</button><button class="btn ghost" type="button" data-modal-close>取消</button></div>');
         }).catch(function (error) { openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>迁移预览失败</h3><p>' + escapeHtml(error.message) + '</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div></div>'); });
       }
       var v25MigrationButton = document.getElementById('v25MigrationBtn');
@@ -5523,7 +5535,7 @@
       };
       apiPanelHtml = function() {
         var hasModels = apiDraftModels.length > 0, selected = apiSettings.model || '', draft = apiFormDraft || { provider: apiSettings.provider || 'openai', baseUrl: apiSettings.baseUrl || '', key: '' };
-        return '<div class="api-channel-form"><label>Provider<select id="settingsApiProviderSelect"><option value="openai"' + (draft.provider === 'openai' ? ' selected' : '') + '>OpenAI 兼容</option><option value="deepseek"' + (draft.provider === 'deepseek' ? ' selected' : '') + '>DeepSeek</option><option value="wuapi"' + (draft.provider === 'wuapi' ? ' selected' : '') + '>WUAPI</option><option value="local-demo"' + (draft.provider === 'local-demo' ? ' selected' : '') + '>local-demo</option></select></label><label>API Base URL<input id="settingsApiBaseInput" type="url" placeholder="https://example.com/v1" value="' + escapeHtml(draft.baseUrl) + '"></label><label>API Key<span class="api-key-row"><input id="settingsApiKeyInput" type="password" autocomplete="off" placeholder="提交后由服务端 DPAPI 加密保存" value="' + escapeHtml(draft.key || '') + '"><button class="btn ghost" type="button" data-settings-api-key-toggle>显示</button></span></label><p class="api-channel-note">API Key 仅提交至 rehearsal 后端，并由 Windows DPAPI 加密保存；页面不持久化明文。</p><div class="api-channel-actions"><button class="btn ghost" type="button" data-settings-api-models>读取当前模型</button><button class="btn ghost" type="button" data-settings-api-refresh>刷新当前模型</button></div><label>模型<select id="settingsApiModelSelect" ' + (hasModels ? '' : 'disabled') + '><option value="">' + (hasModels ? '请选择模型' : '暂无可选模型') + '</option>' + apiDraftModels.map(function (m) { return '<option value="' + escapeHtml(m) + '"' + (m === selected ? ' selected' : '') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></label><p class="api-channel-status" id="settingsApiStatus" aria-live="polite">' + (selected ? '当前模型：' + escapeHtml(selected) : '暂无可选模型') + '</p><div class="api-channel-actions"><button class="btn primary" type="button" data-settings-api-save>保存渠道设置</button></div></div>';
+        return '<div class="api-channel-form"><label>Provider<select id="settingsApiProviderSelect"><option value="openai"' + (draft.provider === 'openai' ? ' selected' : '') + '>OpenAI 兼容</option><option value="deepseek"' + (draft.provider === 'deepseek' ? ' selected' : '') + '>DeepSeek</option><option value="wuapi"' + (draft.provider === 'wuapi' ? ' selected' : '') + '>WUAPI</option><option value="local-demo"' + (draft.provider === 'local-demo' ? ' selected' : '') + '>local-demo</option></select></label><label>API Base URL<input id="settingsApiBaseInput" type="url" placeholder="https://example.com/v1" value="' + escapeHtml(draft.baseUrl) + '"></label><label>API Key<span class="api-key-row"><input id="settingsApiKeyInput" type="password" autocomplete="off" placeholder="提交后由服务端 DPAPI 加密保存" value="' + escapeHtml(draft.key || '') + '"><button class="btn ghost" type="button" data-settings-api-key-toggle>显示</button></span></label><p class="api-channel-note">API Key 仅提交至本服务后端，并由 Windows DPAPI 加密保存；页面不持久化明文。</p><div class="api-channel-actions"><button class="btn ghost" type="button" data-settings-api-models>读取当前模型</button><button class="btn ghost" type="button" data-settings-api-refresh>刷新当前模型</button></div><label>模型<select id="settingsApiModelSelect" ' + (hasModels ? '' : 'disabled') + '><option value="">' + (hasModels ? '请选择模型' : '暂无可选模型') + '</option>' + apiDraftModels.map(function (m) { return '<option value="' + escapeHtml(m) + '"' + (m === selected ? ' selected' : '') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></label><p class="api-channel-status" id="settingsApiStatus" aria-live="polite">' + (selected ? '当前模型：' + escapeHtml(selected) : '暂无可选模型') + '</p><div class="api-channel-actions"><button class="btn primary" type="button" data-settings-api-save>保存渠道设置</button></div></div>';
       };
       settingsValues = function() {
         var provider = (document.getElementById('settingsApiProviderSelect').value || 'openai').trim(), baseUrl = (document.getElementById('settingsApiBaseInput').value || '').trim(), key = (document.getElementById('settingsApiKeyInput').value || '').trim(), model = (document.getElementById('settingsApiModelSelect').value || '').trim();
@@ -5538,7 +5550,7 @@
         try {
           if (draft.provider !== 'local-demo') { draft.baseUrl = base(draft.baseUrl); if (!draft.key) throw Error('请先填写 API Key。'); if (!draft.model) throw Error('请先读取并选择模型。'); }
           var data = await v25ApiFetch('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ provider: draft.provider, api_key: draft.key, base_url: draft.baseUrl, model: draft.model }) });
-          apiSettings = { provider: data.provider, baseUrl: data.base_url || draft.baseUrl, model: data.model || draft.model }; apiKeyInMemory = ''; apiFormDraft = null; apiDraftModels = data.model ? [data.model] : []; mode(); if (status) status.textContent = '已保存至 rehearsal 后端。';
+          apiSettings = { provider: data.provider, baseUrl: data.base_url || draft.baseUrl, model: data.model || draft.model }; apiKeyInMemory = ''; apiFormDraft = null; apiDraftModels = data.model ? [data.model] : []; mode(); if (status) status.textContent = '已保存至本服务后端。';
         } catch (error) { if (status) { status.textContent = error.message; status.classList.add('error'); } }
       };
 

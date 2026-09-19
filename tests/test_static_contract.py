@@ -107,9 +107,11 @@ def test_light_theme_has_independent_fitness_background_layer():
     assert 'src: url("/static/assets/fonts/AaTouChiKeAiChangDaDe.woff2")' in index_html
     assert 'id="welcomeScreen"' in index_html
     assert 'class="welcome-screen"' in index_html
+    assert 'class="bouncy-deco deco-1"' in index_html
+    assert 'class="bouncy-deco deco-4"' in index_html
+    assert 'class="welcome-center"' in index_html
     assert 'class="sky-layer"' in index_html
     assert "/static/assets/images/sheep-logo.webp" in index_html
-    assert "/static/assets/images/clouds/cloud-main.webp" in index_html
     assert "body.theme-dark" in index_html
     assert "fitness-photo-bg" not in index_html
 
@@ -173,14 +175,15 @@ def test_dashboard_month_trend_moves_above_today_videos():
 
 
 def test_dashboard_only_uses_a_static_welcome_image():
-    """v25 欢迎屏使用正式小羊 logo 与云层素材，点击后进入日计划。"""
+    """v26 欢迎屏使用 Q 弹开屏（气泡视差 + 爱心尾迹 + 小羊 logo），点击进入日计划。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
 
     assert 'id="welcomeScreen"' in index_html
     assert 'src="/static/assets/images/sheep-logo.webp"' in index_html
     assert "<h1 class=\"welcome-title\">轻动日记</h1>" in index_html
     assert 'class="welcome-btn"' in index_html
-    assert "轻动起来吧" in index_html
+    assert "开启轻盈时刻" in index_html
+    assert ".heart-trail" in index_html
     assert "welcome-sheep.png" not in index_html
     assert "WELCOME BACK" not in index_html
 
