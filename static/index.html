@@ -3918,6 +3918,10 @@
             if (!isValidDateKey(k)) return;                 // 坏 key：丢弃
             var v = data.calendarPlans[k];
             if (!isValidPlanValue(v)) return;               // 坏 plan：丢弃单项
+            var itemRecords = Array.isArray(v.itemRecords)
+              ? v.itemRecords.map(v25ParseUiItem).filter(function (item) { return item && item.name; })
+              : [];
+            if (!itemRecords.length) itemRecords = v.items.filter(function (it) { return typeof it === 'string'; }).map(v25ParseUiItem).filter(function (item) { return item && item.name; });
             out.calendarPlans[k] = {
               title: v.title,
               status: typeof v.status === 'string' ? v.status : 'planned',
@@ -3925,7 +3929,11 @@
               time: typeof v.time === 'number' ? v.time : 0,
               intensity: typeof v.intensity === 'string' ? v.intensity : '',
               body: typeof v.body === 'string' ? v.body : '',
-              items: v.items.filter(function (it) { return typeof it === 'string'; })
+              focus: typeof v.focus === 'string' ? v.focus : '',
+              notes: typeof v.notes === 'string' ? v.notes : '',
+              templateId: v.templateId != null ? String(v.templateId) : (v.template_id != null ? String(v.template_id) : null),
+              items: v.items.filter(function (it) { return typeof it === 'string'; }),
+              itemRecords: itemRecords
             };
           });
         }
@@ -3950,7 +3958,7 @@
             var items = s.items.filter(function (it) {
               return it && typeof it === 'object' && typeof it.name === 'string';
             }).map(function (it) {
-              return { name: it.name, spec: typeof it.spec === 'string' ? it.spec : '', time: typeof it.time === 'number' ? it.time : 5 };
+              return { id: it.id != null ? it.id : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : (it.exercise_id != null ? it.exercise_id : null), sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : (it.durationSeconds != null ? it.durationSeconds : null), notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : (it.videoUrl != null ? it.videoUrl : null), spec: typeof it.spec === 'string' ? it.spec : '', time: typeof it.time === 'number' ? it.time : 5 };
             });
             var stepIndex = (typeof s.stepIndex === 'number' && s.stepIndex >= 0 && Math.floor(s.stepIndex) === s.stepIndex)
               ? Math.min(s.stepIndex, Math.max(0, items.length - 1)) : 0;
@@ -4028,7 +4036,7 @@
         var exists = Object.prototype.hasOwnProperty.call(dailySessions, key);
         if (!force && !meaningful && !exists) return; // 从未触碰：不建立 session（保留 calendar 自动初始化能力）
         dailySessions[key] = {
-          items: todayPlan.map(function (it) { return { name: it.name, spec: it.spec || '', time: it.time }; }),
+          items: todayPlan.map(function (it) { return { id: it.id != null ? it.id : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : null, sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : null, notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : null, spec: it.spec || '', time: it.time }; }),
           source: todayPlan.source || '',   // 数组自定义 source 显式拆出持久化，避免 JSON 序列化丢失
           stepIndex: todayStepIndex,
           started: !!todayStarted,
@@ -4059,7 +4067,7 @@
       }
       // 从某个 dailySession 恢复今日运行时状态（含数组级 source 恢复）
       function restoreSessionToToday(s) {
-        todayPlan = s.items.map(function (it) { return { name: it.name, spec: it.spec || '', time: it.time }; });
+        todayPlan = s.items.map(function (it) { return { id: it.id != null ? it.id : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : null, sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : null, notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : null, spec: it.spec || '', time: it.time }; });
         if (todayPlan.length) todayPlan.source = s.source;
         todayStepIndex = s.stepIndex;
         todayStarted = !!s.started;
@@ -4251,10 +4259,20 @@
         openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>按今天情况调整</h3><p>只替换 ' + displayedMonthLabel() + ' ' + day + ' 日，不改变整月其他训练。</p></div></div>' + (reason === 'pain' ? '<div class="safety-note">身体不适时，系统只能帮助降低训练负荷，不能判断伤病。若持续或明显疼痛、急性症状、活动受限或已有医嘱限制，请停止训练并咨询医生或康复专业人员。</div>' : '') + cards + '<div class="modal-actions"><button class="btn primary" type="button" data-confirm-replace="' + day + '">确认替换</button><button class="btn ghost" type="button" data-postpone-plan="' + day + '">推迟原训练</button><button class="btn ghost" type="button" data-adjust-day="' + day + '">重选原因</button></div>');
       }
       function replaceDayPlan(day, plan) {
-        calendarPlans[displayedDateKey(day)] = {title:plan.title,status:'planned',label:'已调整',time:plan.time,intensity:plan.intensity,body:plan.scene,items:plan.items.slice()};
-        saveTrainingState(); // P0-2：替换某日计划后立即持久化
-        renderCalendarCell(day);
-        renderDayModal(day);
+        var dateKey = displayedDateKey(day);
+        var nextPlan = {title:plan.title,status:'planned',label:'已调整',time:plan.time,intensity:plan.intensity,body:plan.scene,scene:plan.scene,notes:plan.reason || '',items:plan.items.slice()};
+        if (!v25Remote.ready) {
+          showToast('后端未连接，计划未保存', 'error');
+          return;
+        }
+        if (v25Remote.ready) {
+          v25SaveCanonicalPlan(dateKey, nextPlan.items, nextPlan).then(function () {
+            showToast('计划已替换并同步', 'success');
+            renderCalendarCell(day);
+            renderDayModal(day);
+          }).catch(function (error) { showToast(error.message || '计划替换失败', 'error'); });
+          return;
+        }
       }
       var todayStepIndex = 0;
       var todayStarted = false;
@@ -4412,38 +4430,76 @@
         if (editMeta) editMeta.textContent = todayPlan.length + ' 个动作 · 约 ' + duration + ' 分钟 · 增删后上方首页同步刷新';
       }
       function startPlan(plan) {
-        todayPlan = plan.items.map(function(item, index) {
+        if (!plan) return;
+        var nextItems = plan.items.map(function(item, index) {
           var name = item.split(' · ')[0];
-          return {name:name, spec:item.indexOf(' · ') >= 0 ? item.slice(item.indexOf(' · ') + 3) : '按方案完成', time:Math.max(2, Math.round(plan.time / plan.items.length))};
+          var remote = v25RemoteExerciseByName(name);
+          return {name:name, exerciseId:remote && remote.id, spec:item.indexOf(' · ') >= 0 ? item.slice(item.indexOf(' · ') + 3) : '按方案完成', time:Math.max(2, Math.round(plan.time / plan.items.length))};
         });
-        todayPlan.source = plan.title;
-        todayStepIndex = 0;
-        todayStarted = false;
-        todayDone = false;
-        todayIsRest = false;
-        resetStartBtn();
-        renderTodayPlan();
-        showView('home');
-        saveTrainingState(); // P0-2：启动方案后立即持久化
-        v25RemoteCompleted = false;
-        v25RemoteSessionId = null;
-        v25RemoteSessionPromise = null;
-        v25RemoteStepPromise = Promise.resolve();
-        v25RemotePlanId = plan.remote && typeof plan.id === 'number' ? plan.id : null;
-        v25RemotePlanPromise = v25EnsureRemotePlan(plan);
+        if (!v25Remote.ready) {
+          showToast('后端未连接，计划未保存', 'error');
+          return;
+        }
+        if (v25Remote.ready) {
+          var remotePlan = { title:plan.title, status:'planned', label:'计划中', time:plan.time, intensity:plan.intensity, scene:plan.scene || '训练', focus:plan.scene || '训练', notes:plan.reason || '', items:nextItems };
+          v25SaveCanonicalPlan(v25TodayKey(), nextItems, remotePlan).then(function () {
+            todayStepIndex = 0;
+            todayStarted = false;
+            todayDone = false;
+            todayIsRest = false;
+            resetStartBtn();
+            renderTodayPlan();
+            showView('home');
+            v25RemoteCompleted = false;
+            v25RemoteSessionId = null;
+            v25RemoteSessionPromise = null;
+            v25RemoteStepPromise = Promise.resolve();
+            v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
+          }).catch(function (error) { showToast(error.message || '训练方案保存失败', 'error'); });
+          return;
+        }
       }
       function addToToday(name) {
         var detail = exerciseDetails[name];
         if (!detail) return;
         var exists = todayPlan.some(function(item) { return item.name === name; });
-        if (!exists) {
-          todayPlan.push({name:name, spec:'3 组 · 按动作说明完成', time:parseInt((detail.tags.join(' ').match(/约 (\d+) 分钟/) || [])[1]) || 5});
-          todayPlan.source = todayPlan.source || '临时训练';
-          todayIsRest = false;
+        if (!v25Remote.ready && !exists) {
+          showToast('后端未连接，今日动作未保存', 'error');
+          return;
         }
-        renderTodayPlan();
-        saveTrainingState(); // P0-2：新增今日动作后立即持久化
-        openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>' + (exists ? '动作已在今日计划中' : '已加入今日计划') + '</h3><p>' + escapeHtml(name) + ' · ' + (exists ? '没有重复添加，你可以在日计划中调整训练。' : '已插入训练末尾。') + '</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-view="home" data-modal-close>查看今日计划</button><button class="btn ghost" type="button" data-modal-close>继续添加</button></div>');
+        if (v25Remote.ready && !exists) {
+          var nextItems = todayPlan.slice();
+          var remoteExercise = detail.remote || v25RemoteExerciseByName(name);
+          var remoteSets = remoteExercise && remoteExercise.default_sets != null ? Number(remoteExercise.default_sets) : 3;
+          var remoteRepsText = remoteExercise && remoteExercise.default_reps != null ? String(remoteExercise.default_reps) : '';
+          var remoteRepsMatch = remoteRepsText.match(/\d+/);
+          var remoteDuration = remoteExercise && Object.prototype.hasOwnProperty.call(remoteExercise, 'duration_seconds') ? remoteExercise.duration_seconds : null;
+          var nextItem = {
+            name: name,
+            exerciseId: detail.remoteId || (remoteExercise || {}).id,
+            sets: remoteSets,
+            reps: remoteRepsMatch ? Number(remoteRepsMatch[0]) : null,
+            duration_seconds: remoteDuration,
+            notes: remoteExercise && Object.prototype.hasOwnProperty.call(remoteExercise, 'notes') ? remoteExercise.notes : null,
+            video_url: remoteExercise && Object.prototype.hasOwnProperty.call(remoteExercise, 'video_url') ? remoteExercise.video_url : null,
+            spec: remoteRepsText ? remoteSets + ' 组 · ' + remoteRepsText : (remoteDuration != null ? remoteSets + ' 组 · ' + remoteDuration + ' 秒' : remoteSets + ' 组 · 按动作说明完成'),
+            time: parseInt((detail.tags.join(' ').match(/约 (\d+) 分钟/) || [])[1]) || (remoteDuration != null ? Math.max(1, Math.round(remoteDuration / 60)) : 5)
+          };
+          nextItems.push(nextItem);
+          var base = calendarPlans[v25TodayKey()] || restPlan;
+          var nextPlan = Object.assign({}, base, { title: base.status === 'rest' ? '今日训练' : base.title, status:'planned', focus:base.focus || '临时训练', scene:base.scene || '临时训练', items:nextItems });
+          v25SaveCanonicalPlan(v25TodayKey(), nextItems, nextPlan).then(function () {
+            openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>已加入今日计划</h3><p>' + escapeHtml(name) + ' · 已保存到后端并完成回读。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-view="home" data-modal-close>查看今日计划</button><button class="btn ghost" type="button" data-modal-close>继续添加</button></div>');
+          }).catch(function (error) { showToast(error.message || '今日计划保存失败', 'error'); });
+          return;
+        }
+        if (v25Remote.ready && exists) {
+          openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>动作已在今日计划中</h3><p>' + escapeHtml(name) + ' · 没有重复添加。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-view="home" data-modal-close>查看今日计划</button><button class="btn ghost" type="button" data-modal-close>继续添加</button></div>');
+          return;
+        }
+        if (!exists) {
+          showToast('后端未连接，今日动作未保存', 'error');
+        }
       }
       function renderFavorites() {
         var count = document.getElementById('favoriteCount'); if (count) count.textContent = favorites.length;
@@ -4793,27 +4849,55 @@
       // 确认导入：用合法数据完整替换 calendarPlans / customTrainingPlans / dailySessions，
       // 然后保存 + 按真实 todayKey 恢复今日 session + 刷新日/周/月/方案 UI。
       // 内置 training plans 仍由代码提供，不被导入文件覆盖。
+      function v25ImportedPlanEntries(validated) {
+        var entries = [];
+        Object.keys(validated.calendarPlans || {}).sort().forEach(function (dateKey) {
+          var plan = validated.calendarPlans[dateKey];
+          var isTraining = plan.status !== 'rest';
+          entries.push({
+            date: dateKey,
+            title: plan.title || (isTraining ? '训练计划' : '恢复日'),
+            is_training_day: isTraining,
+            focus: plan.focus || plan.body || plan.intensity || (isTraining ? '训练建议' : '恢复与轻量活动'),
+            notes: plan.notes != null ? plan.notes : (plan.reason || ''),
+            template_id: plan.templateId != null && /^\d+$/.test(String(plan.templateId)) ? Number(plan.templateId) : null,
+            items: isTraining ? ((plan.itemRecords && plan.itemRecords.length ? plan.itemRecords : plan.items) || []).map(v25ParseUiItem).filter(function (item) { return item.name; }) : []
+          });
+        });
+        var todayKey = v25TodayKey();
+        var session = validated.dailySessions && validated.dailySessions[todayKey];
+        if (session) {
+          var current = entries.find(function (entry) { return entry.date === todayKey; });
+          if (!current) {
+            current = { date: todayKey, title: session.source || '今日训练', focus: '训练建议', notes: '', template_id: null, items: [] };
+            entries.push(current);
+          }
+          current.is_training_day = !session.rest && session.items.length > 0;
+          current.items = current.is_training_day ? session.items.map(v25ParseUiItem).filter(function (item) { return item.name; }) : [];
+        }
+        return entries;
+      }
       function applyImportedTrainingState() {
         if (!pendingImportState) return;
         var validated = pendingImportState;
-        pendingImportState = null;
-        calendarPlans = validated.calendarPlans;
-        customTrainingPlans = validated.customTrainingPlans;
-        dailySessions = validated.dailySessions;
-        mergeTrainingPlans();
-        todaySessionKey = formatDateKey(getToday());
-        if (Object.prototype.hasOwnProperty.call(dailySessions, todaySessionKey)) {
-          restoreSessionToToday(dailySessions[todaySessionKey]);
-        } else {
-          initTodayFromCalendar();
+        var entries = v25ImportedPlanEntries(validated);
+        if (v25Remote.ready) {
+          v25ImportCanonical(entries).then(function () {
+            pendingImportState = null;
+            customTrainingPlans = validated.customTrainingPlans;
+            dailySessions = validated.dailySessions;
+            mergeTrainingPlans();
+            saveTrainingState();
+            renderTrainingPlans();
+            renderTodayPlan();
+            renderWeek();
+            renderCalendarMonth();
+            closeModal();
+            openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>导入完成</h3><p>日期计划已保存到后端并完成 API 回读。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div>');
+          }).catch(function (error) { showToast(error.message || '导入失败，当前数据未修改', 'error'); });
+          return;
         }
-        saveTrainingState();
-        renderTrainingPlans();
-        renderTodayPlan();
-        renderWeek();
-        renderCalendarMonth();
-        closeModal();
-        openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>导入完成</h3><p>训练计划数据已恢复，刷新页面后仍保持。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div>');
+        showToast('后端未连接，导入未保存', 'error');
       }
       // 动作库播放器主按钮只「关闭」：非执行上下文不推进今日训练。
       // （playerContext.source==='library' 时 phase2PlayerComplete 点击已由播放器处理器只关不推进）
@@ -4875,27 +4959,52 @@
             openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>本月已无空闲日</h3><p>' + displayedMonthLabel() + '剩余日期都已排训练，无法自动顺延。你可以直接改到下月，或替换为恢复日。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div>');
             return;
           }
-          calendarPlans[displayedDateKey(next)] = original;
-          calendarPlans[displayedDateKey(currentDay)] = restPlan;
-          saveTrainingState(); // P0-2：推迟后立即持久化两个日期
-          renderCalendarCell(currentDay); renderCalendarCell(next);
-          closeModal(); return;
+          var sourceDateKey = displayedDateKey(currentDay);
+          var targetDateKey = displayedDateKey(next);
+          if (!v25Remote.ready) {
+            showToast('后端未连接，计划未推迟', 'error');
+            return;
+          }
+          if (v25Remote.ready) {
+            v25PostponeCanonical(sourceDateKey, targetDateKey).then(function () {
+              showToast('计划已推迟并同步', 'success');
+              closeModal();
+              renderCalendarMonth();
+            }).catch(function (error) { showToast(error.message || '计划推迟失败', 'error'); });
+            return;
+          }
+          return;
         }
         if (target.hasAttribute('data-remove-today')) {
-          todayPlan = todayPlan.filter(function(item) { return item.name !== target.getAttribute('data-remove-today'); });
-          if (todayStepIndex >= todayPlan.length) todayStepIndex = Math.max(0, todayPlan.length - 1);
-          if (!todayPlan.length) resetStartBtn();
-          saveTrainingState(); // P0-2：移除今日动作后立即持久化
-          renderTodayPlan(); return;
+          var removeName = target.getAttribute('data-remove-today');
+          var nextTodayItems = todayPlan.filter(function(item) { return item.name !== removeName; });
+          if (!v25Remote.ready) {
+            showToast('后端未连接，今日动作未删除', 'error');
+            return;
+          }
+          if (v25Remote.ready) {
+            var currentTodayPlan = calendarPlans[v25TodayKey()] || { title:'今日训练', status:'planned', focus:'训练建议', items:todayPlan };
+            v25SaveCanonicalPlan(v25TodayKey(), nextTodayItems, currentTodayPlan).then(function () {
+              showToast('今日动作已删除并同步', 'success');
+            }).catch(function (error) { showToast(error.message || '今日动作删除失败', 'error'); });
+            return;
+          }
+          return;
         }
         if (target.id === 'clearTodayBtn') {
-          todayPlan = []; todayStepIndex = 0; todayStarted = false; todayDone = false; todayIsRest = false; resetStartBtn();
-          // P0-2：明确清空 → 建立空 session；刷新后不得被 calendar plan 自动回灌
-          if (todaySessionKey) {
-            dailySessions[todaySessionKey] = { items: [], source: '', stepIndex: 0, started: false, done: false, rest: false, updatedAt: new Date().toISOString() };
+          if (!v25Remote.ready) {
+            showToast('后端未连接，今日计划未清空', 'error');
+            return;
           }
-          saveTrainingState();
-          renderTodayPlan(); return;
+          if (v25Remote.ready) {
+            var clearBase = calendarPlans[v25TodayKey()] || { title:'恢复日', status:'rest', focus:'恢复与轻量活动', items:[] };
+            var clearPlan = Object.assign({}, clearBase, { title:'恢复日', status:'rest', focus:'恢复与轻量活动', items:[] });
+            v25SaveCanonicalPlan(v25TodayKey(), [], clearPlan).then(function () {
+              showToast('今日计划已清空并同步', 'success');
+            }).catch(function (error) { showToast(error.message || '清空今日计划失败', 'error'); });
+            return;
+          }
+          return;
         }
         if (target.id === 'startTodayBtn') {
           if (!todayPlan.length) return;
@@ -4944,12 +5053,19 @@
         if (target.hasAttribute('data-schedule-day')) {
           var plan = trainingPlans[pendingSchedulePlanId];
           var scheduleDateKey = target.getAttribute('data-schedule-day');
-          calendarPlans[scheduleDateKey] = {title:plan.title,status:'planned',label:'已安排',time:plan.time,intensity:plan.intensity,body:'核心',items:plan.items.slice()};
-          saveTrainingState(); // P0-2：安排到某天后立即持久化
-          var scheduledParts = parseDateKey(scheduleDateKey);
-          if (scheduledParts.year === calendarDisplayYear && scheduledParts.month === calendarDisplayMonth) renderCalendarCell(scheduledParts.day);
-          renderWeek();
-          closeModal(); return;
+          if (!v25Remote.ready) {
+            showToast('后端未连接，计划未安排', 'error');
+            return;
+          }
+          if (v25Remote.ready) {
+            var schedulePlan = { title:plan.title, status:'planned', label:'已安排', time:plan.time, intensity:plan.intensity, scene:plan.scene || '训练', focus:plan.scene || '训练', notes:plan.reason || '', items:plan.items.slice() };
+            v25SaveCanonicalPlan(scheduleDateKey, plan.items.slice(), schedulePlan).then(function () {
+              showToast('计划已安排并同步', 'success');
+              closeModal();
+            }).catch(function (error) { showToast(error.message || '安排计划失败', 'error'); });
+            return;
+          }
+          return;
         }
       });
       var calendar = document.getElementById('calendar');
@@ -5063,6 +5179,9 @@
         if (calendarDisplayMonth > 11) { calendarDisplayMonth = 0; calendarDisplayYear += 1; }
         selectedDay = null;
         renderCalendarMonth();
+        if (v25Remote.ready) {
+          v25RefreshMonth(calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)).then(function () { renderCalendarMonth(); }).catch(function (error) { showToast(error.message || '月份计划读取失败', 'error'); });
+        }
       }
       var monthPrevBtnEl = document.getElementById('monthPrevBtn');
       var monthNextBtnEl = document.getElementById('monthNextBtn');
@@ -5188,7 +5307,7 @@
         renderResourceCards();
       });
       // ── v25 rehearsal API 接线层：同源服务优先，localStorage 仅作离线 fallback ──
-      var v25Remote = { ready: false, today: null, calendar: {}, stats: null, weekStats: null, exercises: [], templates: [], favorites: [] };
+      var v25Remote = { ready: false, today: null, calendar: {}, calendarDays: {}, planDays: {}, loadedMonths: {}, stats: null, weekStats: null, exercises: [], templates: [], favorites: [] };
       var v25RemotePlanId = null, v25RemotePlanPromise = null, v25RemoteSessionId = null, v25RemoteSessionPromise = null, v25RemoteStepPromise = Promise.resolve(), v25RemoteCompleted = false;
       function v25ApiFetch(path, options) {
         var opts = options || {};
@@ -5201,27 +5320,238 @@
           });
         });
       }
-      function v25ItemText(item) {
+      var v25ToastTimer = null;
+      function showToast(message, type) {
+        var toast = document.getElementById('v25Toast');
+        if (!toast) {
+          toast = document.createElement('div');
+          toast.id = 'v25Toast';
+          toast.setAttribute('role', 'status');
+          toast.setAttribute('aria-live', 'polite');
+          toast.style.position = 'fixed';
+          toast.style.left = '50%';
+          toast.style.bottom = '24px';
+          toast.style.transform = 'translateX(-50%)';
+          toast.style.zIndex = '300';
+          toast.style.maxWidth = 'min(90vw, 520px)';
+          toast.style.padding = '10px 16px';
+          toast.style.borderRadius = '999px';
+          toast.style.fontWeight = '700';
+          toast.style.fontSize = '13px';
+          toast.style.boxShadow = '0 10px 28px rgba(90,74,58,.18)';
+          document.body.appendChild(toast);
+        }
+        toast.textContent = String(message || '操作完成');
+        toast.style.color = type === 'error' ? '#8b3f38' : '#315e50';
+        toast.style.background = type === 'error' ? '#ffe8e2' : '#e4f4e9';
+        toast.hidden = false;
+        clearTimeout(v25ToastTimer);
+        v25ToastTimer = setTimeout(function () { toast.hidden = true; }, 3600);
+      }
+      function v25MonthForDate(dateKey) { return String(dateKey || '').slice(0, 7); }
+      function v25TodayKey() { return formatDateKey(getToday()); }
+      function v25RemoteExerciseByName(name) {
+        return v25Remote.exercises.find(function (row) { return row.name === name; }) || null;
+      }
+      function v25Has(item, key) { return !!item && Object.prototype.hasOwnProperty.call(item, key); }
+      function v25SpecForItem(item) {
         if (!item) return '';
         var spec = [];
-        if (item.sets) spec.push(item.sets + ' 组');
-        if (item.reps) spec.push(item.reps + ' 次');
-        var duration = item.durationSeconds || item.duration_seconds;
-        if (duration) spec.push(Math.round(duration / 60) + ' 分钟');
-        return item.name + (spec.length ? ' · ' + spec.join(' × ') : '');
+        if (item.sets != null) spec.push(item.sets + ' 组');
+        if (item.reps != null) spec.push(item.reps + ' 次');
+        if (item.duration_seconds != null) spec.push(item.duration_seconds < 60 ? item.duration_seconds + ' 秒' : Math.round(item.duration_seconds / 60) + ' 分钟');
+        return spec.join(' · ');
+      }
+      function v25ItemRecord(item) {
+        if (!item || typeof item !== 'object') return null;
+        var exerciseId = v25Has(item, 'exercise_id') ? item.exercise_id : item.exerciseId;
+        var duration = v25Has(item, 'duration_seconds') ? item.duration_seconds : item.durationSeconds;
+        var notes = v25Has(item, 'notes') ? item.notes : (v25Has(item, 'instructions') ? item.instructions : item.description);
+        return {
+          id: item.id != null ? Number(item.id) : null,
+          exercise_id: exerciseId != null ? Number(exerciseId) : null,
+          name: item.name || '',
+          sets: item.sets != null ? Number(item.sets) : null,
+          reps: item.reps != null ? Number(item.reps) : null,
+          duration_seconds: duration != null ? Number(duration) : null,
+          notes: notes != null ? String(notes) : null,
+          video_url: v25Has(item, 'video_url') ? item.video_url : (item.videoUrl || null),
+          spec: item.spec != null ? String(item.spec) : v25SpecForItem(item)
+        };
+      }
+      function v25ParseUiItem(item) {
+        var direct = typeof item === 'object' && item ? item : null;
+        var raw = typeof item === 'string' ? item : (direct && direct.name) || '';
+        var parts = String(raw).split(' · ');
+        var name = parts.shift().trim();
+        var spec = direct && direct.spec != null ? String(direct.spec) : parts.join(' · ');
+        var linkedId = direct && (direct.exercise_id != null ? direct.exercise_id : direct.exerciseId);
+        var linked = linkedId != null ? { id: linkedId } : v25RemoteExerciseByName(name);
+        var setsMatch = spec.match(/(\d+)\s*组/);
+        var repsMatch = spec.match(/(\d+)\s*(?:次|秒)/);
+        var compactMatch = spec.match(/(\d+)\s*[×x*]\s*(\d+)\s*(次|秒)?/i);
+        if (!setsMatch && compactMatch) setsMatch = [compactMatch[0], compactMatch[1]];
+        if (!repsMatch && compactMatch && compactMatch[3] !== '秒') repsMatch = [compactMatch[0], compactMatch[2]];
+        var minutesMatch = spec.match(/(\d+)\s*分钟/);
+        var secondsMatch = spec.match(/(\d+)\s*秒/);
+        var itemTime = direct && direct.time != null ? Number(direct.time) : null;
+        var hasDuration = v25Has(direct, 'duration_seconds') || v25Has(direct, 'durationSeconds');
+        var hasSets = v25Has(direct, 'sets');
+        var hasReps = v25Has(direct, 'reps');
+        var durationValue = hasDuration ? (v25Has(direct, 'duration_seconds') ? direct.duration_seconds : direct.durationSeconds) : undefined;
+        var setsValue = hasSets ? direct.sets : (setsMatch ? Number(setsMatch[1]) : 1);
+        var repsValue = hasReps ? direct.reps : (repsMatch && !/秒/.test(spec) ? Number(repsMatch[1]) : null);
+        var duration = minutesMatch ? Number(minutesMatch[1]) * 60 : (compactMatch && compactMatch[3] === '秒' ? Number(compactMatch[2]) : (itemTime ? Number(itemTime) * 60 : null));
+        if (secondsMatch && !compactMatch) duration = Number(secondsMatch[1]);
+        if (hasDuration) duration = durationValue;
+        var notes = v25Has(direct, 'notes') ? direct.notes : (v25Has(direct, 'instructions') ? direct.instructions : (v25Has(direct, 'description') ? direct.description : null));
+        return {
+          id: direct && direct.id != null ? Number(direct.id) : null,
+          exercise_id: linked && linked.id != null ? Number(linked.id) : null,
+          name: name,
+          sets: setsValue == null ? 1 : Number(setsValue),
+          reps: repsValue == null ? null : Number(repsValue),
+          duration_seconds: duration,
+          notes: notes,
+          video_url: direct && (direct.video_url || direct.videoUrl) || null,
+          spec: direct && direct.spec != null ? String(direct.spec) : spec
+        };
+      }
+      function v25PlanPayload(dateKey, plan, itemsOverride) {
+        var isRest = !plan || plan.status === 'rest' || plan.is_training === false || plan.isTrainingDay === false;
+        var sourceItems = itemsOverride !== undefined ? itemsOverride : ((plan && plan.itemRecords) || (plan && plan.items) || []);
+        var items = isRest ? [] : sourceItems.map(v25ParseUiItem).filter(function (item) { return item.name; });
+        return {
+          date: dateKey,
+          title: (plan && plan.title) || (isRest ? '恢复日' : '训练计划'),
+          is_training_day: !isRest,
+          focus: (plan && (plan.focus || plan.scene || plan.body || plan.intensity)) || (isRest ? '恢复与轻量活动' : '训练建议'),
+          notes: plan && plan.notes != null ? plan.notes : ((plan && plan.reason) || ''),
+          template_id: plan && plan.templateId != null && /^\d+$/.test(String(plan.templateId)) ? Number(plan.templateId) : null,
+          items: items
+        };
+      }
+      function v25CanonicalPlan(dateKey, itemsOverride, planOverride) {
+        var plan = planOverride || calendarPlans[dateKey] || restPlan;
+        if (dateKey === v25TodayKey() && itemsOverride) {
+          plan = Object.assign({}, plan, { items: itemsOverride, status: itemsOverride.length ? 'planned' : 'rest' });
+        }
+        return v25PlanPayload(dateKey, plan, itemsOverride);
+      }
+      function v25ApplyPlanDays(days, detail) {
+        var statusByDate = {};
+        (detail && detail.days || []).forEach(function (day) { statusByDate[day.date] = day.status; });
+        (days || []).forEach(function (day) {
+          v25Remote.loadedMonths[v25MonthForDate(day.date)] = true;
+          v25Remote.planDays[day.date] = day;
+          var status = day.is_training ? (statusByDate[day.date] === 'completed' ? 'done' : 'planned') : 'rest';
+          calendarPlans[day.date] = v25PlanToUi({
+            id: day.id,
+            title: day.title,
+            theme: day.theme,
+            focus: day.theme,
+            notes: day.notes,
+            template_id: day.template_id,
+            isTrainingDay: day.is_training,
+            items: day.items || []
+          }, status);
+        });
+      }
+      function v25RefreshMonth(month) {
+        var token = String(month || '').slice(0, 7);
+        if (!/^\d{4}-\d{2}$/.test(token)) return Promise.reject(new Error('日期格式错误'));
+        return Promise.all([
+          v25ApiFetch('/api/plans/month?month=' + token),
+          v25ApiFetch('/api/stats/month/detail?month=' + token)
+        ]).then(function (results) {
+          v25Remote.loadedMonths[token] = true;
+          v25ApplyPlanDays((results[0] && results[0].days) || [], results[1]);
+          v25Remote.ready = true;
+          return results[0];
+        });
+      }
+      function v25RefreshCanonical(dateKeys, options) {
+        var refreshOptions = options || {};
+        var keys = (dateKeys || []).filter(Boolean);
+        var months = [];
+        keys.forEach(function (key) { var month = v25MonthForDate(key); if (months.indexOf(month) < 0) months.push(month); });
+        if (refreshOptions.refreshLoaded) Object.keys(v25Remote.loadedMonths).forEach(function (month) { if (months.indexOf(month) < 0) months.push(month); });
+        if (!months.length) months.push(v25MonthForDate(v25TodayKey()));
+        var jobs = months.map(v25RefreshMonth);
+        if (refreshOptions.forceToday || keys.indexOf(v25TodayKey()) >= 0 || !v25Remote.today) {
+          jobs.push(v25ApiFetch('/api/plans/today').then(function (today) { v25Remote.today = today; return today; }));
+        }
+        return Promise.all(jobs).then(function () {
+          var today = v25Remote.today;
+          if (today && (today.isTrainingDay || today.is_training)) {
+            v25RemotePlanId = today.id;
+            todayPlan = (today.items || []).map(function (item) {
+              var duration = item.durationSeconds || item.duration_seconds;
+              var record = v25ParseUiItem(item);
+              return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 };
+            });
+            todayPlan.source = today.title || '今日训练';
+            todayIsRest = false;
+          } else if (today) {
+            todayPlan = [];
+            todayIsRest = true;
+          }
+          renderTodayPlan(); renderWeek(); renderCalendarMonth();
+          saveTrainingState();
+          return { today: today, months: months };
+        });
+      }
+      function v25SaveCanonicalPlan(dateKey, itemsOverride, planOverride) {
+        if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，计划编辑未保存'));
+        var payload = v25CanonicalPlan(dateKey, itemsOverride, planOverride);
+        if (payload.is_training_day && !payload.items.length) return Promise.reject(new Error('训练日必须至少包含一个动作'));
+        return v25ApiFetch('/api/plans/by-date/' + encodeURIComponent(dateKey), {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        }).then(function (result) {
+          return v25RefreshCanonical([dateKey]).then(function () { return result; });
+        });
+      }
+      function v25PostponeCanonical(sourceDate, targetDate) {
+        if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，计划编辑未保存'));
+        return v25ApiFetch('/api/plans/postpone', {
+          method: 'POST',
+          body: JSON.stringify({ source_date: sourceDate, target_date: targetDate })
+        }).then(function (result) {
+          return v25RefreshCanonical([sourceDate, targetDate]).then(function () { return result; });
+        });
+      }
+      function v25ImportCanonical(entries) {
+        if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，导入未保存'));
+        return v25ApiFetch('/api/plans/import', {
+          method: 'POST',
+          body: JSON.stringify({ plans: entries, replace_months: true })
+        }).then(function (result) {
+          return v25RefreshCanonical(entries.map(function (entry) { return entry.date; }), { refreshLoaded: true, forceToday: true }).then(function () { return result; });
+        });
+      }
+      function v25ItemText(item) {
+        if (!item) return '';
+        var record = typeof item === 'string' ? v25ParseUiItem(item) : item;
+        var spec = record.spec || v25SpecForItem(record);
+        return record.name + (spec ? ' · ' + spec : '');
       }
       function v25PlanToUi(plan, status) {
         if (!plan) return restPlan;
-        var items = (plan.items || []).map(v25ItemText).filter(Boolean);
-        var duration = (plan.items || []).reduce(function (sum, item) { return sum + (item.durationSeconds || item.duration_seconds || 0); }, 0);
+        var itemRecords = (plan.items || []).map(v25ParseUiItem).filter(function (item) { return item && item.name; });
+        var items = itemRecords.map(v25ItemText).filter(Boolean);
+        var duration = itemRecords.reduce(function (sum, item) { return sum + (item.duration_seconds || 0); }, 0);
         var minutes = duration ? Math.max(1, Math.round(duration / 60)) : Math.max(5, items.length * 5);
-        return { id: plan.id, title: plan.title || '训练计划', status: status || (plan.isTrainingDay ? 'planned' : 'rest'), label: status === 'done' ? '已完成' : '计划中', time: minutes, intensity: '低强度', body: plan.theme || '全身', items: items, remote: true };
+        return { id: plan.id, title: plan.title || '训练计划', status: status || (plan.isTrainingDay ? 'planned' : 'rest'), label: status === 'done' ? '已完成' : '计划中', time: minutes, intensity: '低强度', body: plan.theme || plan.focus || '全身', focus: plan.focus || plan.theme || '', notes: plan.notes || '', templateId: plan.template_id != null ? String(plan.template_id) : null, items: items, itemRecords: itemRecords, remote: true };
       }
       function v25ApplyCalendar(calendar, detail) {
         var statusByDate = {};
         (detail && detail.days || []).forEach(function (day) { statusByDate[day.date] = day.status; });
         calendarPlans = {};
+        v25Remote.calendarDays = {};
         (calendar && calendar.days || []).forEach(function (day) {
+          v25Remote.loadedMonths[v25MonthForDate(day.date)] = true;
+          v25Remote.calendarDays[day.date] = day;
           var status = day.is_training ? (statusByDate[day.date] === 'completed' ? 'done' : 'planned') : 'rest';
           calendarPlans[day.date] = v25PlanToUi({ id: day.plan_id, title: day.title, theme: '', isTrainingDay: day.is_training, items: day.items || [] }, status);
         });
@@ -5345,12 +5675,14 @@
       });
       function bootV25Api() {
         var month = formatDateKey(getToday()).slice(0, 7), todayKey = formatDateKey(getToday());
-        var jobs = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models'].map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data }; }).catch(function () { return { ok: false, data: null }; }); });
+        var jobs = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month].map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data }; }).catch(function () { return { ok: false, data: null }; }); });
         return Promise.all(jobs).then(function (results) {
           if (!results[0].ok && !results[1].ok) return;
           v25Remote.ready = true;
           v25Remote.today = results[0].data;
+          v25Remote.calendar = results[1].data;
           v25ApplyCalendar(results[1].data, results[3].data);
+          if (results[10].ok) v25ApplyPlanDays(results[10].data.days || [], results[3].data);
           v25Remote.stats = results[2].data; v25Remote.weekStats = results[4].data;
           v25ApplyStats(v25Remote.stats);
           if (results[5].ok) { v25Remote.exercises = results[5].data.exercises || []; v25RenderLibrary(); }
@@ -5358,10 +5690,23 @@
           if (results[7].ok) { v25Remote.favorites = results[7].data.favorites || []; favorites = v25Remote.favorites.map(function (row) { return row.exercise_name; }); saveFavorites(); renderFavorites(); }
           if (results[8].ok) { apiSettings.model = results[8].data.model || ''; apiSettings.provider = results[8].data.provider || 'local-demo'; mode(); }
           if (v25Remote.today && (v25Remote.today.isTrainingDay || v25Remote.today.is_training)) {
-            v25RemotePlanId = v25Remote.today.id; todayPlan = (v25Remote.today.items || []).map(function (item) { var duration = item.durationSeconds || item.duration_seconds; return { name: item.name, exerciseId: item.exercise_id, spec: (item.sets || 3) + ' 组' + (item.reps ? ' · ' + item.reps + ' 次' : ''), time: duration ? Math.max(2, Math.round(duration / 60)) : 5 }; });
+            v25RemotePlanId = v25Remote.today.id; todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
             todayPlan.source = v25Remote.today.title; todayIsRest = false;
           } else { todayPlan = []; todayIsRest = true; }
+          if (todaySessionKey) {
+            var remoteSession = dailySessions[todaySessionKey] || {};
+            dailySessions[todaySessionKey] = {
+              items: todayPlan.map(function (item) { return { id:item.id != null ? item.id : null, name:item.name, exerciseId:item.exerciseId != null ? item.exerciseId : null, sets:item.sets != null ? item.sets : null, reps:item.reps != null ? item.reps : null, duration_seconds:item.duration_seconds != null ? item.duration_seconds : null, notes:item.notes != null ? item.notes : null, spec:item.spec || '', time:item.time }; }),
+              source: todayPlan.source || '',
+              stepIndex: Math.min(remoteSession.stepIndex || 0, Math.max(0, todayPlan.length - 1)),
+              started: !!remoteSession.started,
+              done: !!remoteSession.done,
+              rest: !!todayIsRest,
+              updatedAt: new Date().toISOString()
+            };
+          }
           renderTodayPlan(); renderWeek(); renderCalendarMonth(); v25ApplyStats(v25Remote.stats);
+          saveTrainingState();
         });
       }
       // P0-2：启动前同步 hydrate（内置 seed → load → validate/migrate → 合并 customs → 恢复今日 session）

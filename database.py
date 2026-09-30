@@ -76,6 +76,8 @@ class WorkoutExercise(Base):
     duration_seconds = Column(Integer, nullable=True)
     reps = Column(Integer, nullable=True)
     video_url = Column(String(500), nullable=True)
+    # Preserve a user/import supplied display specification verbatim.
+    spec = Column(String(240), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -453,6 +455,9 @@ def ensure_schema_columns():
     if "video_url" not in we_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE workout_exercises ADD COLUMN video_url VARCHAR(500)"))
+    if "spec" not in we_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE workout_exercises ADD COLUMN spec VARCHAR(240)"))
     # exercises table — benefit column
     ex_columns = {column["name"] for column in inspector.get_columns("exercises")}
     if "benefit" not in ex_columns:

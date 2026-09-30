@@ -2151,3 +2151,254 @@ def test_seed_exercise_ids_not_null(app_modules):
     finally:
         db.close()
 
+
+def test_canonical_plan_save_replaces_actions_and_roundtrips(app_modules, client):
+    """Date edits persist the complete action snapshot and survive re-read."""
+    database, _ = app_modules
+    exercises = client.get("/api/exercises").json()["exercises"]
+    first, second = exercises[:2]
+    payload = {
+        "date": "2026-09-15",
+        "title": "VAN-10 统一编辑",
+        "is_training_day": True,
+        "focus": "测试计划",
+        "notes": "首次保存",
+        "items": [
+            {"exercise_id": first["id"], "sets": 2, "reps": 8},
+            {"exercise_id": second["id"], "sets": 1, "duration_seconds": 30},
+        ],
+    }
+    saved = client.put("/api/plans/by-date/2026-09-15", json=payload)
+    assert saved.status_code == 200
+    assert saved.json()["plan"]["title"] == "VAN-10 统一编辑"
+    assert [item["exercise_id"] for item in saved.json()["plan"]["items"]] == [first["id"], second["id"]]
+
+    payload["items"] = [{"exercise_id": second["id"], "sets": 3, "reps": 6, "duration_seconds": 30, "notes": "保留备注"}]
+    payload["notes"] = "替换后"
+    replaced = client.put("/api/plans/by-date/2026-09-15", json=payload)
+    assert replaced.status_code == 200
+
+    fetched = client.get("/api/plans/month", params={"month": "2026-09"}).json()
+    day = next(item for item in fetched["days"] if item["date"] == "2026-09-15")
+    assert day["title"] == "VAN-10 统一编辑"
+    assert day["notes"] == "替换后"
+    assert len(day["items"]) == 1
+    assert day["items"][0]["exercise_id"] == second["id"]
+    assert day["items"][0]["sets"] == 3
+
+    # The surviving action keeps explicit nullable/structured fields exactly.
+    assert day["items"][0]["reps"] == 6
+    assert day["items"][0]["duration_seconds"] == 30
+    assert day["items"][0]["notes"] == "保留备注"
+    assert day["items"][0]["spec"] == "3 组 · 6 次 · 30 秒"
+
+    nullable = client.put(
+        "/api/plans/by-date/2026-09-15",
+        json={
+            "date": "2026-09-15",
+            "title": "VAN-10 nullable",
+            "is_training_day": True,
+            "items": [{"exercise_id": second["id"], "sets": 4, "reps": None, "duration_seconds": None, "notes": "显式空值"}],
+        },
+    )
+    assert nullable.status_code == 200
+    nullable_item = nullable.json()["plan"]["items"][0]
+    assert nullable_item["sets"] == 4
+    assert nullable_item["reps"] is None
+    assert nullable_item["duration_seconds"] is None
+    assert nullable_item["notes"] == "显式空值"
+
+    cleared = client.put(
+        "/api/plans/by-date/2026-09-15",
+        json={"date": "2026-09-15", "is_training_day": False, "title": "恢复日", "items": []},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["plan"]["is_training"] is False
+    assert cleared.json()["plan"]["items"] == []
+
+    db = database.SessionLocal()
+    try:
+        row = db.query(database.WorkoutPlan).filter(database.WorkoutPlan.plan_date == date(2026, 9, 15)).one()
+        assert row.is_training_day is False
+        assert row.template_id is None
+        assert row.exercises == []
+    finally:
+        db.close()
+
+
+def test_postpone_moves_plan_and_restores_source_atomically(app_modules, client):
+    """Postpone updates both dates in one backend transaction."""
+    database, _ = app_modules
+    exercise = client.get("/api/exercises").json()["exercises"][0]
+    source = client.put(
+        "/api/plans/by-date/2026-09-20",
+        json={
+            "date": "2026-09-20",
+            "title": "待推迟计划",
+            "is_training_day": True,
+            "items": [{"exercise_id": exercise["id"], "sets": 2, "reps": 5}],
+        },
+    )
+    assert source.status_code == 200
+
+    moved = client.post(
+        "/api/plans/postpone",
+        json={"source_date": "2026-09-20", "target_date": "2026-09-21"},
+    )
+    assert moved.status_code == 200
+    assert moved.json()["source"]["is_training"] is False
+    assert moved.json()["target"]["is_training"] is True
+    assert moved.json()["target"]["items"][0]["exercise_id"] == exercise["id"]
+
+    source_after = client.get("/api/plans", params={"date": "2026-09-20"}).json()["plans"][0]
+    target_after = client.get("/api/plans", params={"date": "2026-09-21"}).json()["plans"][0]
+    assert source_after["isTrainingDay"] is False
+    assert source_after["items"] == []
+    assert target_after["isTrainingDay"] is True
+    assert len(target_after["items"]) == 1
+
+    db = database.SessionLocal()
+    try:
+        assert db.query(database.WorkoutPlan).filter(database.WorkoutPlan.plan_date == date(2026, 9, 20), database.WorkoutPlan.is_training_day == True).count() == 0
+        assert db.query(database.WorkoutExercise).join(database.WorkoutPlan).filter(database.WorkoutPlan.plan_date == date(2026, 9, 21)).count() == 1
+    finally:
+        db.close()
+
+
+def test_import_plans_writes_and_reads_canonical_snapshots(app_modules, client):
+    """Import writes date plans to SQLite; the subsequent API read is canonical."""
+    exercises = client.get("/api/exercises").json()["exercises"]
+    response = client.post(
+        "/api/plans/import",
+        json={
+            "plans": [
+                {
+                    "date": "2026-09-25",
+                    "title": "导入训练",
+                    "is_training_day": True,
+                    "focus": "导入",
+                    "items": [{"exercise_id": exercises[0]["id"], "sets": 1, "reps": 4}],
+                },
+                {
+                    "date": "2026-09-26",
+                    "title": "导入恢复",
+                    "is_training_day": False,
+                    "items": [],
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert {plan["date"] for plan in response.json()["plans"]} == {"2026-09-25", "2026-09-26"}
+
+    month = client.get("/api/plans/month", params={"month": "2026-09"}).json()
+    imported_training = next(day for day in month["days"] if day["date"] == "2026-09-25")
+    imported_rest = next(day for day in month["days"] if day["date"] == "2026-09-26")
+    assert imported_training["is_training"] is True
+    assert imported_training["items"][0]["exercise_id"] == exercises[0]["id"]
+    assert imported_rest["is_training"] is False
+    assert imported_rest["items"] == []
+
+
+def test_import_replaces_unlisted_pending_plans_in_represented_month(app_modules, client):
+    """Import coverage follows the UI's month replacement semantics."""
+    exercise = client.get("/api/exercises").json()["exercises"][0]
+    for day in ("2026-10-01", "2026-10-02", "2026-10-03", "2026-11-02"):
+        saved = client.put(
+            f"/api/plans/by-date/{day}",
+            json={
+                "date": day,
+                "title": f"旧计划 {day}",
+                "is_training_day": True,
+                "items": [{"exercise_id": exercise["id"], "sets": 2, "reps": 6}],
+            },
+        )
+        assert saved.status_code == 200
+    historical = client.get("/api/plans", params={"date": "2026-10-01"}).json()["plans"][0]
+    assert client.post("/api/logs/complete", json={"plan_id": historical["id"], "notes": "历史完成"}).status_code == 200
+
+    imported = client.post(
+        "/api/plans/import",
+        json={
+            "replace_months": True,
+            "plans": [
+                {
+                    "date": "2026-10-03",
+                    "title": "备份中的计划",
+                    "is_training_day": True,
+                    "items": [{"exercise_id": exercise["id"], "sets": 4, "reps": 8, "duration_seconds": 30, "notes": "保留备注", "spec": "自定义规格：保持 30 秒"}],
+                }
+            ],
+        },
+    )
+    assert imported.status_code == 200
+
+    omitted = client.get("/api/plans", params={"date": "2026-10-02"}).json()["plans"][0]
+    omitted_other_month = client.get("/api/plans", params={"date": "2026-11-02"}).json()["plans"][0]
+    historical_after = client.get("/api/plans", params={"date": "2026-10-01"}).json()["plans"][0]
+    kept = client.get("/api/plans", params={"date": "2026-10-03"}).json()["plans"][0]
+    assert omitted["isTrainingDay"] is False
+    assert omitted["items"] == []
+    assert omitted_other_month["isTrainingDay"] is False
+    assert omitted_other_month["items"] == []
+    assert historical_after["isTrainingDay"] is True
+    assert len(historical_after["items"]) == 1
+    assert kept["isTrainingDay"] is True
+    assert kept["items"][0]["sets"] == 4
+    assert kept["items"][0]["reps"] == 8
+    assert kept["items"][0]["durationSeconds"] == 30
+    assert kept["items"][0]["notes"] == "保留备注"
+    assert kept["items"][0]["spec"] == "自定义规格：保持 30 秒"
+
+
+def test_empty_import_clears_pending_but_preserves_history(app_modules, client):
+    exercise = client.get("/api/exercises").json()["exercises"][0]
+    pending = client.put(
+        "/api/plans/by-date/2026-12-02",
+        json={"date": "2026-12-02", "title": "待清除", "is_training_day": True, "items": [{"exercise_id": exercise["id"]}]},
+    ).json()["plan"]
+    historical = client.put(
+        "/api/plans/by-date/2026-12-01",
+        json={"date": "2026-12-01", "title": "历史保留", "is_training_day": True, "items": [{"exercise_id": exercise["id"]}]},
+    ).json()["plan"]
+    assert client.post("/api/logs/complete", json={"plan_id": historical["id"], "notes": "保留"}).status_code == 200
+
+    response = client.post("/api/plans/import", json={"plans": []})
+    assert response.status_code == 200
+    assert response.json()["plans"] == []
+
+    pending_after = client.get("/api/plans", params={"date": "2026-12-02"}).json()["plans"][0]
+    historical_after = client.get("/api/plans", params={"date": "2026-12-01"}).json()["plans"][0]
+    assert pending_after["isTrainingDay"] is False
+    assert pending_after["items"] == []
+    assert historical_after["isTrainingDay"] is True
+    assert len(historical_after["items"]) == 1
+
+
+def test_existing_schema_adds_spec_column_without_losing_rows(app_modules):
+    """The startup migration adds the VAN-10 spec column to an old temp DB."""
+    database, _ = app_modules
+    import sqlite3
+
+    db = database.SessionLocal()
+    try:
+        before = db.query(database.WorkoutExercise).count()
+    finally:
+        db.close()
+
+    raw = sqlite3.connect(database.DATABASE_PATH)
+    try:
+        raw.execute("ALTER TABLE workout_exercises DROP COLUMN spec")
+        raw.commit()
+    finally:
+        raw.close()
+    database.engine.dispose()
+    database.create_tables()
+
+    inspector = database.inspect(database.engine)
+    assert "spec" in {column["name"] for column in inspector.get_columns("workout_exercises")}
+    db = database.SessionLocal()
+    try:
+        assert db.query(database.WorkoutExercise).count() == before
+    finally:
+        db.close()

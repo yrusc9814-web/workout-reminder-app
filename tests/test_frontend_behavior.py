@@ -299,3 +299,157 @@ def test_restore_defaults_dry_run_then_confirm_and_cancel():
 })().catch((e) => { console.error(e); process.exit(99); });
 """
     _assert_ok(_run(script))
+
+
+def test_van10_frontend_snapshot_preserves_fields_and_rejects_offline_save():
+    """Execute the v25 snapshot helpers from the real page source, not a string probe."""
+    script = r"""
+const fs = require('fs');
+const source = fs.readFileSync('static/index.html', 'utf8');
+var v25Remote = { ready: false, exercises: [] };
+function v25RemoteExerciseByName() { return null; }
+const helperStart = source.indexOf('function v25Has(');
+const helperEnd = source.indexOf('function v25PlanPayload(');
+eval(source.slice(helperStart, helperEnd));
+const textStart = source.indexOf('function v25ItemText(');
+const textEnd = source.indexOf('function v25PlanToUi(');
+eval(source.slice(textStart, textEnd));
+
+const first = {
+  id: 91,
+  exercise_id: 7,
+  name: '保真动作',
+  sets: 4,
+  reps: 8,
+  duration_seconds: 30,
+  notes: '保留备注',
+  spec: '4 组 · 8 次 · 30 秒',
+  video_url: 'https://example.test/original',
+};
+const second = {
+  id: 92,
+  exercise_id: 8,
+  name: '第二动作',
+  sets: 2,
+  reps: null,
+  duration_seconds: null,
+  notes: null,
+  spec: '2 组',
+};
+const parsed = [first, second].map(v25ParseUiItem);
+const survivor = parsed.filter(item => item.name !== '第二动作')[0];
+if (survivor.id !== 91 || survivor.exercise_id !== 7 || survivor.sets !== 4 || survivor.reps !== 8 || survivor.duration_seconds !== 30 || survivor.notes !== '保留备注') process.exit(1);
+if (!v25ItemText(survivor).includes('30 秒')) process.exit(2);
+
+function v25CanonicalPlan() { return {}; }
+function v25ApiFetch() { process.exit(3); }
+function v25RefreshCanonical() { process.exit(4); }
+const saveStart = source.indexOf('function v25SaveCanonicalPlan(');
+const saveEnd = source.indexOf('function v25PostponeCanonical(');
+eval(source.slice(saveStart, saveEnd));
+v25SaveCanonicalPlan('2026-10-01', [survivor]).then(() => process.exit(5)).catch(error => {
+  if (!String(error.message).includes('后端未连接')) process.exit(6);
+  let toast = '';
+  function showToast(message) { toast = String(message); }
+  function v25TodayKey() { return '2026-10-01'; }
+  function v25SaveCanonicalPlan() { process.exit(7); }
+  let localSaveCalls = 0;
+  function saveTrainingState() { localSaveCalls += 1; }
+  var todayPlan = [];
+  var exerciseDetails = { '离线动作': { tags: [] } };
+  const addStart = source.indexOf('function addToToday(');
+  const addEnd = source.indexOf('function renderFavorites(');
+  eval(source.slice(addStart, addEnd));
+  addToToday('离线动作');
+  if (todayPlan.length !== 0 || localSaveCalls !== 0 || !toast.includes('未保存')) process.exit(8);
+  v25Remote.ready = true;
+  v25Remote.exercises = [{id:2, name:'正式动作', default_sets:2, default_reps:null, duration_seconds:20, notes:'正式备注', video_url:'https://example.test/exercise'}];
+  exerciseDetails['正式动作'] = { remoteId:2, remote:v25Remote.exercises[0], tags:['<span>约 1 分钟</span>'] };
+  var calendarPlans = {}, restPlan = { title:'恢复日', status:'rest', items:[] }, capturedAdd = null;
+  v25SaveCanonicalPlan = function(date, items) { capturedAdd = items[0]; return Promise.resolve(); };
+  function renderTodayPlan() {}
+  function openModal() {}
+  addToToday('正式动作');
+  if (!capturedAdd || capturedAdd.exerciseId !== 2 || capturedAdd.sets !== 2 || capturedAdd.duration_seconds !== 20 || capturedAdd.notes !== '正式备注' || capturedAdd.video_url !== 'https://example.test/exercise' || capturedAdd.time !== 1) process.exit(9);
+  var dailySessions = {}, todayStarted = false, todayDone = false, todayStepIndex = 0, todayIsRest = false;
+  const persistStart = source.indexOf('function persistTodayToSession(');
+  const persistEnd = source.indexOf('function clonePlain(');
+  eval(source.slice(persistStart, persistEnd));
+  todayPlan = [first];
+  persistTodayToSession('2026-10-01', true);
+  if (dailySessions['2026-10-01'].items[0].video_url !== first.video_url) process.exit(10);
+  console.log('PASS');
+});
+"""
+    _assert_ok(_run(script))
+
+
+def test_van10_export_validate_import_roundtrip_preserves_item_records():
+    """The real export validation/import helpers keep itemRecords and nullable fields."""
+    script = r"""
+const fs = require('fs');
+const source = fs.readFileSync('static/index.html', 'utf8');
+var v25Remote = { ready: true, exercises: [] };
+var restPlan = { title: '恢复日', status: 'rest', items: [] };
+function v25RemoteExerciseByName() { return null; }
+function v25TodayKey() { return '2026-09-30'; }
+const helperStart = source.indexOf('function v25Has(');
+const helperEnd = source.indexOf('function v25PlanPayload(');
+eval(source.slice(helperStart, helperEnd));
+const viewStart = source.indexOf('function v25ItemText(');
+const viewEnd = source.indexOf('function v25ApplyCalendar(');
+eval(source.slice(viewStart, viewEnd));
+var TRAINING_STATE_VERSION = 1;
+function isValidDateKey(key) { return /^\d{4}-\d{2}-\d{2}$/.test(key); }
+function isValidPlanValue(value) { return value && typeof value === 'object' && typeof value.title === 'string' && Array.isArray(value.items); }
+function migrateTrainingState(raw) { return raw && raw.version === TRAINING_STATE_VERSION ? raw : null; }
+const validateStart = source.indexOf('function validateTrainingState(');
+const validateEnd = source.indexOf('function loadTrainingState(');
+eval(source.slice(validateStart, validateEnd));
+const importStart = source.indexOf('function v25ImportedPlanEntries(');
+const importEnd = source.indexOf('function applyImportedTrainingState(');
+eval(source.slice(importStart, importEnd));
+
+const original = { id: 77, exercise_id: 1, name: '未来计划保真动作', sets: 4, reps: 8, duration_seconds: 75, notes: '不能丢失的原始备注', spec: '4 组 · 8 次 · 75 秒', video_url: null };
+const uiPlan = v25PlanToUi({ id: 9, title: '未来计划', theme: '原主题', focus: '原主题', notes: '计划原备注', template_id: 1, isTrainingDay: true, items: [original] }, 'planned');
+const backup = { version: 1, data: { calendarPlans: { '2026-10-03': uiPlan }, customTrainingPlans: {}, dailySessions: {} } };
+const validated = validateTrainingState(backup);
+const importedEntry = v25ImportedPlanEntries(validated)[0];
+const imported = importedEntry.items[0];
+if (imported.sets !== 4 || imported.reps !== 8 || imported.duration_seconds !== 75 || imported.notes !== original.notes || imported.spec !== original.spec || imported.exercise_id !== original.exercise_id || importedEntry.notes !== '计划原备注' || importedEntry.focus !== '原主题' || importedEntry.template_id !== 1) process.exit(1);
+console.log('PASS');
+"""
+    _assert_ok(_run(script))
+
+
+def test_van10_import_refreshes_today_and_loaded_month_cache():
+    """The real canonical refresh fetches all loaded months and today after import."""
+    script = r"""
+const fs = require('fs');
+const source = fs.readFileSync('static/index.html', 'utf8');
+var v25Remote = { ready: true, today: {id: 1, is_training: true, items: [{name:'旧动作'}]}, loadedMonths: {'2026-09': true}, exercises: [] };
+var todayPlan = [{name:'旧动作'}], todayIsRest = false, calls = [];
+function v25MonthForDate(key) { return String(key).slice(0, 7); }
+function v25TodayKey() { return '2026-09-30'; }
+function v25ApiFetch(path) {
+  calls.push(path);
+  if (path.indexOf('/api/plans/today') >= 0) return Promise.resolve({date:'2026-09-30', is_training:false, items:[]});
+  return Promise.resolve({days:[]});
+}
+function v25ApplyPlanDays() {}
+function renderTodayPlan() {}
+function renderWeek() {}
+function renderCalendarMonth() {}
+function saveTrainingState() {}
+const refreshStart = source.indexOf('function v25RefreshMonth(');
+const refreshEnd = source.indexOf('function v25SaveCanonicalPlan(');
+eval(source.slice(refreshStart, refreshEnd));
+v25RefreshCanonical(['2026-10-03'], {refreshLoaded:true, forceToday:true}).then(() => {
+  if (!calls.includes('/api/plans/month?month=2026-10')) process.exit(1);
+  if (!calls.includes('/api/plans/month?month=2026-09')) process.exit(2);
+  if (!calls.includes('/api/plans/today')) process.exit(3);
+  if (todayPlan.length !== 0 || !todayIsRest) process.exit(4);
+  console.log('PASS');
+}).catch(error => { console.error(error); process.exit(5); });
+"""
+    _assert_ok(_run(script))

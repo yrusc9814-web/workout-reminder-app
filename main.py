@@ -118,6 +118,43 @@ class NotificationPayload(BaseModel):
     force: bool = False
 
 
+class PlanItemPayload(BaseModel):
+    """A portable action snapshot used by the canonical plan write API."""
+
+    exercise_id: int | None = Field(default=None, ge=1)
+    name: str | None = Field(default=None, min_length=1, max_length=140)
+    sets: int = Field(default=1, ge=1, le=100)
+    reps: int | None = Field(default=None, ge=1, le=10000)
+    duration_seconds: int | None = Field(default=None, ge=1, le=86400)
+    notes: str | None = Field(default=None, max_length=2000)
+    video_url: str | None = Field(default=None, max_length=500)
+    spec: str | None = Field(default=None, max_length=240)
+
+
+class PlanSavePayload(BaseModel):
+    """Canonical date plan upsert payload."""
+
+    date: str
+    title: str | None = Field(default=None, max_length=120)
+    is_training_day: bool = True
+    focus: str | None = Field(default=None, max_length=160)
+    notes: str | None = Field(default=None, max_length=4000)
+    template_id: int | None = Field(default=None, ge=1)
+    items: list[PlanItemPayload] = Field(default_factory=list)
+
+
+class PlansImportPayload(BaseModel):
+    plans: list[PlanSavePayload] = Field(default_factory=list)
+    # Import replaces the complete pending date-plan snapshot.
+    # Historical rows with sessions/logs are retained intact.
+    replace_months: bool = True
+
+
+class PlanPostponePayload(BaseModel):
+    source_date: str
+    target_date: str
+
+
 def as_date(value) -> date:
     if isinstance(value, date):
         return value
@@ -166,6 +203,7 @@ def plan_item(plan: Optional[WorkoutPlan], day: date) -> dict:
             "items": [],
             "type": "rest",
             "is_training": False,
+            "template_id": None,
         }
 
     is_training = bool(plan.is_training_day)
@@ -188,12 +226,27 @@ def plan_item(plan: Optional[WorkoutPlan], day: date) -> dict:
                 "reps": item.reps,
                 "duration_seconds": item.duration_seconds,
                 "instructions": item.description,
+                "notes": item.description,
+                "spec": _plan_item_spec(item),
                 "video_url": item.video_url,
                 "sort_order": item.sort_order,
             }
             for item in items
         ],
     }
+
+
+def _plan_item_spec(item: WorkoutExercise) -> str:
+    if item.spec:
+        return item.spec
+    parts = []
+    if item.sets is not None:
+        parts.append(f"{item.sets} 组")
+    if item.reps is not None:
+        parts.append(f"{item.reps} 次")
+    if item.duration_seconds is not None:
+        parts.append(f"{item.duration_seconds} 秒" if item.duration_seconds < 60 else f"{round(item.duration_seconds / 60)} 分钟")
+    return " · ".join(parts)
 
 
 def range_rows(db: Session, start: date, end: date) -> dict:
@@ -1100,6 +1153,8 @@ class PlanUpdatePayload(BaseModel):
     focus: str | None = None
     notes: str | None = None
     template_id: int | None = None
+    exercise_ids: list[int] | None = None
+    items: list[PlanItemPayload] | None = None
 
 
 @app.put("/api/plans/{plan_id}")
@@ -1107,6 +1162,9 @@ def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(
     plan = db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="计划不存在")
+    payload_fields = getattr(payload, "model_fields_set", None)
+    if payload_fields is None:
+        payload_fields = getattr(payload, "__fields_set__", set())
     if payload.title is not None:
         plan.title = payload.title
     if payload.is_training_day is not None:
@@ -1116,8 +1174,24 @@ def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(
     if payload.notes is not None:
         plan.notes = payload.notes
 
+    # A complete action snapshot takes precedence over template-only switching.
+    if payload.items is not None or payload.exercise_ids is not None:
+        if payload.items is not None:
+            normalized_items = _resolve_plan_item_payloads(db, payload.items)
+        else:
+            normalized_items = _resolve_plan_item_payloads(
+                db,
+                [PlanItemPayload(exercise_id=exercise_id) for exercise_id in (payload.exercise_ids or [])],
+            )
+        if payload.is_training_day is not False and not normalized_items:
+            raise HTTPException(status_code=422, detail="训练日必须至少包含一个动作")
+        if payload.is_training_day is not False:
+            plan.is_training_day = True
+        plan.template_id = payload.template_id if payload.template_id is not None else None
+        _replace_plan_exercises(db, plan, normalized_items if plan.is_training_day else [])
+
     # Handle template switching: replace exercises with template's exercise list
-    if payload.template_id is not None:
+    elif payload.template_id is not None:
         plan.template_id = payload.template_id
         tmpl = db.query(Template).filter(Template.id == payload.template_id).first()
         if tmpl is None:
@@ -1138,6 +1212,9 @@ def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(
                 reps=_parse_reps(ex.default_reps),
                 video_url=ex.video_url,
             ))
+    elif "template_id" in payload_fields and payload.template_id is None:
+        # Explicit null clears a stale template binding without guessing one.
+        plan.template_id = None
 
     # Handle training day ↔ rest day conversion
     if payload.is_training_day is False:
@@ -1303,8 +1380,9 @@ class PlanGenerateRequest(BaseModel):
     date: str
     title: str | None = None
     theme: str | None = None
-    exerciseIds: list[int] = []
+    exerciseIds: list[int] = Field(default_factory=list)
     notes: str | None = None
+    is_training_day: bool = True
 
 
 class SessionStartRequest(BaseModel):
@@ -1368,6 +1446,116 @@ def _parse_reps(value: str | None) -> int | None:
     return int(number) if number else None
 
 
+def _resolve_plan_item_payloads(db: Session, items: list[PlanItemPayload]) -> list[dict]:
+    """Validate and normalize complete plan action snapshots before mutation."""
+    normalized: list[dict] = []
+    for item in items:
+        fields = getattr(item, "model_fields_set", set())
+        spec = item.spec or ""
+        spec_sets = re.search(r"(\d+)\s*组", spec)
+        spec_reps = re.search(r"(\d+)\s*次", spec)
+        spec_seconds = re.search(r"(\d+)\s*秒", spec)
+        spec_minutes = re.search(r"(\d+)\s*分钟", spec)
+        exercise = None
+        if item.exercise_id is not None:
+            exercise = db.query(Exercise).filter(Exercise.id == item.exercise_id).first()
+            if exercise is None:
+                raise HTTPException(status_code=404, detail=f"动作不存在：{item.exercise_id}")
+        elif item.name:
+            candidates = db.query(Exercise).filter(Exercise.name == item.name).all()
+            if len(candidates) == 1:
+                exercise = candidates[0]
+
+        name = (item.name or (exercise.name if exercise else "")).strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="每个计划动作必须提供 exercise_id 或 name")
+
+        sets = item.sets if "sets" in fields else (int(spec_sets.group(1)) if spec_sets else (exercise.default_sets if exercise else item.sets))
+        reps = item.reps if "reps" in fields else (int(spec_reps.group(1)) if spec_reps else (_parse_reps(exercise.default_reps) if exercise else item.reps))
+        duration_seconds = item.duration_seconds if "duration_seconds" in fields else (int(spec_seconds.group(1)) if spec_seconds else (int(spec_minutes.group(1)) * 60 if spec_minutes else (exercise.duration_seconds if exercise else item.duration_seconds)))
+        description = item.notes if "notes" in fields else (exercise.notes if exercise else "")
+        video_url = item.video_url if "video_url" in fields else (exercise.video_url if exercise else None)
+        normalized.append(
+            {
+                "exercise_id": exercise.id if exercise else item.exercise_id,
+                "name": name,
+                "description": description if description is not None else "",
+                "sets": sets,
+                "duration_seconds": duration_seconds,
+                "reps": reps,
+                "video_url": video_url,
+                "spec": item.spec if "spec" in fields else None,
+            }
+        )
+    return normalized
+
+
+def _replace_plan_exercises(db: Session, plan: WorkoutPlan, items: list[dict]) -> None:
+    """Replace the full action snapshot while respecting the sort-order key."""
+    for existing in list(plan.exercises):
+        db.delete(existing)
+    db.flush()
+    for index, item in enumerate(items, start=1):
+        db.add(
+            WorkoutExercise(
+                plan_id=plan.id,
+                exercise_id=item["exercise_id"],
+                sort_order=index,
+                name=item["name"],
+                description=item["description"],
+                sets=item["sets"],
+                duration_seconds=item["duration_seconds"],
+                reps=item["reps"],
+                video_url=item["video_url"],
+                spec=item.get("spec"),
+            )
+        )
+
+
+def _upsert_plan_snapshot(
+    db: Session,
+    payload: PlanSavePayload,
+    *,
+    forced_date: date | None = None,
+) -> WorkoutPlan:
+    """Upsert one date and replace its complete action snapshot atomically."""
+    plan_date = forced_date or date_from_iso(payload.date)
+    normalized_items = _resolve_plan_item_payloads(db, payload.items if payload.is_training_day else [])
+    if payload.is_training_day and not normalized_items:
+        raise HTTPException(status_code=422, detail="训练日必须至少包含一个动作")
+
+    plan = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == plan_date).first()
+    if plan is None:
+        plan = WorkoutPlan(
+            plan_date=plan_date,
+            title=payload.title or ("训练计划" if payload.is_training_day else "恢复日"),
+            is_training_day=payload.is_training_day,
+            focus=payload.focus or ("训练建议" if payload.is_training_day else "恢复与轻量活动"),
+            notes=payload.notes or "",
+        )
+        db.add(plan)
+        db.flush()
+    else:
+        if payload.title is not None:
+            plan.title = payload.title
+        if payload.focus is not None:
+            plan.focus = payload.focus
+        if payload.notes is not None:
+            plan.notes = payload.notes
+        plan.is_training_day = payload.is_training_day
+
+    if payload.template_id is not None:
+        template = db.query(Template).filter(Template.id == payload.template_id).first()
+        if template is None:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        plan.template_id = template.id
+    else:
+        plan.template_id = None
+
+    _replace_plan_exercises(db, plan, normalized_items)
+    return plan
+
+
 def plan_to_v31_dict(plan: WorkoutPlan) -> dict:
     items = [
         {
@@ -1378,6 +1566,7 @@ def plan_to_v31_dict(plan: WorkoutPlan) -> dict:
             "sets": item.sets,
             "reps": item.reps,
             "durationSeconds": item.duration_seconds,
+            "spec": _plan_item_spec(item),
             "videoUrl": item.video_url,
             "notes": item.description,
         }
@@ -1546,27 +1735,151 @@ def list_v31_plans(date: str | None = Query(None), db: Session = Depends(get_db)
     return {"plans": [plan_to_v31_dict(plan) for plan in query.all()]}
 
 
+@app.put("/api/plans/by-date/{plan_date}")
+def save_plan_by_date(plan_date: str, payload: PlanSavePayload, db: Session = Depends(get_db)) -> dict:
+    """Canonical plan write used by all date-based editing flows."""
+    target_date = date_from_iso(plan_date)
+    try:
+        plan = _upsert_plan_snapshot(db, payload, forced_date=target_date)
+        db.commit()
+        db.refresh(plan)
+    except Exception:
+        db.rollback()
+        raise
+    day = plan_item(plan, target_date)
+    return {"status": "saved", "plan": day, "day": day}
+
+
+@app.post("/api/plans/import")
+def import_plans(payload: PlansImportPayload, db: Session = Depends(get_db)) -> dict:
+    """Import complete date snapshots in one SQLite transaction."""
+    dates = [date_from_iso(item.date) for item in payload.plans]
+    if len(set(dates)) != len(dates):
+        raise HTTPException(status_code=422, detail="导入计划中不能重复出现同一天")
+    try:
+        if payload.replace_months:
+            imported_dates = set(dates)
+            existing = db.query(WorkoutPlan).all()
+            for plan in existing:
+                if as_date(plan.plan_date) in imported_dates or plan.sessions or plan.logs:
+                    continue
+                plan.is_training_day = False
+                plan.template_id = None
+                plan.title = "恢复日"
+                plan.focus = "恢复与轻量活动"
+                plan.notes = ""
+                _replace_plan_exercises(db, plan, [])
+        saved = []
+        for item, target_date in zip(payload.plans, dates):
+            plan = _upsert_plan_snapshot(db, item, forced_date=target_date)
+            saved.append((plan, target_date))
+        db.commit()
+        for plan, _target_date in saved:
+            db.refresh(plan)
+    except Exception:
+        db.rollback()
+        raise
+    return {
+        "status": "saved",
+        "plans": [plan_item(plan, target_date) for plan, target_date in saved],
+    }
+
+
+@app.post("/api/plans/postpone")
+def postpone_plan(payload: PlanPostponePayload, db: Session = Depends(get_db)) -> dict:
+    """Move one pending plan to another date and restore the source date atomically."""
+    source_date = date_from_iso(payload.source_date)
+    target_date = date_from_iso(payload.target_date)
+    if source_date == target_date:
+        raise HTTPException(status_code=422, detail="推迟目标日期必须不同于原日期")
+
+    source = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == source_date).first()
+    if source is None or not source.is_training_day:
+        raise HTTPException(status_code=404, detail="原日期没有可推迟的训练计划")
+    if source.sessions or source.logs:
+        raise HTTPException(status_code=409, detail="已有训练记录的计划不能推迟")
+
+    target = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == target_date).first()
+    if target is not None and target.is_training_day:
+        raise HTTPException(status_code=409, detail="目标日期已有训练计划")
+    if target is not None and (target.sessions or target.logs):
+        raise HTTPException(status_code=409, detail="目标日期已有训练记录，不能覆盖")
+
+    source_items = [
+        {
+            "exercise_id": item.exercise_id,
+            "name": item.name,
+            "description": item.description,
+            "sets": item.sets,
+            "duration_seconds": item.duration_seconds,
+            "reps": item.reps,
+            "video_url": item.video_url,
+            "spec": item.spec,
+        }
+        for item in sorted(source.exercises, key=lambda row: row.sort_order or 0)
+    ]
+    if target is None:
+        target = WorkoutPlan(
+            plan_date=target_date,
+            title=source.title,
+            is_training_day=True,
+            focus=source.focus,
+            notes=source.notes,
+        )
+        db.add(target)
+        db.flush()
+    else:
+        target.title = source.title
+        target.is_training_day = True
+        target.focus = source.focus
+        target.notes = source.notes
+
+    target.template_id = source.template_id
+    _replace_plan_exercises(db, target, source_items)
+
+    source.is_training_day = False
+    source.template_id = None
+    source.title = "恢复日"
+    source.focus = "恢复与轻量活动"
+    source.notes = f"原训练计划已推迟到 {target_date.isoformat()}。"
+    _replace_plan_exercises(db, source, [])
+
+    try:
+        db.commit()
+        db.refresh(source)
+        db.refresh(target)
+    except Exception:
+        db.rollback()
+        raise
+    return {
+        "status": "saved",
+        "source": plan_item(source, source_date),
+        "target": plan_item(target, target_date),
+    }
+
+
 @app.post("/api/plans/generate")
 def generate_plan(payload: PlanGenerateRequest, db: Session = Depends(get_db)) -> dict:
     plan_date = date_from_iso(payload.date)
     plan = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == plan_date).first()
     if plan is None:
-        plan = WorkoutPlan(plan_date=plan_date, title=payload.title or "生成训练计划", is_training_day=True, focus=payload.theme or "训练建议", notes=payload.notes or "")
+        plan = WorkoutPlan(plan_date=plan_date, title=payload.title or ("生成训练计划" if payload.is_training_day else "恢复日"), is_training_day=payload.is_training_day, focus=payload.theme or ("训练建议" if payload.is_training_day else "恢复与轻量活动"), notes=payload.notes or "")
         db.add(plan)
         db.flush()
     else:
         plan.title = payload.title or plan.title
-        plan.is_training_day = True
+        plan.is_training_day = payload.is_training_day
         plan.focus = payload.theme or plan.focus
         plan.notes = payload.notes if payload.notes is not None else plan.notes
         for item in list(plan.exercises):
             db.delete(item)
         db.flush()
-    for idx, exercise_id in enumerate(payload.exerciseIds, start=1):
-        exercise = db.query(Exercise).filter(Exercise.id == exercise_id).first()
-        if not exercise:
-            raise HTTPException(status_code=404, detail=f"动作不存在：{exercise_id}")
-        db.add(WorkoutExercise(plan_id=plan.id, exercise_id=exercise.id, sort_order=idx, name=exercise.name, description=exercise.notes or "", sets=exercise.default_sets, duration_seconds=exercise.duration_seconds, reps=_parse_reps(exercise.default_reps), video_url=exercise.video_url))
+    if payload.is_training_day:
+        for idx, exercise_id in enumerate(payload.exerciseIds, start=1):
+            exercise = db.query(Exercise).filter(Exercise.id == exercise_id).first()
+            if not exercise:
+                raise HTTPException(status_code=404, detail=f"动作不存在：{exercise_id}")
+            db.add(WorkoutExercise(plan_id=plan.id, exercise_id=exercise.id, sort_order=idx, name=exercise.name, description=exercise.notes or "", sets=exercise.default_sets, duration_seconds=exercise.duration_seconds, reps=_parse_reps(exercise.default_reps), video_url=exercise.video_url))
     # Bind template_id when the exercise set uniquely matches a template
     wanted = frozenset(payload.exerciseIds)
     matches = []
@@ -1574,7 +1887,7 @@ def generate_plan(payload: PlanGenerateRequest, db: Session = Depends(get_db)) -
         tmpl_ids = frozenset(ex.id for ex in tmpl.exercises)
         if tmpl_ids and tmpl_ids == wanted:
             matches.append(tmpl.id)
-    plan.template_id = matches[0] if len(matches) == 1 else None
+    plan.template_id = matches[0] if payload.is_training_day and len(matches) == 1 else None
     db.commit()
     db.refresh(plan)
     return {"status": "ok", "plan": plan_to_v31_dict(plan)}
