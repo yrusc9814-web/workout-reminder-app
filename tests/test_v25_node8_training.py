@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-V25_SOURCE = Path(r"D:\Vanta-pro\轻动日记\v25\轻动日记-v25.html")
+V25_SOURCE = Path(__file__).resolve().parents[1] / "static" / "index.html"
 
 
 def test_v25_uses_unified_session_completion_contract():

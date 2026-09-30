@@ -59,9 +59,9 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-# v25 rehearsal preview only: the single source remains in the design workspace.
-V25_PREVIEW_SOURCE = Path(r"D:\Vanta-pro\轻动日记\v25\轻动日记-v25.html")
-V25_ASSETS_DIR = V25_PREVIEW_SOURCE.parent / "assets"
+# Keep the rehearsal preview backed by the tracked v25 page and assets.
+V25_PREVIEW_SOURCE = STATIC_DIR / "index.html"
+V25_ASSETS_DIR = STATIC_DIR / "assets"
 app.mount("/v25-preview/assets", StaticFiles(directory=V25_ASSETS_DIR), name="v25-preview-assets")
 
 
