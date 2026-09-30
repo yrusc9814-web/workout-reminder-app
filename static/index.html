@@ -4316,6 +4316,7 @@
         var statusPill = todayPlanEl('todayStatusPill');
         var countPill = todayPlanEl('todayCountPill');
         var startBtn = todayPlanEl('startTodayBtn');
+        var doneForUi = v25UiDoneConfirmed();
         var duration = todayPlan.reduce(function(sum, item) { return sum + item.time; }, 0);
         if (todayStepIndex >= todayPlan.length) todayStepIndex = Math.max(0, todayPlan.length - 1);
 
@@ -4357,13 +4358,14 @@
         if (title) title.textContent = source + ' · ' + duration + ' 分钟';
         if (meta) meta.textContent = todayPlan.map(function(item) { return item.name; }).join('、') + ' · ' + aggregateIntensity();
         if (statusPill) {
-          statusPill.textContent = todayDone ? '已完成' : (todayStarted ? '进行中' : '待开始');
+          statusPill.textContent = doneForUi ? '已完成' : (todayStarted ? '进行中' : '待开始');
           statusPill.className = 'pill live';
         }
         if (countPill) countPill.textContent = todayPlan.length + ' 动作';
         if (startBtn) {
-          startBtn.disabled = todayDone;
-          startBtn.textContent = todayDone ? '✓ 今日已完成'
+          startBtn.disabled = doneForUi || v25RemoteProgressPending;
+          startBtn.textContent = v25RemoteProgressPending ? '同步中…'
+            : doneForUi ? '✓ 今日已完成'
             : (!todayStarted ? '开始训练'
             : (todayStepIndex < todayPlan.length - 1 ? '完成本步 · 下一步' : '完成今日训练'));
         }
@@ -4454,6 +4456,10 @@
             v25RemoteSessionId = null;
             v25RemoteSessionPromise = null;
             v25RemoteStepPromise = Promise.resolve();
+            v25RemoteProgressPending = false;
+            v25RemoteFinalUpdateConfirmed = false;
+            v25RemoteStatusVerified = true;
+            v25LocalDoneAwaitingVerification = false;
             v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
           }).catch(function (error) { showToast(error.message || '训练方案保存失败', 'error'); });
           return;
@@ -4596,7 +4602,7 @@
         };
         // P1-2：日计划执行上下文且今日未完成 → 「完成跟练」推进真实训练；
         // 否则主按钮只负责「关闭」，绝不在非执行上下文修改 todaySession。
-        if (playerContext.source === 'today' && !todayDone) {
+        if (playerContext.source === 'today' && !v25UiDoneConfirmed()) {
           phase2PlayerComplete.textContent = '完成跟练';
         } else {
           phase2PlayerComplete.textContent = '关闭';
@@ -4644,8 +4650,24 @@
       phase2PlayerComplete.addEventListener('click', function() {
         // P1-2：仅「今日训练执行」上下文推进真实训练状态（每次至多推进一次）；
         // 动作库等非执行上下文只关闭播放器，不触碰 todaySession。
-        if (playerContext && playerContext.source === 'today' && !todayDone) {
-          advanceTodayTraining();
+        if (playerContext && playerContext.source === 'today' && !v25UiDoneConfirmed()) {
+          var advanceResult = advanceTodayTraining();
+          if (advanceResult && typeof advanceResult.then === 'function') {
+            phase2PlayerComplete.disabled = true;
+            advanceResult.then(function(ok) {
+              phase2PlayerComplete.disabled = false;
+              if (ok) {
+                closePhase2Player();
+              } else {
+                phase2PlayerComplete.textContent = '重试同步';
+              }
+            });
+            return;
+          }
+          if (advanceResult === false) {
+            phase2PlayerComplete.textContent = '重试同步';
+            return;
+          }
         }
         closePhase2Player();
       });
@@ -4666,23 +4688,43 @@
       // ═══════════════════════════════════════════════════════════
       // 今日训练统一推进逻辑（开始 / 推进 / 完成）。
       // 「开始训练」按钮与播放器「完成跟练」共用同一份逻辑，避免出现两套 completion 规则；
-      // 每次调用至多推进一次状态并立即持久化 + 刷新 UI（防重复推进）。
+      // 只有后端确认 update（以及最后一步的 complete）成功后，才持久化 + 刷新 UI。
       function advanceTodayTraining() {
-        if (!todayPlan.length || todayDone) return false;
+        if (!todayPlan.length || v25UiDoneConfirmed() || v25RemoteProgressPending) return false;
+        if (!v25Remote.ready) {
+          showToast('后端未连接，训练进度未保存，请重试', 'error');
+          return false;
+        }
         var completedIndex = todayStepIndex;
+        var nextStepIndex = todayStepIndex;
+        var nextDone = false;
         if (!todayStarted) {
-          todayStarted = true;                       // 首次：开始训练
+          // 首次点击仍需先把当前动作同步成功，之后才进入进行中。
         } else if (todayStepIndex < todayPlan.length - 1) {
           completedIndex = todayStepIndex;
-          todayStepIndex += 1;                       // 推进到下一步
+          nextStepIndex += 1;                        // 后端成功后推进到下一步
         } else {
           completedIndex = todayStepIndex;
-          todayDone = true;                          // 最后一步：完成今日训练
+          nextDone = true;                           // 后端 complete 成功后才进入完成态
         }
-        saveTrainingState();                         // P0-2：每次状态变更后立即持久化
+        v25RemoteProgressPending = true;
         renderTodayPlan();
-        v25QueueRemoteProgress(completedIndex, todayDone);
-        return true;
+        return v25QueueRemoteProgress(completedIndex, nextDone).then(function() {
+          todayStarted = true;
+          todayStepIndex = nextStepIndex;
+          todayDone = nextDone;
+          v25RemoteStatusVerified = true;
+          v25LocalDoneAwaitingVerification = false;
+          v25RemoteProgressPending = false;
+          saveTrainingState();
+          renderTodayPlan();
+          return true;
+        }).catch(function(error) {
+          v25RemoteProgressPending = false;
+          renderTodayPlan();
+          showToast('训练保存失败：' + (error && error.message ? error.message : '请重试'), 'error');
+          return false;
+        });
       }
       // 新建训练方案：复用现有 modal。动作从现有动作库（exerciseDetails）选择，
       // 不引入与 exerciseDetails 脱节的自定义数据结构。
@@ -5008,7 +5050,7 @@
         }
         if (target.id === 'startTodayBtn') {
           if (!todayPlan.length) return;
-          if (todayDone) { return; }
+          if (v25UiDoneConfirmed()) { return; }
           if (target.getAttribute('data-started') !== '1') target.setAttribute('data-started', '1');
           advanceTodayTraining(); // P1-2：与播放器「完成跟练」共用同一推进逻辑（开始/推进/完成 + 立即持久化 + 刷新）
           return;
@@ -5309,6 +5351,7 @@
       // ── v25 rehearsal API 接线层：同源服务优先，localStorage 仅作离线 fallback ──
       var v25Remote = { ready: false, today: null, calendar: {}, calendarDays: {}, planDays: {}, loadedMonths: {}, stats: null, weekStats: null, exercises: [], templates: [], favorites: [] };
       var v25RemotePlanId = null, v25RemotePlanPromise = null, v25RemoteSessionId = null, v25RemoteSessionPromise = null, v25RemoteStepPromise = Promise.resolve(), v25RemoteCompleted = false;
+      var v25RemoteProgressPending = false, v25RemoteFinalUpdateConfirmed = false, v25RemoteStatusVerified = false, v25LocalDoneAwaitingVerification = false;
       function v25ApiFetch(path, options) {
         var opts = options || {};
         opts.headers = Object.assign({ 'Accept': 'application/json', 'Content-Type': 'application/json' }, opts.headers || {});
@@ -5544,6 +5587,45 @@
         var minutes = duration ? Math.max(1, Math.round(duration / 60)) : Math.max(5, items.length * 5);
         return { id: plan.id, title: plan.title || '训练计划', status: status || (plan.isTrainingDay ? 'planned' : 'rest'), label: status === 'done' ? '已完成' : '计划中', time: minutes, intensity: '低强度', body: plan.theme || plan.focus || '全身', focus: plan.focus || plan.theme || '', notes: plan.notes || '', templateId: plan.template_id != null ? String(plan.template_id) : null, items: items, itemRecords: itemRecords, remote: true };
       }
+      function v25BackendStatusForDay(detail, dateKey) {
+        var days = detail && Array.isArray(detail.days) ? detail.days : [];
+        var match = days.find(function (day) { return day && day.date === dateKey; });
+        return match ? match.status : null;
+      }
+      function v25ReconcileTodaySession(remoteSession, planItems, source, isRest, backendStatusKnown, backendDone) {
+        var previous = remoteSession || {};
+        var items = (planItems || []).map(function (item) {
+          return {
+            id: item.id != null ? item.id : null,
+            name: item.name,
+            exerciseId: item.exerciseId != null ? item.exerciseId : null,
+            sets: item.sets != null ? item.sets : null,
+            reps: item.reps != null ? item.reps : null,
+            duration_seconds: item.duration_seconds != null ? item.duration_seconds : null,
+            notes: item.notes != null ? item.notes : null,
+            spec: item.spec || '',
+            time: item.time
+          };
+        });
+        var reconciledDone = !!backendStatusKnown && !!backendDone;
+        return {
+          items: items,
+          source: source || '',
+          stepIndex: Math.min(previous.stepIndex || 0, Math.max(0, items.length - 1)),
+          started: reconciledDone || !!previous.started,
+          done: reconciledDone,
+          rest: !!isRest,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      function v25UiDoneConfirmed() {
+        return !!todayDone && !!v25RemoteStatusVerified;
+      }
+      function v25ResetUnverifiedDone() {
+        v25LocalDoneAwaitingVerification = !!todayDone;
+        todayDone = false;
+        v25RemoteStatusVerified = false;
+      }
       function v25ApplyCalendar(calendar, detail) {
         var statusByDate = {};
         (detail && detail.days || []).forEach(function (day) { statusByDate[day.date] = day.status; });
@@ -5599,27 +5681,55 @@
         renderTrainingPlans();
       }
       function v25ToggleFavorite(name) {
-        var index = favorites.indexOf(name), remove = index >= 0;
-        if (remove) favorites.splice(index, 1); else favorites.push(name);
-        saveFavorites(); renderFavorites();
-        if (!v25Remote.ready) return;
+        if (!name) return Promise.resolve(false);
+        var remove = favorites.indexOf(name) >= 0;
+        if (!v25Remote.ready) {
+          showToast('后端未连接，收藏未保存，请重试', 'error');
+          return Promise.resolve(false);
+        }
         var path = '/api/favorites/' + encodeURIComponent(name);
-        v25ApiFetch(remove ? path : '/api/favorites', remove ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ exercise_name: name }) }).catch(function () {});
+        return v25ApiFetch(remove ? path : '/api/favorites', remove ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ exercise_name: name }) }).then(function () {
+          var index = favorites.indexOf(name);
+          if (remove) {
+            if (index >= 0) favorites.splice(index, 1);
+          } else if (index < 0) {
+            favorites.push(name);
+          }
+          saveFavorites();
+          renderFavorites();
+          return true;
+        }).catch(function (error) {
+          renderFavorites();
+          showToast('收藏同步失败：' + (error && error.message ? error.message : '请重试'), 'error');
+          return false;
+        });
       }
       function v25EnsureRemotePlan(plan) {
-        if (!v25Remote.ready || !plan) return Promise.resolve(null);
+        if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，训练计划未保存'));
+        if (!plan) return Promise.reject(new Error('缺少训练计划，无法同步'));
         if (plan.remote && typeof plan.id === 'number') { v25RemotePlanId = plan.id; return Promise.resolve(plan.id); }
         var names = (plan.items || []).map(function (x) { return String(x).split(' · ')[0]; });
         var ids = names.map(function (name) { var ex = v25Remote.exercises.find(function (row) { return row.name === name; }); return ex && ex.id; }).filter(function (id) { return id != null; });
-        v25RemotePlanPromise = v25ApiFetch('/api/plans/generate', { method: 'POST', body: JSON.stringify({ date: formatDateKey(getToday()), title: plan.title, theme: plan.scene || '训练', exerciseIds: ids, notes: plan.reason || '' }) }).then(function (body) { v25RemotePlanId = body.plan && body.plan.id; return v25RemotePlanId; }).catch(function () { return null; });
+        if (!ids.length) return Promise.reject(new Error('训练计划缺少可同步动作'));
+        var request = v25ApiFetch('/api/plans/generate', { method: 'POST', body: JSON.stringify({ date: formatDateKey(getToday()), title: plan.title, theme: plan.scene || '训练', exerciseIds: ids, notes: plan.reason || '' }) }).then(function (body) {
+          v25RemotePlanId = body.plan && body.plan.id;
+          if (!v25RemotePlanId) throw new Error('后端未返回训练计划 ID');
+          return v25RemotePlanId;
+        });
+        v25RemotePlanPromise = request.catch(function (error) {
+          v25RemotePlanPromise = null;
+          throw error;
+        });
         return v25RemotePlanPromise;
       }
       function v25EnsureRemoteSession() {
-        if (!v25Remote.ready || !v25RemotePlanId) return Promise.resolve(null);
+        if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，训练会话未保存'));
+        if (!v25RemotePlanId) return Promise.reject(new Error('训练计划未确认，无法创建训练会话'));
         if (v25RemoteSessionId) return Promise.resolve(v25RemoteSessionId);
         if (v25RemoteSessionPromise) return v25RemoteSessionPromise;
         v25RemoteSessionPromise = v25ApiFetch('/api/session/start', { method: 'POST', body: JSON.stringify({ plan_id: v25RemotePlanId }) }).then(function (body) {
           v25RemoteSessionId = body.session && body.session.id;
+          if (!v25RemoteSessionId) throw new Error('后端未返回训练会话 ID');
           return v25RemoteSessionId;
         }).catch(function (error) {
           v25RemoteSessionPromise = null;
@@ -5636,29 +5746,56 @@
       }
       function v25SyncRemoteRecord(index, status) {
         var exerciseId = v25RemoteExerciseId(index);
-        if (exerciseId == null) return Promise.resolve(null);
+        if (exerciseId == null) return Promise.reject(new Error('当前动作未绑定后端动作 ID'));
         var planReady = v25RemotePlanPromise || Promise.resolve(v25RemotePlanId);
-        return planReady.then(function () { return v25EnsureRemoteSession(); }).then(function (sessionId) {
-          if (!sessionId) return null;
+        return planReady.then(function (planId) {
+          if (!planId) throw new Error('训练计划保存失败，无法同步动作进度');
+          return v25EnsureRemoteSession();
+        }).then(function (sessionId) {
+          if (!sessionId) throw new Error('训练会话保存失败，无法同步动作进度');
           return v25ApiFetch('/api/session/update', { method: 'POST', body: JSON.stringify({ session_id: sessionId, exercise_id: exerciseId, status: status, sets_completed: status === 'completed' ? 1 : null }) });
+        }).then(function (result) {
+          if (!result || result.status !== 'updated') throw new Error('后端未确认动作进度已保存');
+          return result;
         });
       }
       function v25CompleteRemoteSession() {
-        if (!v25Remote.ready || v25RemoteCompleted) return Promise.resolve(null);
+        if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，训练完成未保存'));
+        if (v25RemoteCompleted) return Promise.resolve({ status: 'already_completed' });
         v25RemoteCompleted = true;
         return v25EnsureRemoteSession().then(function (sessionId) {
-          if (!sessionId) return null;
+          if (!sessionId) throw new Error('训练会话保存失败，无法完成训练');
           return v25ApiFetch('/api/session/complete', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) });
+        }).then(function (result) {
+          if (!result || (result.status !== 'completed' && result.status !== 'already_completed')) {
+            throw new Error('后端未确认训练已完成');
+          }
+          return result;
         }).catch(function (error) {
           v25RemoteCompleted = false;
           throw error;
         });
       }
       function v25QueueRemoteProgress(index, isFinal) {
-        v25RemoteStepPromise = v25RemoteStepPromise.then(function () { return v25SyncRemoteRecord(index, 'completed'); }).then(function () {
-          return isFinal ? v25CompleteRemoteSession() : null;
-        }).catch(function () { return null; });
-        return v25RemoteStepPromise;
+        var attempt = v25RemoteStepPromise.then(function () {
+          // If the final update was confirmed but the complete response was lost,
+          // retry complete directly. Repeating update would now return 422.
+          if (isFinal && v25RemoteFinalUpdateConfirmed) return null;
+          return v25SyncRemoteRecord(index, 'completed').then(function (result) {
+            if (isFinal) v25RemoteFinalUpdateConfirmed = true;
+            return result;
+          });
+        }).then(function (updateResult) {
+          if (!isFinal) return updateResult;
+          return v25CompleteRemoteSession().then(function (completeResult) {
+            v25RemoteFinalUpdateConfirmed = false;
+            return { update: updateResult, complete: completeResult };
+          });
+        });
+        // Keep the queue retryable after a failed attempt while returning the
+        // original rejection to the caller for visible failure feedback.
+        v25RemoteStepPromise = attempt.catch(function () { return null; });
+        return attempt;
       }
       function v25MigrationPreview() {
         v25ApiFetch('/api/migration/catalog/v24/preview', { method: 'POST' }).then(function (data) {
@@ -5677,7 +5814,24 @@
         var month = formatDateKey(getToday()).slice(0, 7), todayKey = formatDateKey(getToday());
         var jobs = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month].map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data }; }).catch(function () { return { ok: false, data: null }; }); });
         return Promise.all(jobs).then(function (results) {
-          if (!results[0].ok && !results[1].ok) return;
+          if (!results[0].ok && !results[1].ok) {
+            // A local done flag is not enough to claim completion when the
+            // backend cannot be reached to verify it.
+            if (v25LocalDoneAwaitingVerification || todayDone) {
+              todayDone = false;
+              v25RemoteStatusVerified = false;
+              v25LocalDoneAwaitingVerification = false;
+              v25RemoteProgressPending = false;
+              saveTrainingState();
+              renderTodayPlan();
+              showToast('后端暂时无法确认训练状态，未显示完成', 'error');
+            }
+            return;
+          }
+          var todayStatusKnown = results[3].ok;
+          var todayBackendStatus = todayStatusKnown ? v25BackendStatusForDay(results[3].data, todayKey) : null;
+          var todayBackendDone = todayStatusKnown && todayBackendStatus === 'completed';
+          v25RemoteStatusVerified = todayStatusKnown;
           v25Remote.ready = true;
           v25Remote.today = results[0].data;
           v25Remote.calendar = results[1].data;
@@ -5694,23 +5848,27 @@
             todayPlan.source = v25Remote.today.title; todayIsRest = false;
           } else { todayPlan = []; todayIsRest = true; }
           if (todaySessionKey) {
-            var remoteSession = dailySessions[todaySessionKey] || {};
-            dailySessions[todaySessionKey] = {
-              items: todayPlan.map(function (item) { return { id:item.id != null ? item.id : null, name:item.name, exerciseId:item.exerciseId != null ? item.exerciseId : null, sets:item.sets != null ? item.sets : null, reps:item.reps != null ? item.reps : null, duration_seconds:item.duration_seconds != null ? item.duration_seconds : null, notes:item.notes != null ? item.notes : null, spec:item.spec || '', time:item.time }; }),
-              source: todayPlan.source || '',
-              stepIndex: Math.min(remoteSession.stepIndex || 0, Math.max(0, todayPlan.length - 1)),
-              started: !!remoteSession.started,
-              done: !!remoteSession.done,
-              rest: !!todayIsRest,
-              updatedAt: new Date().toISOString()
-            };
+            var reconciledSession = v25ReconcileTodaySession(dailySessions[todaySessionKey], todayPlan, todayPlan.source || '', todayIsRest, todayStatusKnown, todayBackendDone);
+            dailySessions[todaySessionKey] = reconciledSession;
+            if (todaySessionKey === todayKey) {
+              // Only the backend completion log may establish todayDone.
+              todayStarted = reconciledSession.started;
+              todayDone = reconciledSession.done;
+            }
           }
+          if (!todayStatusKnown && v25LocalDoneAwaitingVerification) {
+            showToast('后端暂时无法确认训练状态，未显示完成', 'error');
+          }
+          v25LocalDoneAwaitingVerification = false;
           renderTodayPlan(); renderWeek(); renderCalendarMonth(); v25ApplyStats(v25Remote.stats);
           saveTrainingState();
         });
       }
       // P0-2：启动前同步 hydrate（内置 seed → load → validate/migrate → 合并 customs → 恢复今日 session）
       hydrateTrainingState();
+      // localStorage 的 done 只能作为待核验线索；首次渲染前先隔离，
+      // 避免后端尚未返回时短暂显示“今日已完成”。
+      v25ResetUnverifiedDone();
       renderTrainingPlans();
       // ── 日计划三级默认加载 ──
       function initTodayFromCalendar() {
