@@ -2270,6 +2270,7 @@
     .day-hero .progress-seg { border-radius: 999px; background: var(--surface-3); min-height: 6px; }
     .day-hero .progress-seg.current { background: linear-gradient(90deg, var(--sage), #9ec069); }
     .day-hero .progress-seg.done { background: rgba(124,185,168,.55); }
+    .day-hero .progress-seg.skipped { background: rgba(232,168,124,.72); }
     .day-hero .progress-steps {
       display: grid; gap: 3px; margin-top: 6px;
     }
@@ -2698,6 +2699,7 @@
           </div>
           <div class="hero-actions">
             <button class="btn primary" type="button" id="startTodayBtn">开始训练</button>
+            <button class="btn ghost" type="button" id="skipTodayBtn">跳过当前动作</button>
             <button class="btn ghost" type="button" data-view="library">＋ 从动作库添加</button>
           </div>
         </div>
@@ -3962,10 +3964,42 @@
             });
             var stepIndex = (typeof s.stepIndex === 'number' && s.stepIndex >= 0 && Math.floor(s.stepIndex) === s.stepIndex)
               ? Math.min(s.stepIndex, Math.max(0, items.length - 1)) : 0;
+            var setIndex = (typeof s.setIndex === 'number' && s.setIndex >= 0 && Math.floor(s.setIndex) === s.setIndex)
+              ? s.setIndex : 0;
+            var actionElapsedSeconds = (typeof s.actionElapsedSeconds === 'number' && s.actionElapsedSeconds >= 0)
+              ? Math.floor(s.actionElapsedSeconds) : 0;
+            var actionStartedAt = (typeof s.actionStartedAt === 'number' && s.actionStartedAt > 0)
+              ? s.actionStartedAt : null;
+            var skipped = Array.isArray(s.skipped) ? s.skipped.filter(function (index) {
+              return typeof index === 'number' && index >= 0 && index < items.length && Math.floor(index) === index;
+            }) : [];
+            var records = Array.isArray(s.records) ? s.records.map(function (record) {
+              if (!record || typeof record !== 'object') return null;
+              var status = record.status === 'completed' || record.status === 'skipped' ? record.status : 'pending';
+              return {
+                status: status,
+                setsCompleted: typeof record.setsCompleted === 'number' && record.setsCompleted >= 0 ? Math.floor(record.setsCompleted) : 0,
+                durationSeconds: typeof record.durationSeconds === 'number' && record.durationSeconds >= 0 ? Math.floor(record.durationSeconds) : null
+              };
+            }) : [];
+            var pending = s.pending && typeof s.pending === 'object' && typeof s.pending.index === 'number'
+              && typeof s.pending.setsCompleted === 'number' && typeof s.pending.durationSeconds === 'number'
+              ? {
+                index: Math.max(0, Math.floor(s.pending.index)),
+                setsCompleted: Math.max(0, Math.floor(s.pending.setsCompleted)),
+                durationSeconds: Math.max(0, Math.floor(s.pending.durationSeconds)),
+                status: s.pending.status === 'skipped' ? 'skipped' : (s.pending.status === 'completed' ? 'completed' : 'pending')
+              } : null;
             out.dailySessions[k] = {
               items: items,
               source: typeof s.source === 'string' ? s.source : '',
               stepIndex: stepIndex,
+              setIndex: setIndex,
+              actionElapsedSeconds: actionElapsedSeconds,
+              actionStartedAt: actionStartedAt,
+              skipped: skipped,
+              records: records,
+              pending: pending,
               started: !!s.started,
               done: !!s.done,
               rest: !!s.rest,
@@ -4039,6 +4073,12 @@
           items: todayPlan.map(function (it) { return { id: it.id != null ? it.id : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : null, sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : null, notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : null, spec: it.spec || '', time: it.time }; }),
           source: todayPlan.source || '',   // 数组自定义 source 显式拆出持久化，避免 JSON 序列化丢失
           stepIndex: todayStepIndex,
+          setIndex: todaySetIndex,
+          actionElapsedSeconds: todayActionElapsedSeconds,
+          actionStartedAt: todayActionStartedAt,
+          skipped: todaySkipped.slice(),
+          records: todayRecordFacts.map(function (record) { return record ? clonePlain(record) : null; }),
+          pending: todayPendingProgress ? clonePlain(todayPendingProgress) : null,
           started: !!todayStarted,
           done: !!todayDone,
           rest: !!todayIsRest,
@@ -4070,6 +4110,12 @@
         todayPlan = s.items.map(function (it) { return { id: it.id != null ? it.id : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : null, sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : null, notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : null, spec: it.spec || '', time: it.time }; });
         if (todayPlan.length) todayPlan.source = s.source;
         todayStepIndex = s.stepIndex;
+        todaySetIndex = s.setIndex || 0;
+        todayActionElapsedSeconds = s.actionElapsedSeconds || 0;
+        todayActionStartedAt = s.actionStartedAt || null;
+        todaySkipped = Array.isArray(s.skipped) ? s.skipped.slice() : [];
+        todayRecordFacts = Array.isArray(s.records) ? s.records.map(function (record) { return record ? clonePlain(record) : null; }) : [];
+        todayPendingProgress = s.pending ? clonePlain(s.pending) : null;
         todayStarted = !!s.started;
         todayDone = !!s.done;
         todayIsRest = !!s.rest;
@@ -4103,6 +4149,12 @@
         } else {
           todayPlan = [];
           todayStepIndex = 0;
+          todaySetIndex = 0;
+          todayActionElapsedSeconds = 0;
+          todayActionStartedAt = null;
+          todaySkipped = [];
+          todayRecordFacts = [];
+          todayPendingProgress = null;
           todayStarted = false;
           todayDone = false;
           todayIsRest = false;
@@ -4275,6 +4327,12 @@
         }
       }
       var todayStepIndex = 0;
+      var todaySetIndex = 0;
+      var todayActionElapsedSeconds = 0;
+      var todayActionStartedAt = null;
+      var todaySkipped = [];
+      var todayRecordFacts = [];
+      var todayPendingProgress = null;
       var todayStarted = false;
       var todayDone = false;
       function resetStartBtn() {
@@ -4303,6 +4361,30 @@
         if (!(id in todayPlanElCache)) todayPlanElCache[id] = document.getElementById(id);
         return todayPlanElCache[id];
       }
+      function todayRecordFact(index) {
+        return todayRecordFacts[index] || null;
+      }
+      function todayExecutionSummary() {
+        var completedActions = 0, skippedActions = 0, completedSets = 0, durationSeconds = 0, durationKnownRecords = 0, durationUnknownRecords = 0;
+        todayRecordFacts.forEach(function (record) {
+          if (!record) return;
+          if (record.status === 'completed') completedActions += 1;
+          if (record.status === 'skipped') skippedActions += 1;
+          if (record.status === 'completed' || record.status === 'skipped') completedSets += Number(record.setsCompleted || 0);
+          if (record.status === 'completed' || record.status === 'skipped') {
+            if (record.durationSeconds != null) {
+              durationSeconds += Number(record.durationSeconds || 0);
+              durationKnownRecords += 1;
+            } else {
+              durationUnknownRecords += 1;
+            }
+          }
+        });
+        var durationLabel = durationUnknownRecords > 0
+          ? (durationKnownRecords > 0 ? '实际执行 ' + durationSeconds + ' 秒（部分未知）' : '实际时长未知')
+          : '实际执行 ' + durationSeconds + ' 秒';
+        return { completedActions: completedActions, skippedActions: skippedActions, completedSets: completedSets, durationSeconds: durationSeconds, durationKnownRecords: durationKnownRecords, durationUnknownRecords: durationUnknownRecords, durationLabel: durationLabel };
+      }
       function renderTodayPlan() {
         var list = todayPlanEl('todayPlanList');
         var title = todayPlanEl('todayTitle');
@@ -4316,25 +4398,37 @@
         var statusPill = todayPlanEl('todayStatusPill');
         var countPill = todayPlanEl('todayCountPill');
         var startBtn = todayPlanEl('startTodayBtn');
+        var skipBtn = todayPlanEl('skipTodayBtn');
         var doneForUi = v25UiDoneConfirmed();
         var duration = todayPlan.reduce(function(sum, item) { return sum + item.time; }, 0);
+        var executionSummary = todayExecutionSummary();
         if (todayStepIndex >= todayPlan.length) todayStepIndex = Math.max(0, todayPlan.length - 1);
 
         if (summary) {
           if (!todayPlan.length) { summary.hidden = true; }
-          else { summary.hidden = false; summary.textContent = '今日计划 · ' + todayPlan.length + ' 个动作 · ' + duration + ' 分钟'; }
+          else {
+            summary.hidden = false;
+            summary.textContent = '预计 ' + duration + ' 分钟 · ' + executionSummary.durationLabel + ' · 完成动作 ' + executionSummary.completedActions + ' · 跳过 ' + executionSummary.skippedActions + ' · 完成组 ' + executionSummary.completedSets;
+          }
         }
 
         if (!todayPlan.length) {
           todayStarted = false;
           todayDone = false;
           todayStepIndex = 0;
+          todaySetIndex = 0;
+          todayActionElapsedSeconds = 0;
+          todayActionStartedAt = null;
+          todaySkipped = [];
+          todayRecordFacts = [];
+          todayPendingProgress = null;
           resetStartBtn();
           if (emptyHero) emptyHero.hidden = false;
           if (heroContent) heroContent.hidden = true;
           if (heroVideo) heroVideo.hidden = true;
           if (heroProgress) heroProgress.hidden = true;
           if (detailPanel) detailPanel.hidden = true;
+          if (skipBtn) skipBtn.hidden = true;
           if (todayIsRest) {
             // 休息日态
             if (list) list.innerHTML = '<div class="today-empty" style="text-align:center;padding:24px 16px;">🌿 今天是恢复日，好好休息<br><small style="opacity:.7;margin-top:8px;display:inline-block">想加练？去动作库挑几个轻量动作</small><br><button class="btn mini" type="button" data-view="library" style="margin-top:12px">去动作库</button></div>';
@@ -4355,19 +4449,29 @@
         if (heroProgress) heroProgress.hidden = false;
 
         var source = todayPlan.source || '临时训练';
-        if (title) title.textContent = source + ' · ' + duration + ' 分钟';
+        if (title) title.textContent = source + ' · 预计 ' + duration + ' 分钟';
         if (meta) meta.textContent = todayPlan.map(function(item) { return item.name; }).join('、') + ' · ' + aggregateIntensity();
         if (statusPill) {
-          statusPill.textContent = doneForUi ? '已完成' : (todayStarted ? '进行中' : '待开始');
+          var currentItemForStatus = todayPlan[Math.min(todayStepIndex, todayPlan.length - 1)] || {};
+          var targetSetsForStatus = Math.max(1, Number(currentItemForStatus.sets || 1));
+          statusPill.textContent = doneForUi ? '已完成' : (todayStarted ? ('第 ' + Math.min(todaySetIndex + 1, targetSetsForStatus) + ' / ' + targetSetsForStatus + ' 组') : '待开始');
           statusPill.className = 'pill live';
         }
-        if (countPill) countPill.textContent = todayPlan.length + ' 动作';
+        if (countPill) countPill.textContent = todayPlan.length + ' 动作 · ' + todaySkipped.length + ' 跳过';
         if (startBtn) {
           startBtn.disabled = doneForUi || v25RemoteProgressPending;
+          var currentItemForButton = todayPlan[Math.min(todayStepIndex, todayPlan.length - 1)] || {};
+          var targetSetsForButton = Math.max(1, Number(currentItemForButton.sets || 1));
           startBtn.textContent = v25RemoteProgressPending ? '同步中…'
             : doneForUi ? '✓ 今日已完成'
             : (!todayStarted ? '开始训练'
-            : (todayStepIndex < todayPlan.length - 1 ? '完成本步 · 下一步' : '完成今日训练'));
+            : (!todayActionStartedAt ? '开始当前动作 · 第 1 组'
+            : (todaySetIndex + 1 < targetSetsForButton ? '完成第 ' + (todaySetIndex + 1) + ' 组'
+            : (todayStepIndex < todayPlan.length - 1 ? '完成动作 · 下一步' : '完成今日训练'))));
+        }
+        if (skipBtn) {
+          skipBtn.hidden = doneForUi;
+          skipBtn.disabled = doneForUi || v25RemoteProgressPending;
         }
 
         // 右侧当前动作视频
@@ -4401,13 +4505,21 @@
         var progressCaption = todayPlanEl('dayProgressCaption');
         var n = todayPlan.length;
         var stepNo = todayPlan.length ? (todayStepIndex + 1) : 0;
-        if (progressLabel) progressLabel.textContent = '今日 ' + n + ' 个动作 · 按顺序完成';
-        if (progressStat) progressStat.textContent = '第 ' + stepNo + ' 步 · ' + (todayStarted ? todayStepIndex : 0) + ' / ' + n;
+        if (progressLabel) progressLabel.textContent = '今日 ' + n + ' 个动作 · 每组确认完成';
+        if (progressStat) {
+          var terminalActions = executionSummary.completedActions + executionSummary.skippedActions;
+          progressStat.textContent = doneForUi
+            ? '训练已结束 · 已处理 ' + terminalActions + ' / ' + n + ' 动作 · 共完成 ' + executionSummary.completedSets + ' 组'
+            : '第 ' + stepNo + ' 步 · ' + (todayStarted ? todayStepIndex : 0) + ' / ' + n + ' · 第 ' + (todaySetIndex + 1) + ' 组';
+        }
         if (track) {
           track.style.gridTemplateColumns = 'repeat(' + n + ', 1fr)';
           track.innerHTML = todayPlan.map(function(item, index) {
             var cls = 'progress-seg';
-            if (index < todayStepIndex) cls += ' done';
+            var fact = todayRecordFact(index);
+            if (fact && fact.status === 'skipped') cls += ' skipped';
+            else if (fact && fact.status === 'completed') cls += ' done';
+            else if (index < todayStepIndex) cls += ' done';
             if (index === todayStepIndex) cls += ' current';
             return '<span class="' + cls + '" role="listitem" title="' + escapeHtml(item.name) + '"></span>';
           }).join('');
@@ -4425,7 +4537,16 @@
         // 详情编辑清单
         if (list) {
           list.innerHTML = todayPlan.map(function(item, index) {
-            return '<div class="today-item"><span class="ti-num">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.spec) + ' · 约 ' + item.time + ' 分钟</small></div><button class="icon-btn" type="button" data-remove-today="' + escapeHtml(item.name) + '" title="移除动作">×</button></div>';
+            var itemSets = Math.max(1, Number(item.sets || 1));
+            var fact = todayRecordFact(index);
+            var factSets = fact ? Math.min(Number(fact.setsCompleted || 0), itemSets) : 0;
+            var itemProgress = fact && fact.status === 'skipped'
+              ? factSets + ' / ' + itemSets + ' 组 · 已跳过'
+              : fact && fact.status === 'completed'
+                ? factSets + ' / ' + itemSets + ' 组 · 已完成'
+                : (index === todayStepIndex ? Math.min(todaySetIndex, itemSets) + ' / ' + itemSets + ' 组' : '0 / ' + itemSets + ' 组');
+            var actual = fact && fact.durationSeconds != null ? ' · 实际 ' + fact.durationSeconds + ' 秒' : '';
+            return '<div class="today-item"><span class="ti-num">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.spec) + ' · ' + itemProgress + actual + ' · 预计 ' + item.time + ' 分钟</small></div><button class="icon-btn" type="button" data-remove-today="' + escapeHtml(item.name) + '" title="移除动作">×</button></div>';
           }).join('');
         }
         var editMeta = todayPlanEl('todayEditMeta');
@@ -4446,10 +4567,17 @@
           var remotePlan = { title:plan.title, status:'planned', label:'计划中', time:plan.time, intensity:plan.intensity, scene:plan.scene || '训练', focus:plan.scene || '训练', notes:plan.reason || '', items:nextItems };
           v25SaveCanonicalPlan(v25TodayKey(), nextItems, remotePlan).then(function () {
             todayStepIndex = 0;
+            todaySetIndex = 0;
+            todayActionElapsedSeconds = 0;
+            todayActionStartedAt = null;
+            todaySkipped = [];
+            todayRecordFacts = [];
+            todayPendingProgress = null;
             todayStarted = false;
             todayDone = false;
             todayIsRest = false;
             resetStartBtn();
+            saveTrainingState();
             renderTodayPlan();
             showView('home');
             v25RemoteCompleted = false;
@@ -4686,43 +4814,154 @@
       // ═══════════════════════════════════════════════════════════
       // P1-2 功能入口闭环：统一训练推进 / 新建训练方案 / 数据导入导出
       // ═══════════════════════════════════════════════════════════
-      // 今日训练统一推进逻辑（开始 / 推进 / 完成）。
-      // 「开始训练」按钮与播放器「完成跟练」共用同一份逻辑，避免出现两套 completion 规则；
-      // 只有后端确认 update（以及最后一步的 complete）成功后，才持久化 + 刷新 UI。
-      function advanceTodayTraining() {
-        if (!todayPlan.length || v25UiDoneConfirmed() || v25RemoteProgressPending) return false;
-        if (!v25Remote.ready) {
-          showToast('后端未连接，训练进度未保存，请重试', 'error');
-          return false;
+      // 今日训练统一推进逻辑（开始 / 组完成 / 动作完成 / session 完成）。
+      // 首次点击只创建或恢复 pending session；每个后续确认只提交当前实际完成组数。
+      // 每组的时长在请求发出前冻结，失败后的重试复用同一 payload，避免把网络等待重复计入。
+      function v25CurrentItem() {
+        return todayPlan[Math.min(Math.max(todayStepIndex, 0), Math.max(todayPlan.length - 1, 0))] || {};
+      }
+      function v25TargetSets(index) {
+        var item = todayPlan[Math.min(Math.max(index, 0), Math.max(todayPlan.length - 1, 0))] || {};
+        return Math.max(1, Number(item.sets || 1));
+      }
+      function v25ElapsedCurrentSet() {
+        if (!todayActionStartedAt) return 0;
+        return Math.max(0, Math.floor((Date.now() - todayActionStartedAt) / 1000));
+      }
+      function v25BeginCurrentAction() {
+        todayActionStartedAt = Date.now();
+        saveTrainingState();
+        renderTodayPlan();
+        return true;
+      }
+      function v25ProgressPayload(status) {
+        if (todayPendingProgress && todayPendingProgress.index === todayStepIndex) {
+          return todayPendingProgress;
         }
-        var completedIndex = todayStepIndex;
-        var nextStepIndex = todayStepIndex;
-        var nextDone = false;
-        if (!todayStarted) {
-          // 首次点击仍需先把当前动作同步成功，之后才进入进行中。
-        } else if (todayStepIndex < todayPlan.length - 1) {
-          completedIndex = todayStepIndex;
-          nextStepIndex += 1;                        // 后端成功后推进到下一步
+        var targetSets = v25TargetSets(todayStepIndex);
+        var setsCompleted = status === 'skipped' ? todaySetIndex : Math.min(targetSets, todaySetIndex + 1);
+        // A skipped current set was never confirmed as executed; keep only
+        // durations from earlier confirmed sets on this action.
+        var durationSeconds = status === 'skipped' ? todayActionElapsedSeconds : (todayActionElapsedSeconds + v25ElapsedCurrentSet());
+        var isFinalAction = todayStepIndex >= todayPlan.length - 1;
+        var effectiveStatus = status === 'skipped' ? 'skipped' : (setsCompleted >= targetSets ? 'completed' : 'pending');
+        var progress = {
+          index: todayStepIndex,
+          setsCompleted: setsCompleted,
+          durationSeconds: durationSeconds,
+          status: effectiveStatus,
+          finalAction: isFinalAction
+        };
+        todayPendingProgress = progress;
+        saveTrainingState();
+        return progress;
+      }
+      function v25ApplyProgressSuccess(progress, syncResult) {
+        var targetSets = v25TargetSets(progress.index);
+        var actionTerminal = progress.status === 'skipped' || progress.setsCompleted >= targetSets;
+        var remoteRecord = syncResult && syncResult.update ? syncResult.update.record : (syncResult && syncResult.record);
+        todayRecordFacts[progress.index] = {
+          status: remoteRecord && remoteRecord.status ? remoteRecord.status : progress.status,
+          setsCompleted: remoteRecord && remoteRecord.sets_completed != null ? Number(remoteRecord.sets_completed) : progress.setsCompleted,
+          durationSeconds: remoteRecord && remoteRecord.duration_seconds != null ? Number(remoteRecord.duration_seconds) : progress.durationSeconds
+        };
+        todayPendingProgress = null;
+        todayStarted = true;
+        if (progress.status === 'skipped' && todaySkipped.indexOf(progress.index) < 0) todaySkipped.push(progress.index);
+        if (actionTerminal) {
+          todayStepIndex = Math.min(progress.index + 1, Math.max(0, todayPlan.length - 1));
+          todaySetIndex = 0;
+          todayActionElapsedSeconds = 0;
+          todayActionStartedAt = null;
         } else {
-          completedIndex = todayStepIndex;
-          nextDone = true;                           // 后端 complete 成功后才进入完成态
+          todayStepIndex = progress.index;
+          todaySetIndex = progress.setsCompleted;
+          todayActionElapsedSeconds = progress.durationSeconds;
+          // The next set starts after the confirmed response, so request time
+          // and failed retry time are never included in the next set.
+          todayActionStartedAt = Date.now();
         }
+        return actionTerminal;
+      }
+      function v25SubmitProgress(status) {
+        var progress = v25ProgressPayload(status);
+        var actionTerminal = progress.status === 'skipped' || progress.setsCompleted >= v25TargetSets(progress.index);
+        var isFinal = actionTerminal && (progress.finalAction || progress.index >= todayPlan.length - 1);
         v25RemoteProgressPending = true;
         renderTodayPlan();
-        return v25QueueRemoteProgress(completedIndex, nextDone).then(function() {
-          todayStarted = true;
-          todayStepIndex = nextStepIndex;
-          todayDone = nextDone;
-          v25RemoteStatusVerified = true;
-          v25LocalDoneAwaitingVerification = false;
+        return v25QueueRemoteProgress(progress.index, isFinal, progress).then(function(syncResult) {
+          if (isFinal) {
+            todayDone = true;
+            v25RemoteStatusVerified = true;
+            v25LocalDoneAwaitingVerification = false;
+          } else {
+            todayDone = false;
+          }
+          v25ApplyProgressSuccess(progress, syncResult);
           v25RemoteProgressPending = false;
           saveTrainingState();
           renderTodayPlan();
           return true;
         }).catch(function(error) {
           v25RemoteProgressPending = false;
+          // Keep the frozen pending payload for an exact retry after a lost or
+          // failed response.  It is persisted before the request above.
+          saveTrainingState();
           renderTodayPlan();
           showToast('训练保存失败：' + (error && error.message ? error.message : '请重试'), 'error');
+          return false;
+        });
+      }
+      function advanceTodayTraining() {
+        if (!todayPlan.length || v25UiDoneConfirmed() || v25RemoteProgressPending) return false;
+        if (!v25Remote.ready) {
+          showToast('后端未连接，训练进度未保存，请重试', 'error');
+          return false;
+        }
+        if (!todayStarted) {
+          v25RemoteProgressPending = true;
+          renderTodayPlan();
+          return v25EnsureRemoteSession().then(function() {
+            todayStarted = true;
+            todayActionElapsedSeconds = 0;
+            todaySetIndex = 0;
+            todayPendingProgress = null;
+            v25BeginCurrentAction();
+            v25RemoteProgressPending = false;
+            renderTodayPlan();
+            return true;
+          }).catch(function(error) {
+            v25RemoteProgressPending = false;
+            renderTodayPlan();
+            showToast('训练开始失败：' + (error && error.message ? error.message : '请重试'), 'error');
+            return false;
+          });
+        }
+        if (!todayActionStartedAt && !todayPendingProgress) return Promise.resolve(v25BeginCurrentAction());
+        return v25SubmitProgress('completed');
+      }
+      function skipTodayTraining() {
+        if (!todayPlan.length || v25UiDoneConfirmed() || v25RemoteProgressPending) return false;
+        if (!v25Remote.ready) {
+          showToast('后端未连接，训练进度未保存，请重试', 'error');
+          return false;
+        }
+        var begin = todayStarted ? Promise.resolve(true) : v25EnsureRemoteSession().then(function() {
+          todayStarted = true;
+          todayActionElapsedSeconds = 0;
+          todaySetIndex = 0;
+          todayActionStartedAt = null;
+          return true;
+        });
+        v25RemoteProgressPending = true;
+        renderTodayPlan();
+        return begin.then(function() { return v25SubmitProgress('skipped'); }).then(function(result) {
+          return result;
+        }).catch(function(error) {
+          v25RemoteProgressPending = false;
+          saveTrainingState();
+          renderTodayPlan();
+          showToast('跳过动作失败：' + (error && error.message ? error.message : '请重试'), 'error');
           return false;
         });
       }
@@ -5053,6 +5292,11 @@
           if (v25UiDoneConfirmed()) { return; }
           if (target.getAttribute('data-started') !== '1') target.setAttribute('data-started', '1');
           advanceTodayTraining(); // P1-2：与播放器「完成跟练」共用同一推进逻辑（开始/推进/完成 + 立即持久化 + 刷新）
+          return;
+        }
+        if (target.id === 'skipTodayBtn') {
+          if (!todayPlan.length || v25UiDoneConfirmed()) return;
+          skipTodayTraining();
           return;
         }
         if (target.id === 'todayDetailBtn') {
@@ -5592,7 +5836,7 @@
         var match = days.find(function (day) { return day && day.date === dateKey; });
         return match ? match.status : null;
       }
-      function v25ReconcileTodaySession(remoteSession, planItems, source, isRest, backendStatusKnown, backendDone) {
+      function v25ReconcileTodaySession(remoteSession, planItems, source, isRest, backendStatusKnown, backendDone, backendSession) {
         var previous = remoteSession || {};
         var items = (planItems || []).map(function (item) {
           return {
@@ -5608,11 +5852,84 @@
           };
         });
         var reconciledDone = !!backendStatusKnown && !!backendDone;
+        var active = backendSession && backendSession.status === 'in_progress';
+        var backendCompleted = backendSession && backendSession.status === 'completed';
+        var facts = Array.isArray(previous.records) ? previous.records.map(function (record) {
+          return record ? clonePlain(record) : null;
+        }) : [];
+        var derivedStep = Math.min(previous.stepIndex || 0, Math.max(0, items.length - 1));
+        var derivedSet = previous.setIndex || 0;
+        var derivedElapsed = previous.actionElapsedSeconds || 0;
+        var derivedSkipped = Array.isArray(previous.skipped) ? previous.skipped.slice() : [];
+        var allTerminal = !!backendSession && items.length > 0;
+        if (backendSession && Array.isArray(backendSession.records)) {
+          facts = items.map(function (item) {
+            var record = backendSession.records.find(function (row) {
+              return row && item.exerciseId != null && row.exercise_id === item.exerciseId;
+            });
+            if (!record) return { status: 'pending', setsCompleted: 0, durationSeconds: null };
+            return {
+              status: record.status === 'completed' || record.status === 'skipped' ? record.status : 'pending',
+              setsCompleted: Number(record.sets_completed || 0),
+              durationSeconds: record.duration_seconds != null ? Number(record.duration_seconds) : null
+            };
+          });
+          derivedSkipped = [];
+          allTerminal = facts.length === items.length && facts.every(function (fact, index) {
+            var terminal = fact.status === 'skipped' || (fact.status === 'completed' && fact.setsCompleted >= Math.max(1, Number(items[index].sets || 1)));
+            if (fact.status === 'skipped') derivedSkipped.push(index);
+            return terminal;
+          });
+          for (var factIndex = 0; factIndex < facts.length; factIndex += 1) {
+            var fact = facts[factIndex], target = Math.max(1, Number(items[factIndex].sets || 1));
+            if (fact.status === 'completed' && fact.setsCompleted >= target || fact.status === 'skipped') {
+              derivedStep = Math.min(factIndex + 1, Math.max(0, items.length - 1));
+              derivedSet = 0;
+              derivedElapsed = 0;
+              continue;
+            }
+            derivedStep = factIndex;
+            derivedSet = fact.setsCompleted;
+            derivedElapsed = fact.durationSeconds || 0;
+            break;
+          }
+          if (backendCompleted) reconciledDone = true;
+        }
+        var hasRemoteFacts = !!backendSession && Array.isArray(backendSession.records);
+        var nextStep = hasRemoteFacts ? derivedStep : Math.min(previous.stepIndex || 0, Math.max(0, items.length - 1));
+        var nextSet = hasRemoteFacts ? derivedSet : (previous.setIndex || 0);
+        var nextElapsed = hasRemoteFacts ? derivedElapsed : (previous.actionElapsedSeconds || 0);
+        var nextSkipped = hasRemoteFacts ? derivedSkipped : (Array.isArray(previous.skipped) ? previous.skipped.slice() : []);
+        var nextPending = previous.pending ? clonePlain(previous.pending) : null;
+        // A pending local update is still retryable only while the backend
+        // reports the same action as pending.  Once that action is terminal or
+        // the backend advanced to another action, drop the stale payload.
+        if (hasRemoteFacts && (!facts[nextStep] || facts[nextStep].status !== 'pending')) nextPending = null;
+        if (hasRemoteFacts && nextPending && nextPending.index !== nextStep) nextPending = null;
+        // If the final action update committed but complete failed or its
+        // response was lost, synthesize a retryable payload for both completed
+        // and skipped terminal records.  No extra group is executed.
+        if (active && allTerminal && !reconciledDone && !nextPending) {
+          var lastIndex = Math.max(0, items.length - 1), lastFact = facts[lastIndex];
+          if (lastFact && (lastFact.status === 'completed' || lastFact.status === 'skipped')) {
+            nextPending = { index: lastIndex, setsCompleted: lastFact.setsCompleted, durationSeconds: lastFact.durationSeconds || 0, status: lastFact.status, finalAction: true };
+          }
+        }
+        var actionStartedAt = previous.actionStartedAt || null;
+        if (hasRemoteFacts && (!active || previous.stepIndex !== nextStep || !facts[nextStep] || facts[nextStep].status !== 'pending')) {
+          actionStartedAt = null;
+        }
         return {
           items: items,
           source: source || '',
-          stepIndex: Math.min(previous.stepIndex || 0, Math.max(0, items.length - 1)),
-          started: reconciledDone || !!previous.started,
+          stepIndex: Math.min(nextStep, Math.max(0, items.length - 1)),
+          setIndex: nextSet,
+          actionElapsedSeconds: nextElapsed,
+          actionStartedAt: actionStartedAt,
+          skipped: nextSkipped,
+          records: facts,
+          pending: nextPending,
+          started: reconciledDone || active || !!previous.started,
           done: reconciledDone,
           rest: !!isRest,
           updatedAt: new Date().toISOString()
@@ -5744,16 +6061,20 @@
         var match = v25Remote.exercises.find(function (row) { return row.name === item.name; });
         return match && match.id;
       }
-      function v25SyncRemoteRecord(index, status) {
+      function v25SyncRemoteRecord(index, status, progress) {
         var exerciseId = v25RemoteExerciseId(index);
         if (exerciseId == null) return Promise.reject(new Error('当前动作未绑定后端动作 ID'));
+        var body = { session_id: null, exercise_id: exerciseId, status: status };
+        if (progress && typeof progress.setsCompleted === 'number') body.sets_completed = progress.setsCompleted;
+        if (progress && typeof progress.durationSeconds === 'number') body.duration_seconds = progress.durationSeconds;
         var planReady = v25RemotePlanPromise || Promise.resolve(v25RemotePlanId);
         return planReady.then(function (planId) {
           if (!planId) throw new Error('训练计划保存失败，无法同步动作进度');
           return v25EnsureRemoteSession();
         }).then(function (sessionId) {
           if (!sessionId) throw new Error('训练会话保存失败，无法同步动作进度');
-          return v25ApiFetch('/api/session/update', { method: 'POST', body: JSON.stringify({ session_id: sessionId, exercise_id: exerciseId, status: status, sets_completed: status === 'completed' ? 1 : null }) });
+          body.session_id = sessionId;
+          return v25ApiFetch('/api/session/update', { method: 'POST', body: JSON.stringify(body) });
         }).then(function (result) {
           if (!result || result.status !== 'updated') throw new Error('后端未确认动作进度已保存');
           return result;
@@ -5776,12 +6097,12 @@
           throw error;
         });
       }
-      function v25QueueRemoteProgress(index, isFinal) {
+      function v25QueueRemoteProgress(index, isFinal, progress) {
         var attempt = v25RemoteStepPromise.then(function () {
           // If the final update was confirmed but the complete response was lost,
-          // retry complete directly. Repeating update would now return 422.
+          // retry complete directly; the update payload is already durable.
           if (isFinal && v25RemoteFinalUpdateConfirmed) return null;
-          return v25SyncRemoteRecord(index, 'completed').then(function (result) {
+          return v25SyncRemoteRecord(index, progress.status, progress).then(function (result) {
             if (isFinal) v25RemoteFinalUpdateConfirmed = true;
             return result;
           });
@@ -5812,7 +6133,7 @@
       });
       function bootV25Api() {
         var month = formatDateKey(getToday()).slice(0, 7), todayKey = formatDateKey(getToday());
-        var jobs = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month].map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data }; }).catch(function () { return { ok: false, data: null }; }); });
+        var jobs = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month, '/api/session/current?include_completed=true'].map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data }; }).catch(function () { return { ok: false, data: null }; }); });
         return Promise.all(jobs).then(function (results) {
           if (!results[0].ok && !results[1].ok) {
             // A local done flag is not enough to claim completion when the
@@ -5844,15 +6165,32 @@
           if (results[7].ok) { v25Remote.favorites = results[7].data.favorites || []; favorites = v25Remote.favorites.map(function (row) { return row.exercise_name; }); saveFavorites(); renderFavorites(); }
           if (results[8].ok) { apiSettings.model = results[8].data.model || ''; apiSettings.provider = results[8].data.provider || 'local-demo'; mode(); }
           if (v25Remote.today && (v25Remote.today.isTrainingDay || v25Remote.today.is_training)) {
-            v25RemotePlanId = v25Remote.today.id; todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
+            v25RemotePlanId = v25Remote.today.id; v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
+            todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
             todayPlan.source = v25Remote.today.title; todayIsRest = false;
           } else { todayPlan = []; todayIsRest = true; }
+          var activeSession = results[11].ok ? results[11].data.session : null;
+          if (!activeSession || activeSession.plan_id !== v25RemotePlanId) activeSession = null;
+          if (activeSession && activeSession.id) {
+            v25RemoteSessionId = activeSession.id;
+            v25RemoteSessionPromise = Promise.resolve(activeSession.id);
+          } else {
+            v25RemoteSessionId = null;
+            v25RemoteSessionPromise = null;
+          }
           if (todaySessionKey) {
-            var reconciledSession = v25ReconcileTodaySession(dailySessions[todaySessionKey], todayPlan, todayPlan.source || '', todayIsRest, todayStatusKnown, todayBackendDone);
+            var reconciledSession = v25ReconcileTodaySession(dailySessions[todaySessionKey], todayPlan, todayPlan.source || '', todayIsRest, todayStatusKnown, todayBackendDone, activeSession);
             dailySessions[todaySessionKey] = reconciledSession;
             if (todaySessionKey === todayKey) {
               // Only the backend completion log may establish todayDone.
               todayStarted = reconciledSession.started;
+              todayStepIndex = reconciledSession.stepIndex;
+              todaySetIndex = reconciledSession.setIndex || 0;
+              todayActionElapsedSeconds = reconciledSession.actionElapsedSeconds || 0;
+              todayActionStartedAt = reconciledSession.actionStartedAt || null;
+              todaySkipped = reconciledSession.skipped || [];
+              todayRecordFacts = reconciledSession.records || [];
+              todayPendingProgress = reconciledSession.pending || null;
               todayDone = reconciledSession.done;
             }
           }
@@ -6164,6 +6502,19 @@
         exerciseDetails: exerciseDetails,
         // P1-2：供自动化验收 / 后续扩展使用的内部能力（不影响正常运行）
         advanceTodayTraining: advanceTodayTraining,
+        skipTodayTraining: skipTodayTraining,
+        getTodayExecutionState: function () {
+          return {
+            stepIndex: todayStepIndex,
+            setIndex: todaySetIndex,
+            started: !!todayStarted,
+            done: !!todayDone,
+            skipped: todaySkipped.slice(),
+            records: todayRecordFacts.map(function (record) { return record ? clonePlain(record) : null; }),
+            actionElapsedSeconds: todayActionElapsedSeconds,
+            pending: todayPendingProgress ? clonePlain(todayPendingProgress) : null
+          };
+        },
         renderNewPlanModal: renderNewPlanModal,
         createCustomTrainingPlan: createCustomTrainingPlan,
         getPlayerContext: function () { return playerContext; },

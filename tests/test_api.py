@@ -1342,6 +1342,12 @@ def test_session_complete_is_idempotent(client, app_modules):
     })
     started = client.post("/api/session/start", json={"plan_id": gen.json()["plan"]["id"]})
     session_id = started.json()["session"]["id"]
+    record = started.json()["session"]["records"][0]
+    updated = client.post("/api/session/update", json={
+        "session_id": session_id, "exercise_id": record["exercise_id"],
+        "status": "completed", "sets_completed": 1,
+    })
+    assert updated.status_code == 200
 
     # Complete first time
     c1 = client.post("/api/session/complete", json={"session_id": session_id, "rating": 5})
@@ -1377,7 +1383,12 @@ def test_session_update_rejects_completed(client, app_modules):
     started = client.post("/api/session/start", json={"plan_id": gen.json()["plan"]["id"]})
     session_id = started.json()["session"]["id"]
 
-    client.post("/api/session/complete", json={"session_id": session_id})
+    client.post("/api/session/update", json={
+        "session_id": session_id, "exercise_id": ex.json()["id"],
+        "status": "completed", "sets_completed": 1,
+    })
+    completed = client.post("/api/session/complete", json={"session_id": session_id})
+    assert completed.status_code == 200
 
     # Try to update completed session
     resp = client.post("/api/session/update", json={
@@ -1521,6 +1532,10 @@ def test_stats_no_duplicate_completion(client):
     })
     started = client.post("/api/session/start", json={"plan_id": gen.json()["plan"]["id"]})
     session_id = started.json()["session"]["id"]
+    client.post("/api/session/update", json={
+        "session_id": session_id, "exercise_id": ex.json()["id"],
+        "status": "completed", "sets_completed": 1,
+    })
     client.post("/api/session/complete", json={"session_id": session_id})
     # Second complete (idempotent)
     client.post("/api/session/complete", json={"session_id": session_id})
@@ -1741,6 +1756,10 @@ def test_session_terminal_state_cannot_update(client, app_modules):
     recs = started.json()["session"]["records"]
 
     # Complete
+    client.post("/api/session/update", json={
+        "session_id": sid, "exercise_id": recs[0]["exercise_id"],
+        "status": "completed", "sets_completed": 1,
+    })
     client.post("/api/session/complete", json={"session_id": sid})
     # Try update after complete
     if recs:
@@ -1890,6 +1909,11 @@ def test_completed_session_is_not_resumed(client):
     })
     s1 = client.post("/api/session/start", json={"plan_id": gen.json()["plan"]["id"]})
     sid_completed = s1.json()["session"]["id"]
+    client.post("/api/session/update", json={
+        "session_id": sid_completed,
+        "exercise_id": s1.json()["session"]["records"][0]["exercise_id"],
+        "status": "completed", "sets_completed": 1,
+    })
     client.post("/api/session/complete", json={"session_id": sid_completed})
 
     # Try to start again — should create NEW session, not resume completed one
@@ -1931,6 +1955,11 @@ def test_session_complete_and_training_complete_do_not_duplicate_log(client, app
 
     # Complete via session
     start = client.post("/api/session/start", json={"plan_id": gen.json()["plan"]["id"]})
+    client.post("/api/session/update", json={
+        "session_id": start.json()["session"]["id"],
+        "exercise_id": start.json()["session"]["records"][0]["exercise_id"],
+        "status": "completed", "sets_completed": 1,
+    })
     client.post("/api/session/complete", json={"session_id": start.json()["session"]["id"]})
 
     # Call legacy /api/training/complete for same date
@@ -2112,6 +2141,11 @@ def test_completed_session_current_returns_null(client):
     cur1 = client.get(f"/api/session/current?plan_id={gen.json()['plan']['id']}")
     assert cur1.json()["session"] is not None
 
+    client.post("/api/session/update", json={
+        "session_id": sid,
+        "exercise_id": start.json()["session"]["records"][0]["exercise_id"],
+        "status": "completed", "sets_completed": 1,
+    })
     client.post("/api/session/complete", json={"session_id": sid})
 
     cur2 = client.get(f"/api/session/current?plan_id={gen.json()['plan']['id']}")

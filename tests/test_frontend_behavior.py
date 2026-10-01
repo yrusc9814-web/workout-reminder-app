@@ -371,7 +371,7 @@ v25SaveCanonicalPlan('2026-10-01', [survivor]).then(() => process.exit(5)).catch
   function openModal() {}
   addToToday('正式动作');
   if (!capturedAdd || capturedAdd.exerciseId !== 2 || capturedAdd.sets !== 2 || capturedAdd.duration_seconds !== 20 || capturedAdd.notes !== '正式备注' || capturedAdd.video_url !== 'https://example.test/exercise' || capturedAdd.time !== 1) process.exit(9);
-  var dailySessions = {}, todayStarted = false, todayDone = false, todayStepIndex = 0, todayIsRest = false;
+  var dailySessions = {}, todayStarted = false, todayDone = false, todayStepIndex = 0, todaySetIndex = 0, todayActionElapsedSeconds = 0, todayActionStartedAt = null, todaySkipped = [], todayRecordFacts = [], todayPendingProgress = null, todayIsRest = false;
   const persistStart = source.indexOf('function persistTodayToSession(');
   const persistEnd = source.indexOf('function clonePlain(');
   eval(source.slice(persistStart, persistEnd));

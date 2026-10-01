@@ -1630,6 +1630,44 @@ def _require_session(db: Session, session_id: int) -> WorkoutSession:
     return session
 
 
+def _session_record_target_sets(session: WorkoutSession, record: SessionRecord) -> int:
+    """Return the planned set count for one session record.
+
+    SessionRecord intentionally stores execution facts only.  The plan snapshot
+    remains the source of the target count, so legacy records without a linked
+    exercise still use the safe one-set default.
+    """
+    record_name = record.exercise.name if record.exercise is not None else None
+    for item in sorted(session.plan.exercises or [], key=lambda row: row.sort_order or 0):
+        if item.exercise_id == record.exercise_id or (
+            item.exercise_id is None and record_name and item.name == record_name
+        ):
+            return max(1, int(item.sets or 1))
+    return 1
+
+
+def _session_completion_summary(session: WorkoutSession) -> dict:
+    records = list(session.records or [])
+    completed = [record for record in records if record.status == "completed"]
+    skipped = [record for record in records if record.status == "skipped"]
+    return {
+        "completed_records": len(completed),
+        "skipped_records": len(skipped),
+        # A skipped action may still contain confirmed partial sets.  Those
+        # sets are real execution facts and belong in the session total.
+        "completed_sets": sum(
+            int(record.sets_completed or 0)
+            for record in records
+            if record.status in {"completed", "skipped"}
+        ),
+        "duration_seconds": sum(
+            int(record.duration_seconds or 0)
+            for record in records
+            if record.duration_seconds is not None
+        ),
+    }
+
+
 def _local_ai_analysis(session: WorkoutSession) -> dict:
     completed = sum(1 for record in session.records if record.status == "completed")
     total = len(session.records) or 1
@@ -1654,17 +1692,31 @@ def _complete_session_unified(db: Session, session: WorkoutSession, payload_note
     from sqlalchemy.exc import IntegrityError
 
     if session.status == "completed":
-        completed_records = db.query(SessionRecord).filter(
-            SessionRecord.session_id == session.id,
-            SessionRecord.status == "completed",
-        ).count()
-        return {"status": "already_completed", "session": session_to_v31_dict(session), "summary": {"completed_records": completed_records}}
+        return {
+            "status": "already_completed",
+            "session": session_to_v31_dict(session),
+            "summary": _session_completion_summary(session),
+        }
 
     if session.status == "cancelled":
         raise HTTPException(status_code=422, detail="已取消的训练会话无法完成")
 
     if session.status != "in_progress":
         raise HTTPException(status_code=422, detail=f"训练会话状态为 {session.status}，无法完成")
+
+    records = list(session.records or [])
+    if not records:
+        raise HTTPException(status_code=422, detail="训练会话没有可完成的动作记录")
+    unresolved = [record for record in records if record.status not in {"completed", "skipped"}]
+    if unresolved:
+        raise HTTPException(status_code=422, detail="仍有未完成的动作记录，无法完成训练")
+    incomplete_sets = [
+        record for record in records
+        if record.status == "completed"
+        and int(record.sets_completed or 0) < _session_record_target_sets(session, record)
+    ]
+    if incomplete_sets:
+        raise HTTPException(status_code=422, detail="仍有未完成的训练组，无法完成训练")
 
     session.status = "completed"
     session.completed_at = datetime.now(timezone.utc)
@@ -1673,10 +1725,7 @@ def _complete_session_unified(db: Session, session: WorkoutSession, payload_note
     if payload_rating is not None:
         session.rating = payload_rating
 
-    completed_records = db.query(SessionRecord).filter(
-        SessionRecord.session_id == session.id,
-        SessionRecord.status == "completed",
-    ).count()
+    summary = _session_completion_summary(session)
 
     # Try to create WorkoutLog with session_id tracking; unique constraint prevents duplicates
     try:
@@ -1711,7 +1760,7 @@ def _complete_session_unified(db: Session, session: WorkoutSession, payload_note
         return {
             "status": "already_completed",
             "session": session_to_v31_dict(session),
-            "summary": {"completed_records": completed_records},
+            "summary": _session_completion_summary(session),
             "log_id": existing_log.id if existing_log else None,
         }
 
@@ -1720,7 +1769,7 @@ def _complete_session_unified(db: Session, session: WorkoutSession, payload_note
     return {
         "status": "completed",
         "session": session_to_v31_dict(session),
-        "summary": {"completed_records": completed_records},
+        "summary": summary,
         "log_id": log.id,
     }
 
@@ -1971,12 +2020,60 @@ def update_session(payload: SessionUpdateRequest, db: Session = Depends(get_db))
     if existing_record is None:
         raise HTTPException(status_code=422, detail=f"动作 {payload.exercise_id} 不在此训练会话中")
 
-    existing_record.status = db_status
-    existing_record.sets_completed = payload.sets_completed
-    existing_record.reps_completed = payload.reps_completed
-    existing_record.duration_seconds = payload.duration_seconds
-    existing_record.notes = payload.notes
+    # A lost response may cause the browser to replay the same update.  Equal
+    # progress is idempotent; regressing a record is rejected so retries cannot
+    # erase facts already committed by the server.
+    was_terminal = existing_record.status in {"completed", "skipped"}
+    if was_terminal and db_status != existing_record.status:
+        raise HTTPException(status_code=422, detail=f"动作记录已{existing_record.status}，无法回退状态")
+
+    target_sets = _session_record_target_sets(session, existing_record)
+    current_sets = int(existing_record.sets_completed or 0)
+    requested_sets = payload.sets_completed
+    if requested_sets is not None:
+        if requested_sets < 0 or requested_sets > target_sets:
+            raise HTTPException(status_code=422, detail=f"完成组数必须在 0 到 {target_sets} 之间")
+        if requested_sets < current_sets:
+            raise HTTPException(status_code=422, detail="完成组数不能回退")
+
     if db_status == "completed":
+        # Legacy one-set callers may omit sets_completed.  Multi-set actions
+        # must report the actual total so an action cannot be completed early.
+        if requested_sets is None:
+            if target_sets == 1:
+                requested_sets = 1
+            elif current_sets == target_sets:
+                requested_sets = current_sets
+            else:
+                raise HTTPException(status_code=422, detail="多组动作必须提供实际完成组数")
+        if requested_sets != target_sets:
+            raise HTTPException(status_code=422, detail=f"动作尚未完成全部 {target_sets} 组")
+    elif db_status == "pending" and requested_sets is not None and requested_sets == 0:
+        # Zero is useful for an explicit no-progress retry, but it never marks
+        # a record as started or completed.
+        requested_sets = current_sets
+
+    if payload.duration_seconds is not None:
+        if payload.duration_seconds < 0:
+            raise HTTPException(status_code=422, detail="实际执行时长不能为负数")
+        if (
+            existing_record.duration_seconds is not None
+            and payload.duration_seconds < existing_record.duration_seconds
+        ):
+            raise HTTPException(status_code=422, detail="实际执行时长不能回退")
+
+    existing_record.status = db_status
+    if requested_sets is not None:
+        existing_record.sets_completed = requested_sets
+    if payload.reps_completed is not None:
+        existing_record.reps_completed = payload.reps_completed
+    if payload.duration_seconds is not None:
+        existing_record.duration_seconds = payload.duration_seconds
+    if payload.notes is not None:
+        existing_record.notes = payload.notes
+    if db_status in {"completed", "skipped"} and (
+        not was_terminal or existing_record.completed_at is None
+    ):
         existing_record.completed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(existing_record)
@@ -2005,13 +2102,29 @@ def cancel_session(payload: SessionCompleteRequest, db: Session = Depends(get_db
 
 
 @app.get("/api/session/current")
-def current_session(plan_id: int | None = Query(None), db: Session = Depends(get_db)) -> dict:
-    """Return the current active session for a plan, or the latest active session."""
+def current_session(
+    plan_id: int | None = Query(None),
+    include_completed: bool = Query(False),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return an active session, optionally falling back to latest completed facts.
+
+    The default remains the historical active-only contract.  The optional
+    fallback lets a fresh v25 page restore terminal action facts after the
+    active session has disappeared, without changing existing callers.
+    """
     query = db.query(WorkoutSession).filter(WorkoutSession.status == "in_progress")
     if plan_id is not None:
         plan = _require_plan(db, plan_id)
         query = query.filter(WorkoutSession.plan_id == plan.id)
     session = query.order_by(WorkoutSession.started_at.desc()).first()
+    if session is None and include_completed:
+        completed_query = db.query(WorkoutSession).filter(WorkoutSession.status == "completed")
+        if plan_id is not None:
+            completed_query = completed_query.filter(WorkoutSession.plan_id == plan.id)
+        session = completed_query.order_by(
+            WorkoutSession.completed_at.desc(), WorkoutSession.id.desc()
+        ).first()
     if session is None:
         return {"session": None, "message": "没有活跃的训练会话"}
     return {"session": session_to_v31_dict(session), "plan": plan_to_v31_dict(session.plan)}
@@ -2033,6 +2146,11 @@ def get_session_summary(session_id: int, db: Session = Depends(get_db)) -> dict:
     skipped = sum(1 for r in session.records if r.status == "skipped")
     total = len(session.records) or 1
     score = round((completed / total) * 100)
+    duration_seconds = sum(
+        int(r.duration_seconds or 0)
+        for r in session.records
+        if r.duration_seconds is not None
+    )
 
     local_summary = {
         "session_id": session.id,
@@ -2041,7 +2159,13 @@ def get_session_summary(session_id: int, db: Session = Depends(get_db)) -> dict:
         "completed_exercises": completed,
         "skipped_exercises": skipped,
         "total_exercises": total,
-        "duration_minutes": None,  # Could be calculated from record timestamps
+        "duration_seconds": duration_seconds,
+        "duration_minutes": round(duration_seconds / 60, 2),
+        "completed_sets": sum(
+            int(r.sets_completed or 0)
+            for r in session.records
+            if r.status in {"completed", "skipped"}
+        ),
         "adjustments": ["保持当前低强度节奏", "下次训练优先保证动作质量"],
         "suggestion_draft": None,
     }

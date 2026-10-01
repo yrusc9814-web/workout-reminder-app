@@ -88,6 +88,12 @@ function makeHarness(planLength = 1) {
     v25LocalDoneAwaitingVerification: false,
     todayPlan: Array.from({ length: planLength }, (_, i) => ({ exerciseId: 11, name: `动作 ${i + 1}` })),
     todayStepIndex: 0,
+    todaySetIndex: 0,
+    todayActionElapsedSeconds: 0,
+    todayActionStartedAt: null,
+    todaySkipped: [],
+    todayRecordFacts: [],
+    todayPendingProgress: null,
     todayStarted: false,
     todayDone: false,
     favorites: [],
@@ -101,7 +107,7 @@ function makeHarness(planLength = 1) {
   };
   vm.createContext(context);
   vm.runInContext(section('function v25ApiFetch', 'function v25MigrationPreview'), context);
-  vm.runInContext(section('function advanceTodayTraining', 'function renderNewPlanModal'), context);
+  vm.runInContext(section('function v25CurrentItem', 'function renderNewPlanModal'), context);
   // The page's showToast is intentionally replaced only as a test observer;
   // all request and state functions above are the actual page functions.
   context.showToast = (message, type) => toasts.push({ message: String(message), type });
@@ -113,17 +119,22 @@ async function run() {
 
   const success = makeHarness(1);
   const first = await success.context.advanceTodayTraining();
+  if (first !== true || !success.context.todayStarted || success.calls.some(c => c.url.includes('/api/session/update') || c.url.includes('/api/session/complete'))) {
+    throw new Error(`start path completed a record early ${JSON.stringify({ first, calls: success.calls, toasts: success.toasts, state: { started: success.context.todayStarted, done: success.context.todayDone } })}`);
+  }
   const second = await success.context.advanceTodayTraining();
-  if (first !== true || second !== true || !success.context.todayStarted || !success.context.todayDone || success.calls.filter(c => c.url.includes('/api/session/update')).length !== 2 || success.calls.filter(c => c.url.includes('/api/session/complete')).length !== 1) {
+  if (second !== true || !success.context.todayStarted || !success.context.todayDone || success.calls.filter(c => c.url.includes('/api/session/update')).length !== 1 || success.calls.filter(c => c.url.includes('/api/session/complete')).length !== 1) {
     throw new Error(`success path mismatch ${JSON.stringify({ first, second, calls: success.calls, state: { started: success.context.todayStarted, done: success.context.todayDone } })}`);
   }
   evidence.success = { calls: success.calls, state: { started: success.context.todayStarted, done: success.context.todayDone } };
 
   for (const mode of ['422', '500', 'network']) {
     const failed = makeHarness(1);
+    failed.context.todayStarted = true;
+    failed.context.todayActionStartedAt = Date.now();
     failed.setModes({ update: mode });
     const result = await failed.context.advanceTodayTraining();
-    if (result !== false || failed.context.todayStarted || failed.context.todayDone || failed.context.todayStepIndex !== 0 || failed.saves.length !== 0 || !failed.toasts.some(t => t.type === 'error' && t.message.includes('训练保存失败'))) {
+    if (result !== false || !failed.context.todayStarted || failed.context.todayDone || failed.context.todayStepIndex !== 0 || !failed.context.todayPendingProgress || failed.saves.length < 1 || !failed.toasts.some(t => t.type === 'error' && t.message.includes('训练保存失败'))) {
       throw new Error(`update ${mode} was treated as success ${JSON.stringify({ result, calls: failed.calls, saves: failed.saves, toasts: failed.toasts, state: failed.context })}`);
     }
     evidence[`update_${mode}`] = { calls: failed.calls, saves: failed.saves, toast: failed.toasts.at(-1) };
@@ -131,15 +142,17 @@ async function run() {
 
   const completeFailed = makeHarness(1);
   completeFailed.context.todayStarted = true;
+  completeFailed.context.todayActionStartedAt = Date.now();
   completeFailed.setModes({ complete: '503' });
   const completeResult = await completeFailed.context.advanceTodayTraining();
-  if (completeResult !== false || completeFailed.context.todayDone || completeFailed.context.todayStepIndex !== 0 || completeFailed.saves.length !== 0) {
+  if (completeResult !== false || completeFailed.context.todayDone || completeFailed.context.todayStepIndex !== 0 || !completeFailed.context.todayPendingProgress || completeFailed.saves.length < 1) {
     throw new Error(`complete failure advanced local state ${JSON.stringify({ completeResult, calls: completeFailed.calls, saves: completeFailed.saves, state: { done: completeFailed.context.todayDone, step: completeFailed.context.todayStepIndex } })}`);
   }
   evidence.complete_failure = { calls: completeFailed.calls, state: { done: completeFailed.context.todayDone, step: completeFailed.context.todayStepIndex }, toast: completeFailed.toasts.at(-1) };
 
   const retry = makeHarness(1);
   retry.context.todayStarted = true;
+  retry.context.todayActionStartedAt = Date.now();
   retry.setModes({ complete: '503' });
   const firstComplete = await retry.context.advanceTodayTraining();
   if (firstComplete !== false || !retry.context.v25RemoteFinalUpdateConfirmed) throw new Error('final update confirmation was not retained after complete failure');
@@ -154,6 +167,7 @@ async function run() {
 
   const lostResponse = makeHarness(1);
   lostResponse.context.todayStarted = true;
+  lostResponse.context.todayActionStartedAt = Date.now();
   lostResponse.setModes({ complete: 'lost' });
   const lostFirst = await lostResponse.context.advanceTodayTraining();
   const lostCallsBeforeRetry = lostResponse.calls.length;
@@ -191,9 +205,11 @@ async function run() {
   if (!refresh.context.v25UiDoneConfirmed()) throw new Error('confirmed backend done was not shown');
   const unverifiedRetry = makeHarness(1);
   unverifiedRetry.context.todayDone = true;
+  unverifiedRetry.context.todayStarted = true;
+  unverifiedRetry.context.todayActionStartedAt = Date.now();
   unverifiedRetry.context.v25RemoteStatusVerified = false;
   const unverifiedRetryResult = await unverifiedRetry.context.advanceTodayTraining();
-  if (unverifiedRetryResult !== true || unverifiedRetry.calls.length !== 1) throw new Error('unverified local done blocked a retry');
+  if (unverifiedRetryResult !== true || unverifiedRetry.calls.filter(c => c.url.includes('/api/session/update')).length !== 1) throw new Error('unverified local done blocked a retry');
   evidence.refresh_reconciliation = { planned_status: statusDetail.days[0].status, stale_done_reset: staleDone.done, completed_status_done: confirmedDone.done, unknown_status_done: unknownStatus.done, initial_done_hidden: true, confirmed_done_shown: true, unverified_done_retry_allowed: true };
 
   console.log(JSON.stringify({ PASS: true, evidence }, null, 2));
