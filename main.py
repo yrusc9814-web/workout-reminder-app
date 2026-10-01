@@ -589,7 +589,12 @@ def _duration_metrics(db: Session, start: date | None = None, end: date | None =
             WorkoutLog.log_date <= end,
             WorkoutLog.status == "completed",
         )
-    durations = [row.duration_seconds for row in query.all()]
+    rows = query.all()
+    # Global duration is historical execution truth.  A later plan snapshot
+    # mismatch must not erase the completed session's recorded seconds; the
+    # period detail endpoint separately controls whether that fact marks the
+    # current plan day as completed.
+    durations = [row.duration_seconds for row in rows]
     known = [value for value in durations if value is not None]
     return {
         "duration_seconds": sum(known),
@@ -632,11 +637,20 @@ def stats_month(month: str = Query(...), db: Session = Depends(get_db)) -> dict:
     )
     total = plans_query.count()
     training_days = plans_query.filter(WorkoutPlan.is_training_day == True).count()
-    completed = logs_query.filter(WorkoutLog.status == "completed").count()
+    logs = logs_query.all()
+    all_completed_logs = [row for row in logs if row.status == "completed"]
+    completed_logs = _context_valid_logs(
+        db,
+        all_completed_logs,
+    )
+    # The aggregate count is a historical log count.  Context-valid logs are
+    # used only for completion_rate so a prior A session cannot mark the
+    # current B plan day as completed.
+    completed = len(all_completed_logs)
     completed_training_days = (
-        logs_query
-        .join(WorkoutPlan, WorkoutLog.plan_id == WorkoutPlan.id)
-        .filter(WorkoutLog.status == "completed", WorkoutPlan.is_training_day == True)
+        db.query(WorkoutPlan)
+        .filter(WorkoutPlan.is_training_day == True)
+        .filter(WorkoutPlan.id.in_({row.plan_id for row in completed_logs}))
         .count()
     )
     skipped = logs_query.filter(WorkoutLog.status == "skipped").count()
@@ -667,10 +681,14 @@ def _stats_detail(db: Session, start: date, end: date, period: str) -> dict:
         WorkoutLog.log_date >= start,
         WorkoutLog.log_date <= end,
     ).all()
+    valid_completed_log_ids = {
+        row.id
+        for row in _context_valid_logs(db, [log for log in logs if log.status == "completed"])
+    }
     completed_dates = {
         log.log_date.isoformat()
         for log in logs
-        if log.status == "completed"
+        if log.status == "completed" and log.id in valid_completed_log_ids
     }
     training_days = sum(bool(plan.is_training_day) for plan in plans)
     completed = len({day for day in completed_dates if any(
@@ -686,7 +704,10 @@ def _stats_detail(db: Session, start: date, end: date, period: str) -> dict:
             "day_of_week": (current.weekday() + 1) % 7,
             "plan_id": plan.id if plan else None,
             "is_training": bool(plan and plan.is_training_day),
-            "status": "completed" if any(row.status == "completed" for row in day_logs) else ("planned" if plan else "rest"),
+            "status": "completed" if any(
+                row.status == "completed" and row.id in valid_completed_log_ids
+                for row in day_logs
+            ) else ("planned" if plan else "rest"),
             "duration": _duration_metrics_for_range(db, current, current),
         })
         current += timedelta(days=1)
@@ -1002,6 +1023,20 @@ def delete_template(template_id: int, db: Session = Depends(get_db)) -> dict:
     tmpl = db.query(Template).filter(Template.id == template_id).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="模板不存在")
+    active_plan = (
+        db.query(WorkoutPlan)
+        .join(WorkoutSession, WorkoutSession.plan_id == WorkoutPlan.id)
+        .filter(
+            WorkoutPlan.template_id == template_id,
+            WorkoutSession.status == "in_progress",
+        )
+        .first()
+    )
+    if active_plan is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="当前模板正在被活跃训练会话使用，请先完成或取消训练后再删除模板",
+        )
     # Detach plans that reference this template instead of cascading wrongly
     db.query(WorkoutPlan).filter(WorkoutPlan.template_id == template_id).update(
         {WorkoutPlan.template_id: None}
@@ -1048,6 +1083,12 @@ def restore_defaults(payload: RestoreDefaultsRequest, db: Session = Depends(get_
             "will_keep": ["settings"],
             "action": "发送 confirm=true 并 backup=true 来执行恢复",
         }
+
+    if db.query(WorkoutSession).filter(WorkoutSession.status == "in_progress").first():
+        raise HTTPException(
+            status_code=409,
+            detail="存在活跃训练会话，不能恢复默认数据；请先完成或取消训练",
+        )
 
     # Create backup before overwriting using SQLite backup API (consistent snapshot)
     backup_info = None
@@ -1165,6 +1206,52 @@ def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(
     payload_fields = getattr(payload, "model_fields_set", None)
     if payload_fields is None:
         payload_fields = getattr(payload, "__fields_set__", set())
+
+    # Validate the complete replacement before mutating any plan fields.  An
+    # in-progress session owns the action snapshot it started with; changing
+    # the plan's actions or training/rest context would leave session records
+    # pointing at a different set of items after refresh.
+    normalized_items = None
+    template_items = None
+    if payload.items is not None:
+        normalized_items = _resolve_plan_item_payloads(db, payload.items)
+    elif payload.exercise_ids is not None:
+        normalized_items = _resolve_plan_item_payloads(
+            db,
+            [PlanItemPayload(exercise_id=exercise_id) for exercise_id in (payload.exercise_ids or [])],
+        )
+    elif payload.template_id is not None:
+        tmpl = db.query(Template).filter(Template.id == payload.template_id).first()
+        if tmpl is None:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        template_items = _template_item_payloads(tmpl)
+
+    desired_training = plan.is_training_day
+    if payload.is_training_day is not None:
+        desired_training = payload.is_training_day
+    if normalized_items is not None:
+        desired_items = normalized_items if desired_training else []
+        # The complete snapshot path intentionally clears a stale template
+        # binding when no template is supplied.
+        desired_template = payload.template_id if payload.template_id is not None else None
+    elif template_items is not None:
+        desired_items = template_items if desired_training else []
+        desired_template = payload.template_id if desired_training else None
+    else:
+        desired_items = _plan_item_payloads(plan) if desired_training else []
+        desired_template = plan.template_id
+        if "template_id" in payload_fields:
+            desired_template = payload.template_id
+        if not desired_training:
+            desired_template = None
+    _assert_plan_snapshot_editable(
+        db,
+        plan,
+        is_training_day=desired_training,
+        template_id=desired_template,
+        items=desired_items,
+    )
+
     if payload.title is not None:
         plan.title = payload.title
     if payload.is_training_day is not None:
@@ -1176,13 +1263,6 @@ def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(
 
     # A complete action snapshot takes precedence over template-only switching.
     if payload.items is not None or payload.exercise_ids is not None:
-        if payload.items is not None:
-            normalized_items = _resolve_plan_item_payloads(db, payload.items)
-        else:
-            normalized_items = _resolve_plan_item_payloads(
-                db,
-                [PlanItemPayload(exercise_id=exercise_id) for exercise_id in (payload.exercise_ids or [])],
-            )
         if payload.is_training_day is not False and not normalized_items:
             raise HTTPException(status_code=422, detail="训练日必须至少包含一个动作")
         if payload.is_training_day is not False:
@@ -1446,6 +1526,231 @@ def _parse_reps(value: str | None) -> int | None:
     return int(number) if number else None
 
 
+def _template_item_payloads(template: Template) -> list[dict]:
+    """Convert a template into the same immutable plan-item shape used by saves."""
+    return [
+        {
+            "exercise_id": exercise.id,
+            "name": exercise.name,
+            "description": exercise.notes or "",
+            "sets": exercise.default_sets,
+            "duration_seconds": exercise.duration_seconds,
+            "reps": _parse_reps(exercise.default_reps),
+            "video_url": exercise.video_url,
+            "spec": None,
+        }
+        for exercise in template.exercises
+    ]
+
+
+def _exercise_item_payload(exercise: Exercise) -> dict:
+    return {
+        "exercise_id": exercise.id,
+        "name": exercise.name,
+        "description": exercise.notes or "",
+        "sets": exercise.default_sets,
+        "duration_seconds": exercise.duration_seconds,
+        "reps": _parse_reps(exercise.default_reps),
+        "video_url": exercise.video_url,
+        "spec": None,
+    }
+
+
+def _plan_item_payloads(plan: WorkoutPlan) -> list[dict]:
+    """Return a plan's current action snapshot in replacement-payload shape."""
+    return [
+        {
+            "exercise_id": item.exercise_id,
+            "name": item.name,
+            "description": item.description,
+            "sets": item.sets,
+            "duration_seconds": item.duration_seconds,
+            "reps": item.reps,
+            "video_url": item.video_url,
+            "spec": item.spec,
+        }
+        for item in sorted(plan.exercises or [], key=lambda row: row.sort_order or 0)
+    ]
+
+
+def _effective_item_spec(item) -> str:
+    """Normalize explicit and generated item specifications for comparisons."""
+    if isinstance(item, dict):
+        explicit = item.get("spec")
+        sets = item.get("sets")
+        reps = item.get("reps")
+        duration = item.get("duration_seconds")
+    else:
+        explicit = getattr(item, "spec", None)
+        sets = getattr(item, "sets", None)
+        reps = getattr(item, "reps", None)
+        duration = getattr(item, "duration_seconds", None)
+    if explicit:
+        return str(explicit)
+    parts = []
+    if sets is not None:
+        parts.append(f"{sets} 组")
+    if reps is not None:
+        parts.append(f"{reps} 次")
+    if duration is not None:
+        parts.append(f"{duration} 秒" if int(duration) < 60 else f"{round(int(duration) / 60)} 分钟")
+    return " · ".join(parts)
+
+
+def _item_signature(item) -> tuple:
+    if isinstance(item, dict):
+        get = item.get
+        description = item.get("description", item.get("notes"))
+        video_url = item.get("video_url", item.get("videoUrl"))
+    else:
+        get = lambda key: getattr(item, key, None)
+        description = getattr(item, "description", None)
+        video_url = getattr(item, "video_url", None)
+    return (
+        get("exercise_id") if get("exercise_id") is not None else None,
+        get("name") or "",
+        description or "",
+        int(get("sets") or 1),
+        get("duration_seconds"),
+        get("reps"),
+        video_url,
+        _effective_item_spec(item),
+    )
+
+
+def _active_session_for_plan(db: Session, plan_id: int) -> WorkoutSession | None:
+    return (
+        db.query(WorkoutSession)
+        .filter(
+            WorkoutSession.plan_id == plan_id,
+            WorkoutSession.status == "in_progress",
+        )
+        .order_by(WorkoutSession.started_at.desc(), WorkoutSession.id.desc())
+        .first()
+    )
+
+
+def _session_context_mismatch(session: WorkoutSession) -> dict | None:
+    """Check that a session still refers to the exact plan action snapshot.
+
+    SessionRecord stores execution facts and the exercise-library ID, while a
+    plan stores the current action snapshot.  A legacy/manual database edit can
+    leave those two rows with the same plan ID but different actions.  Never
+    infer a new mapping in that state: preserving the record IDs and order is
+    the only safe way to keep partial completion facts truthful.
+    """
+    plan_items = sorted(
+        list(session.plan.exercises or []) if session.plan is not None else [],
+        key=lambda row: row.sort_order or 0,
+    )
+    records = list(session.records or [])
+    # Historical/imported terminal sessions can legitimately retain execution
+    # records after their plan action rows were not imported.  An active
+    # session in that state is different: it cannot be resumed safely because
+    # the current plan offers no action context for its records.
+    if not plan_items and records:
+        if session.status in {"completed", "cancelled"}:
+            return None
+        reason = "计划动作快照为空但训练记录仍存在"
+    elif len(plan_items) != len(records):
+        reason = "计划动作数量与训练记录数量不一致"
+    else:
+        reason = None
+        for index, (item, record) in enumerate(zip(plan_items, records)):
+            if item.exercise_id is not None and item.exercise_id != record.exercise_id:
+                reason = f"第 {index + 1} 个动作的引用不一致"
+                break
+            if item.exercise_id is None and record.exercise_id is not None:
+                # Legacy plans may not have stored WorkoutExercise.exercise_id;
+                # session/start legitimately resolves that row by its unique
+                # action name.  Preserve that supported VAN-13 fallback.
+                if record.exercise is None or record.exercise.name != item.name:
+                    reason = f"第 {index + 1} 个动作的名称引用不一致"
+                    break
+            elif item.exercise_id is None:
+                expected_note = f"未匹配动作库: {item.name}"
+                if not (record.notes or "").startswith(expected_note):
+                    reason = f"第 {index + 1} 个未匹配动作的名称不一致"
+                    break
+    if reason is None:
+        return None
+    return {
+        "reason": reason,
+        "plan_id": session.plan_id,
+        "session_id": session.id,
+        "plan_exercise_ids": [item.exercise_id for item in plan_items],
+        "record_exercise_ids": [record.exercise_id for record in records],
+    }
+
+
+def _context_valid_logs(db: Session, logs: list[WorkoutLog]) -> list[WorkoutLog]:
+    """Exclude completed logs whose session belongs to another plan snapshot."""
+    session_ids = {row.session_id for row in logs if row.session_id is not None}
+    sessions = {}
+    if session_ids:
+        sessions = {
+            session.id: session
+            for session in db.query(WorkoutSession).filter(WorkoutSession.id.in_(session_ids)).all()
+        }
+    valid = []
+    for row in logs:
+        if row.session_id is None:
+            valid.append(row)
+            continue
+        session = sessions.get(row.session_id)
+        if session is not None and _session_context_mismatch(session) is None:
+            valid.append(row)
+    return valid
+
+
+def _raise_session_context_conflict(session: WorkoutSession, operation: str) -> None:
+    mismatch = _session_context_mismatch(session)
+    if mismatch is None:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "SESSION_PLAN_CONTEXT_MISMATCH",
+            "message": "训练会话记录与当前计划动作不一致，已有训练事实已保护；请先取消该会话后再重新安排计划",
+            "operation": operation,
+            "recovery": "cancel_session_then_edit_plan",
+            **mismatch,
+        },
+    )
+
+
+def _assert_plan_snapshot_editable(
+    db: Session,
+    plan: WorkoutPlan,
+    *,
+    is_training_day,
+    template_id,
+    items,
+) -> None:
+    """Reject structural plan changes while its session is in progress.
+
+    Metadata-only edits remain safe because they do not change the action
+    context that the session records refer to.  Any change to training/rest
+    state, template binding, ordering, action identity, or action parameters
+    is rejected until the session is completed or cancelled.
+    """
+    active = _active_session_for_plan(db, plan.id)
+    if active is None:
+        return
+    current_items = [_item_signature(item) for item in _plan_item_payloads(plan)]
+    next_items = [_item_signature(item) for item in (items or [])]
+    structural_change = (
+        bool(is_training_day) != bool(plan.is_training_day)
+        or template_id != plan.template_id
+        or current_items != next_items
+    )
+    if structural_change:
+        raise HTTPException(
+            status_code=409,
+            detail="当前计划存在活跃训练会话，训练上下文已锁定；请先完成或取消训练后再修改动作、模板或训练日",
+        )
+
+
 def _resolve_plan_item_payloads(db: Session, items: list[PlanItemPayload]) -> list[dict]:
     """Validate and normalize complete plan action snapshots before mutation."""
     normalized: list[dict] = []
@@ -1536,6 +1841,13 @@ def _upsert_plan_snapshot(
         db.add(plan)
         db.flush()
     else:
+        _assert_plan_snapshot_editable(
+            db,
+            plan,
+            is_training_day=payload.is_training_day,
+            template_id=payload.template_id,
+            items=normalized_items if payload.is_training_day else [],
+        )
         if payload.title is not None:
             plan.title = payload.title
         if payload.focus is not None:
@@ -1690,6 +2002,9 @@ def _run_session_analysis(session: WorkoutSession) -> dict:
 def _complete_session_unified(db: Session, session: WorkoutSession, payload_notes: str | None = None, payload_rating: int | None = None) -> dict:
     """Unified completion: validates state, creates WorkoutLog with DB-level dedup, returns consistent result."""
     from sqlalchemy.exc import IntegrityError
+
+    if session.status == "in_progress":
+        _raise_session_context_conflict(session, "complete")
 
     if session.status == "completed":
         return {
@@ -1911,6 +2226,34 @@ def postpone_plan(payload: PlanPostponePayload, db: Session = Depends(get_db)) -
 def generate_plan(payload: PlanGenerateRequest, db: Session = Depends(get_db)) -> dict:
     plan_date = date_from_iso(payload.date)
     plan = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == plan_date).first()
+
+    generated_items = []
+    if payload.is_training_day:
+        for exercise_id in payload.exerciseIds:
+            exercise = db.query(Exercise).filter(Exercise.id == exercise_id).first()
+            if not exercise:
+                raise HTTPException(status_code=404, detail=f"动作不存在：{exercise_id}")
+            generated_items.append(_exercise_item_payload(exercise))
+
+    # Resolve the template binding before replacing anything so a conflict
+    # leaves the existing plan and active session untouched.
+    wanted = frozenset(payload.exerciseIds)
+    matches = []
+    for tmpl in db.query(Template).all():
+        tmpl_ids = frozenset(ex.id for ex in tmpl.exercises)
+        if tmpl_ids and tmpl_ids == wanted:
+            matches.append(tmpl.id)
+    generated_template_id = matches[0] if payload.is_training_day and len(matches) == 1 else None
+
+    if plan is not None:
+        _assert_plan_snapshot_editable(
+            db,
+            plan,
+            is_training_day=payload.is_training_day,
+            template_id=generated_template_id,
+            items=generated_items,
+        )
+
     if plan is None:
         plan = WorkoutPlan(plan_date=plan_date, title=payload.title or ("生成训练计划" if payload.is_training_day else "恢复日"), is_training_day=payload.is_training_day, focus=payload.theme or ("训练建议" if payload.is_training_day else "恢复与轻量活动"), notes=payload.notes or "")
         db.add(plan)
@@ -1923,20 +2266,21 @@ def generate_plan(payload: PlanGenerateRequest, db: Session = Depends(get_db)) -
         for item in list(plan.exercises):
             db.delete(item)
         db.flush()
-    if payload.is_training_day:
-        for idx, exercise_id in enumerate(payload.exerciseIds, start=1):
-            exercise = db.query(Exercise).filter(Exercise.id == exercise_id).first()
-            if not exercise:
-                raise HTTPException(status_code=404, detail=f"动作不存在：{exercise_id}")
-            db.add(WorkoutExercise(plan_id=plan.id, exercise_id=exercise.id, sort_order=idx, name=exercise.name, description=exercise.notes or "", sets=exercise.default_sets, duration_seconds=exercise.duration_seconds, reps=_parse_reps(exercise.default_reps), video_url=exercise.video_url))
-    # Bind template_id when the exercise set uniquely matches a template
-    wanted = frozenset(payload.exerciseIds)
-    matches = []
-    for tmpl in db.query(Template).all():
-        tmpl_ids = frozenset(ex.id for ex in tmpl.exercises)
-        if tmpl_ids and tmpl_ids == wanted:
-            matches.append(tmpl.id)
-    plan.template_id = matches[0] if payload.is_training_day and len(matches) == 1 else None
+    for idx, item in enumerate(generated_items, start=1):
+        db.add(
+            WorkoutExercise(
+                plan_id=plan.id,
+                sort_order=idx,
+                name=item["name"],
+                description=item["description"],
+                sets=item["sets"],
+                duration_seconds=item["duration_seconds"],
+                reps=item["reps"],
+                video_url=item["video_url"],
+                exercise_id=item["exercise_id"],
+            )
+        )
+    plan.template_id = generated_template_id
     db.commit()
     db.refresh(plan)
     return {"status": "ok", "plan": plan_to_v31_dict(plan)}
@@ -1956,6 +2300,7 @@ def start_session(payload: SessionStartRequest, db: Session = Depends(get_db)) -
         WorkoutSession.status == "in_progress",
     ).first()
     if existing:
+        _raise_session_context_conflict(existing, "start")
         db.refresh(existing)
         return {"status": "resumed", "session": session_to_v31_dict(existing), "plan": plan_to_v31_dict(plan)}
 
@@ -1987,6 +2332,7 @@ def start_session(payload: SessionStartRequest, db: Session = Depends(get_db)) -
             WorkoutSession.status == "in_progress",
         ).first()
         if existing2:
+            _raise_session_context_conflict(existing2, "start")
             return {"status": "resumed", "session": session_to_v31_dict(existing2), "plan": plan_to_v31_dict(plan)}
         raise
 
@@ -1999,6 +2345,7 @@ def update_session(payload: SessionUpdateRequest, db: Session = Depends(get_db))
     session = _require_session(db, payload.session_id)
     if session.status != "in_progress":
         raise HTTPException(status_code=422, detail=f"训练会话状态为 {session.status}，无法更新动作记录")
+    _raise_session_context_conflict(session, "update")
 
     # Map in_progress → pending (non-last-set completion)
     # DB constraint only allows: pending, completed, skipped
@@ -2093,12 +2440,21 @@ def cancel_session(payload: SessionCompleteRequest, db: Session = Depends(get_db
         return {"status": "already_cancelled", "session": session_to_v31_dict(session)}
     if session.status == "completed":
         raise HTTPException(status_code=422, detail="已完成的训练会话无法取消")
+    mismatch = _session_context_mismatch(session)
     session.status = "cancelled"
     session.completed_at = datetime.now(timezone.utc)
-    session.notes = payload.notes
+    if payload.notes is not None:
+        session.notes = payload.notes
     db.commit()
     db.refresh(session)
-    return {"status": "cancelled", "session": session_to_v31_dict(session)}
+    response = {"status": "cancelled", "session": session_to_v31_dict(session)}
+    if mismatch is not None:
+        response["recovery"] = {
+            "status": "context_preserved",
+            "message": "已保留原训练记录并取消错位会话，现在可以重新安排计划",
+            **mismatch,
+        }
+    return response
 
 
 @app.get("/api/session/current")
@@ -2127,6 +2483,21 @@ def current_session(
         ).first()
     if session is None:
         return {"session": None, "message": "没有活跃的训练会话"}
+    mismatch = _session_context_mismatch(session)
+    if mismatch is not None and session.status == "completed":
+        return {
+            "session": None,
+            "message": "历史训练事实与当前计划动作不一致，未将完成状态映射到当前计划",
+            "history_conflict": {
+                "code": "COMPLETED_SESSION_PLAN_CONTEXT_MISMATCH",
+                "message": "历史完成事实已保留，但当前计划不是该训练会话的动作快照；不会显示为当前计划已完成",
+                "recovery": "restore_historical_plan_snapshot_or_continue_with_new_session",
+                "can_cancel": False,
+                "session_status": session.status,
+                **mismatch,
+            },
+        }
+    _raise_session_context_conflict(session, "current")
     return {"session": session_to_v31_dict(session), "plan": plan_to_v31_dict(session.plan)}
 
 
@@ -2138,6 +2509,18 @@ def get_session_summary(session_id: int, db: Session = Depends(get_db)) -> dict:
     If AI is not configured, returns a local summary based on completion data.
     """
     session = _require_session(db, session_id)
+    mismatch = _session_context_mismatch(session)
+    if mismatch is not None and session.status == "in_progress":
+        _raise_session_context_conflict(session, "summary")
+    history_conflict = None
+    if mismatch is not None and session.status == "completed":
+        history_conflict = {
+            "code": "COMPLETED_SESSION_PLAN_CONTEXT_MISMATCH",
+            "message": "历史完成事实已保留；当前计划不是该会话的动作快照，摘要只按历史 records 计算",
+            "recovery": "restore_historical_plan_snapshot_or_continue_with_new_session",
+            "can_cancel": False,
+            **mismatch,
+        }
     plan_data = plan_to_v31_dict(session.plan)
     session_data = session_to_v31_dict(session)
 
@@ -2169,15 +2552,19 @@ def get_session_summary(session_id: int, db: Session = Depends(get_db)) -> dict:
         "adjustments": ["保持当前低强度节奏", "下次训练优先保证动作质量"],
         "suggestion_draft": None,
     }
+    if history_conflict is not None:
+        local_summary["context_valid"] = False
+        local_summary["history_conflict"] = history_conflict
 
     # Try AI analysis if configured
-    try:
-        ai_analysis = _run_session_analysis(session)
-        if ai_analysis:
-            local_summary["ai_analysis"] = ai_analysis
-            local_summary["ai_generated"] = True
-    except Exception:
-        local_summary["ai_generated"] = False
+    if history_conflict is None:
+        try:
+            ai_analysis = _run_session_analysis(session)
+            if ai_analysis:
+                local_summary["ai_analysis"] = ai_analysis
+                local_summary["ai_generated"] = True
+        except Exception:
+            local_summary["ai_generated"] = False
 
     # Generate suggestion draft for next plan
     local_summary["suggestion_draft"] = {
@@ -2186,7 +2573,10 @@ def get_session_summary(session_id: int, db: Session = Depends(get_db)) -> dict:
         "skipped_count": skipped,
     }
 
-    return {"status": "ok", "summary": local_summary}
+    response = {"status": "ok", "summary": local_summary}
+    if history_conflict is not None:
+        response["history_conflict"] = history_conflict
+    return response
 
 
 @app.post("/api/ai/feedback")

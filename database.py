@@ -203,7 +203,17 @@ class WorkoutLog(Base):
             "status IN ('completed', 'skipped', 'postponed')",
             name="ck_workout_logs_status",
         ),
-        UniqueConstraint("plan_id", "action", "log_date", name="uq_workout_logs_plan_action_date"),
+        # Session-backed logs must remain distinct when a historical session
+        # is later found to belong to a different action snapshot.  The
+        # coalesced SQLite index added by ensure_schema_columns keeps
+        # standalone (NULL session_id) logs idempotent as well.
+        UniqueConstraint(
+            "plan_id",
+            "action",
+            "log_date",
+            "session_id",
+            name="uq_workout_logs_plan_action_date_session",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -447,6 +457,89 @@ def _rebuild_workout_sessions_with_nullable_started_at():
             raw.close()
 
 
+def _rebuild_workout_logs_with_session_scoped_uniqueness():
+    """Migrate legacy logs so each completed session can keep its own fact.
+
+    Older databases enforced uniqueness on ``plan_id + action + log_date``.
+    That made a historical completed session prevent a later, explicitly
+    started session for the same plan/date from recording its own completion
+    after a repaired action snapshot.  Preserve every existing row while
+    moving uniqueness to include ``session_id``.
+    """
+    inspector = inspect(engine)
+    if "workout_logs" not in inspector.get_table_names():
+        return False
+    raw = engine.raw_connection()
+    cursor = raw.cursor()
+    try:
+        table_sql = cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'workout_logs'"
+        ).fetchone()
+        normalized_sql = (table_sql[0] if table_sql else "").lower().replace("\n", " ")
+        legacy_constraint = (
+            "uq_workout_logs_plan_action_date" in normalized_sql
+            and "uq_workout_logs_plan_action_date_session" not in normalized_sql
+        ) or "unique (plan_id, action, log_date)" in normalized_sql
+        if not legacy_constraint:
+            return False
+
+        raw.isolation_level = None
+        cursor.execute("PRAGMA foreign_keys=OFF")
+        cursor.execute("BEGIN")
+        before_count = cursor.execute("SELECT COUNT(*) FROM workout_logs").fetchone()[0]
+        cursor.execute("""
+            CREATE TABLE workout_logs_v25_new (
+                id INTEGER NOT NULL PRIMARY KEY,
+                plan_id INTEGER NOT NULL,
+                session_id INTEGER NULL,
+                log_date DATE NOT NULL,
+                action VARCHAR(20) NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                notes TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT ck_workout_logs_action
+                    CHECK (action IN ('completed', 'skipped', 'postponed')),
+                CONSTRAINT ck_workout_logs_status
+                    CHECK (status IN ('completed', 'skipped', 'postponed')),
+                CONSTRAINT uq_workout_logs_plan_action_date_session
+                    UNIQUE (plan_id, action, log_date, session_id),
+                FOREIGN KEY(plan_id) REFERENCES workout_plans(id),
+                FOREIGN KEY(session_id) REFERENCES workout_sessions(id)
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO workout_logs_v25_new
+                (id, plan_id, session_id, log_date, action, status, notes, created_at)
+            SELECT id, plan_id, session_id, log_date, action, status, notes, created_at
+            FROM workout_logs
+        """)
+        after_count = cursor.execute("SELECT COUNT(*) FROM workout_logs_v25_new").fetchone()[0]
+        if before_count != after_count:
+            raise RuntimeError(
+                f"workout_logs rebuild row loss: before={before_count}, after={after_count}"
+            )
+        cursor.execute("DROP TABLE workout_logs")
+        cursor.execute("ALTER TABLE workout_logs_v25_new RENAME TO workout_logs")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_workout_logs_id ON workout_logs(id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_workout_logs_plan_id ON workout_logs(plan_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_workout_logs_session_id ON workout_logs(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_workout_logs_log_date ON workout_logs(log_date)")
+        cursor.execute("COMMIT")
+        return True
+    except Exception:
+        try:
+            cursor.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+            raw.close()
+
+
 def ensure_schema_columns():
     _rebuild_workout_sessions_with_nullable_started_at()
     inspector = inspect(engine)
@@ -473,6 +566,14 @@ def ensure_schema_columns():
     if "session_id" not in wl_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE workout_logs ADD COLUMN session_id INTEGER REFERENCES workout_sessions(id)"))
+    _rebuild_workout_logs_with_session_scoped_uniqueness()
+    # Keep standalone logs idempotent while allowing separate session-backed
+    # facts for the same plan/date after a repaired action snapshot.
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_workout_logs_plan_action_date_session_coalesced "
+            "ON workout_logs(plan_id, action, log_date, COALESCE(session_id, 0))"
+        ))
     # At most one active session per plan (SQLite partial unique index)
     with engine.begin() as connection:
         connection.execute(text(

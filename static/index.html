@@ -4554,6 +4554,14 @@
       }
       function startPlan(plan) {
         if (!plan) return;
+        if (typeof v25RemoteSessionConflict !== 'undefined' && v25RemoteSessionConflict && v25RemoteSessionConflict.kind !== 'completed_mismatch') {
+          showToast(v25RemoteSessionConflict.kind === 'mismatch' ? '当前训练会话与计划不一致，请先保留记录并取消会话' : '已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划', 'error');
+          return;
+        }
+        if (typeof v25RemoteSessionId !== 'undefined' && typeof v25RemotePlanId !== 'undefined' && v25RemoteSessionId && v25RemotePlanId && (!plan.remote || plan.id === v25RemotePlanId)) {
+          showToast('当前计划已有进行中的训练，会话已恢复', 'error');
+          return;
+        }
         var nextItems = plan.items.map(function(item, index) {
           var name = item.split(' · ')[0];
           var remote = v25RemoteExerciseByName(name);
@@ -4581,6 +4589,7 @@
             renderTodayPlan();
             showView('home');
             v25RemoteCompleted = false;
+            v25RemoteSessionConflict = null;
             v25RemoteSessionId = null;
             v25RemoteSessionPromise = null;
             v25RemoteStepPromise = Promise.resolve();
@@ -5594,7 +5603,7 @@
       });
       // ── v25 rehearsal API 接线层：同源服务优先，localStorage 仅作离线 fallback ──
       var v25Remote = { ready: false, today: null, calendar: {}, calendarDays: {}, planDays: {}, loadedMonths: {}, stats: null, weekStats: null, exercises: [], templates: [], favorites: [] };
-      var v25RemotePlanId = null, v25RemotePlanPromise = null, v25RemoteSessionId = null, v25RemoteSessionPromise = null, v25RemoteStepPromise = Promise.resolve(), v25RemoteCompleted = false;
+      var v25RemotePlanId = null, v25RemotePlanPromise = null, v25RemoteSessionId = null, v25RemoteSessionPromise = null, v25RemoteStepPromise = Promise.resolve(), v25RemoteCompleted = false, v25RemoteSessionConflict = null, v25RemoteSessionConflictPrompted = false;
       var v25RemoteProgressPending = false, v25RemoteFinalUpdateConfirmed = false, v25RemoteStatusVerified = false, v25LocalDoneAwaitingVerification = false;
       function v25ApiFetch(path, options) {
         var opts = options || {};
@@ -5602,10 +5611,35 @@
         return fetch(path, opts).then(function (response) {
           return response.text().then(function (text) {
             var data = null; try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { detail: text }; }
-            if (!response.ok) { var error = new Error((data && data.detail) || ('HTTP ' + response.status)); error.status = response.status; throw error; }
+            if (!response.ok) {
+              var detail = data && data.detail;
+              var message = detail && typeof detail === 'object' ? (detail.message || detail.code || ('HTTP ' + response.status)) : (detail || ('HTTP ' + response.status));
+              var error = new Error(message);
+              error.status = response.status;
+              error.detail = detail;
+              throw error;
+            }
             return data;
           });
         });
+      }
+      function v25ShowSessionConflict(conflict) {
+        if (!conflict || !conflict.sessionId || v25RemoteSessionConflictPrompted) return;
+        v25RemoteSessionConflictPrompted = true;
+        var message = conflict.message || '训练记录与当前计划动作不一致，系统已保护原始事实。';
+        var canCancel = conflict.canCancel !== false;
+        var action = canCancel
+          ? '<button class="btn primary" type="button" data-v25-cancel-conflict="' + escapeHtml(String(conflict.sessionId)) + '">保留记录并取消会话</button>'
+          : '<button class="btn primary" type="button" data-modal-close>知道了</button>';
+        var recoveryNote = canCancel
+          ? '原训练记录会保留。取消错位会话后，才可以重新安排当前计划并开始新的训练。'
+          : '历史完成事实会保留，但不会标记当前计划已完成。关闭提示后可以继续当前计划；系统不会取消或重写历史会话。';
+        openModal(
+          '<button class="modal-close" type="button" data-modal-close>×</button>' +
+          '<div class="modal-head"><div><h3>训练会话需要恢复</h3><p>' + escapeHtml(message) + '</p></div></div>' +
+          '<div class="safety-note">' + escapeHtml(recoveryNote) + '</div>' +
+          '<div class="modal-actions">' + action + (canCancel ? '<button class="btn ghost" type="button" data-modal-close>稍后处理</button>' : '') + '</div>'
+        );
       }
       var v25ToastTimer = null;
       function showToast(message, type) {
@@ -5851,6 +5885,39 @@
             time: item.time
           };
         });
+        var contextMismatch = false;
+        if (backendSession && Array.isArray(backendSession.records)) {
+          if (backendSession.records.length !== items.length) {
+            contextMismatch = true;
+          } else {
+            for (var contextIndex = 0; contextIndex < items.length; contextIndex += 1) {
+              var expectedExerciseId = items[contextIndex].exerciseId;
+              var actualExerciseId = backendSession.records[contextIndex] && backendSession.records[contextIndex].exercise_id;
+              if (expectedExerciseId != null && expectedExerciseId !== actualExerciseId) {
+                contextMismatch = true;
+                break;
+              }
+            }
+          }
+        }
+        if (contextMismatch) {
+          return {
+            items: items,
+            source: source || '',
+            stepIndex: 0,
+            setIndex: 0,
+            actionElapsedSeconds: 0,
+            actionStartedAt: null,
+            skipped: [],
+            records: [],
+            pending: null,
+            started: false,
+            done: false,
+            rest: !!isRest,
+            contextConflict: true,
+            updatedAt: new Date().toISOString()
+          };
+        }
         var reconciledDone = !!backendStatusKnown && !!backendDone;
         var active = backendSession && backendSession.status === 'in_progress';
         var backendCompleted = backendSession && backendSession.status === 'completed';
@@ -6024,6 +6091,7 @@
       function v25EnsureRemotePlan(plan) {
         if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，训练计划未保存'));
         if (!plan) return Promise.reject(new Error('缺少训练计划，无法同步'));
+        if (typeof v25RemoteSessionConflict !== 'undefined' && v25RemoteSessionConflict && v25RemoteSessionConflict.kind !== 'completed_mismatch') return Promise.reject(new Error(v25RemoteSessionConflict.kind === 'mismatch' ? '当前训练会话与计划不一致，请先保留记录并取消会话' : '已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划'));
         if (plan.remote && typeof plan.id === 'number') { v25RemotePlanId = plan.id; return Promise.resolve(plan.id); }
         var names = (plan.items || []).map(function (x) { return String(x).split(' · ')[0]; });
         var ids = names.map(function (name) { var ex = v25Remote.exercises.find(function (row) { return row.name === name; }); return ex && ex.id; }).filter(function (id) { return id != null; });
@@ -6042,11 +6110,19 @@
       function v25EnsureRemoteSession() {
         if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，训练会话未保存'));
         if (!v25RemotePlanId) return Promise.reject(new Error('训练计划未确认，无法创建训练会话'));
+        if (typeof v25RemoteSessionConflict !== 'undefined' && v25RemoteSessionConflict && v25RemoteSessionConflict.kind !== 'completed_mismatch') return Promise.reject(new Error(v25RemoteSessionConflict.kind === 'mismatch' ? '当前训练会话与计划不一致，请先保留记录并取消会话' : '已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划'));
         if (v25RemoteSessionId) return Promise.resolve(v25RemoteSessionId);
         if (v25RemoteSessionPromise) return v25RemoteSessionPromise;
         v25RemoteSessionPromise = v25ApiFetch('/api/session/start', { method: 'POST', body: JSON.stringify({ plan_id: v25RemotePlanId }) }).then(function (body) {
+          if (!body.session || body.session.plan_id !== v25RemotePlanId) {
+            throw new Error('后端返回的训练会话与当前计划不一致');
+          }
           v25RemoteSessionId = body.session && body.session.id;
           if (!v25RemoteSessionId) throw new Error('后端未返回训练会话 ID');
+          if (v25RemoteSessionConflict && v25RemoteSessionConflict.kind === 'completed_mismatch') {
+            v25RemoteSessionConflict = null;
+            v25RemoteSessionConflictPrompted = false;
+          }
           return v25RemoteSessionId;
         }).catch(function (error) {
           v25RemoteSessionPromise = null;
@@ -6127,13 +6203,34 @@
       var v25MigrationButton = document.getElementById('v25MigrationBtn');
       if (v25MigrationButton) v25MigrationButton.addEventListener('click', v25MigrationPreview);
       document.addEventListener('click', function (event) {
+        var conflictButton = event.target.closest('[data-v25-cancel-conflict]');
+        if (conflictButton) {
+          var conflictSessionId = Number(conflictButton.getAttribute('data-v25-cancel-conflict'));
+          if (!Number.isInteger(conflictSessionId) || conflictSessionId < 1) return;
+          conflictButton.disabled = true;
+          v25ApiFetch('/api/session/cancel', {
+            method: 'POST',
+            body: JSON.stringify({ session_id: conflictSessionId })
+          }).then(function (result) {
+            if (!result || (result.status !== 'cancelled' && result.status !== 'already_cancelled')) throw new Error('后端未确认错位会话已取消');
+            closeModal();
+            v25RemoteSessionConflict = null;
+            v25RemoteSessionConflictPrompted = false;
+            showToast('已保留原训练记录并取消会话，请重新安排当前计划', 'success');
+            return bootV25Api();
+          }).catch(function (error) {
+            conflictButton.disabled = false;
+            showToast('错位会话未取消：' + (error && error.message ? error.message : '请重试'), 'error');
+          });
+          return;
+        }
         var button = event.target.closest('[data-v25-catalog-commit]'); if (!button) return;
         var payload = JSON.parse(button.getAttribute('data-v25-catalog-commit'));
         v25ApiFetch('/api/migration/catalog/v24/commit', { method: 'POST', body: JSON.stringify(payload) }).then(function (data) { closeModal(); openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>迁移完成</h3><p>' + (data.status === 'already_committed' ? '本次是幂等重放，数据未重复新增。' : '已新增 ' + (data.created || []).length + ' 条动作。') + '</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div>'); }).catch(function (error) { openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>迁移未提交</h3><p>' + escapeHtml(error.message) + '</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div>'); });
       });
       function bootV25Api() {
         var month = formatDateKey(getToday()).slice(0, 7), todayKey = formatDateKey(getToday());
-        var jobs = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month, '/api/session/current?include_completed=true'].map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data }; }).catch(function () { return { ok: false, data: null }; }); });
+        var jobs = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month, '/api/session/current?include_completed=true'].map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data, error: null }; }).catch(function (error) { return { ok: false, data: null, error: error }; }); });
         return Promise.all(jobs).then(function (results) {
           if (!results[0].ok && !results[1].ok) {
             // A local done flag is not enough to claim completion when the
@@ -6169,9 +6266,35 @@
             todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
             todayPlan.source = v25Remote.today.title; todayIsRest = false;
           } else { todayPlan = []; todayIsRest = true; }
-          var activeSession = results[11].ok ? results[11].data.session : null;
-          if (!activeSession || activeSession.plan_id !== v25RemotePlanId) activeSession = null;
-          if (activeSession && activeSession.id) {
+          var sessionErrorDetail = results[11].error && results[11].error.detail;
+          var contextConflictDetail = sessionErrorDetail && sessionErrorDetail.code === 'SESSION_PLAN_CONTEXT_MISMATCH' ? sessionErrorDetail : null;
+          var historyConflictDetail = results[11].ok && results[11].data && results[11].data.history_conflict ? results[11].data.history_conflict : null;
+          var remoteSession = results[11].ok ? results[11].data.session : null;
+          var activeSession = remoteSession && remoteSession.plan_id === v25RemotePlanId ? remoteSession : null;
+          var foreignActiveSession = remoteSession
+            && remoteSession.status === 'in_progress'
+            && remoteSession.plan_id !== v25RemotePlanId;
+          if (contextConflictDetail) {
+            v25RemoteSessionConflict = {
+              kind: 'mismatch',
+              sessionId: contextConflictDetail.session_id,
+              planId: contextConflictDetail.plan_id,
+              message: contextConflictDetail.message
+            };
+            activeSession = null;
+          } else if (historyConflictDetail) {
+            v25RemoteSessionConflict = {
+              kind: 'completed_mismatch',
+              sessionId: historyConflictDetail.session_id,
+              planId: historyConflictDetail.plan_id,
+              message: historyConflictDetail.message,
+              canCancel: false
+            };
+            activeSession = null;
+          } else {
+            v25RemoteSessionConflict = foreignActiveSession ? { kind: 'foreign_active', sessionId: remoteSession.id, planId: remoteSession.plan_id } : null;
+          }
+          if (activeSession && activeSession.status === 'in_progress' && activeSession.id) {
             v25RemoteSessionId = activeSession.id;
             v25RemoteSessionPromise = Promise.resolve(activeSession.id);
           } else {
@@ -6179,7 +6302,8 @@
             v25RemoteSessionPromise = null;
           }
           if (todaySessionKey) {
-            var reconciledSession = v25ReconcileTodaySession(dailySessions[todaySessionKey], todayPlan, todayPlan.source || '', todayIsRest, todayStatusKnown, todayBackendDone, activeSession);
+            var localSessionForReconcile = v25RemoteSessionConflict ? null : dailySessions[todaySessionKey];
+            var reconciledSession = v25ReconcileTodaySession(localSessionForReconcile, todayPlan, todayPlan.source || '', todayIsRest, todayStatusKnown, todayBackendDone, activeSession);
             dailySessions[todaySessionKey] = reconciledSession;
             if (todaySessionKey === todayKey) {
               // Only the backend completion log may establish todayDone.
@@ -6193,6 +6317,18 @@
               todayPendingProgress = reconciledSession.pending || null;
               todayDone = reconciledSession.done;
             }
+          }
+          if (v25RemoteSessionConflict) {
+            if (v25RemoteSessionConflict.kind === 'mismatch') {
+              showToast('训练记录与当前计划不一致，已安全阻断后续写入', 'error');
+            } else if (v25RemoteSessionConflict.kind === 'completed_mismatch') {
+              showToast('历史完成事实与当前计划不一致，当前计划保持未完成', 'error');
+            } else {
+              showToast('已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划', 'error');
+            }
+            v25ShowSessionConflict(v25RemoteSessionConflict);
+          } else {
+            v25RemoteSessionConflictPrompted = false;
           }
           if (!todayStatusKnown && v25LocalDoneAwaitingVerification) {
             showToast('后端暂时无法确认训练状态，未显示完成', 'error');
