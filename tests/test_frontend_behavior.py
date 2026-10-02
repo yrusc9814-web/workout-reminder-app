@@ -453,3 +453,92 @@ v25RefreshCanonical(['2026-10-03'], {refreshLoaded:true, forceToday:true}).then(
 }).catch(error => { console.error(error); process.exit(5); });
 """
     _assert_ok(_run(script))
+
+
+def test_van16_month_refresh_drops_late_same_range_response_and_clears_failures():
+    """The production month loader keeps the newest range response only."""
+    script = r"""
+const fs = require('fs');
+const source = fs.readFileSync('static/index.html', 'utf8');
+const pending = [];
+const applied = [];
+const calls = [];
+var v25MonthRequestSequence = 0;
+var calendarDisplayYear = 2032, calendarDisplayMonth = 1;
+var calendarPlans = {};
+var v25Remote = { loadedMonths: {}, planDays: {}, calendarDays: {}, monthRequests: {}, monthStatus: {}, statsByMonth: {}, detailByMonth: {} };
+function v25MonthForDate(key) { return String(key).slice(0, 7); }
+function v25ClearMonth(token) { delete v25Remote.loadedMonths[token]; Object.keys(calendarPlans).forEach((key) => { if (key.startsWith(token)) delete calendarPlans[key]; }); }
+function v25ApplyPlanDays(days, detail, token) { applied.push({ token, id: days[0] && days[0].id }); }
+function v25ApplyStats() {}
+function showToast() {}
+function renderCalendarMonth() {}
+function pad2(n) { return String(n).padStart(2, '0'); }
+function v25ApiFetch(path) { calls.push(path); return new Promise((resolve, reject) => pending.push({ path, resolve, reject })); }
+const start = source.indexOf('function v25RefreshMonth(');
+const end = source.indexOf('function v25RefreshCanonical(');
+eval(source.slice(start, end));
+(async () => {
+  const oldRequest = v25RefreshMonth('2032-02');
+  const newRequest = v25RefreshMonth('2032-02');
+  if (pending.length !== 6) throw new Error(`expected six queued calls, got ${pending.length}`);
+  // Resolve the newest request first, then the late old response.
+  const newestRows = pending.splice(3, 3);
+  newestRows[0].resolve({ days: [{ date: '2032-02-03', id: 'new', is_training: true, items: [] }] });
+  newestRows[1].resolve({ days: [{ date: '2032-02-03', status: 'planned' }] });
+  newestRows[2].resolve({ month: '2032-02', completed: 0, training_days: 1, completion_rate: 0, duration_seconds: 0 });
+  const oldRows = pending.splice(0, 3);
+  oldRows[0].resolve({ days: [{ date: '2032-02-03', id: 'old', is_training: true, items: [] }] });
+  oldRows[1].resolve({ days: [{ date: '2032-02-03', status: 'planned' }] });
+  oldRows[2].resolve({ month: '2032-02', completed: 0, training_days: 1, completion_rate: 0, duration_seconds: 0 });
+  await Promise.all([oldRequest, newRequest]);
+  if (applied.length !== 1 || applied[0].id !== 'new') throw new Error(`late response overwrote newest month: ${JSON.stringify(applied)}`);
+  const failed = v25RefreshMonth('2032-02');
+  if (pending.length !== 3) throw new Error('failed refresh did not enqueue a complete range');
+  const failedRows = pending.splice(0, 3);
+  failedRows[0].reject(new Error('offline'));
+  failedRows[1].resolve({ days: [] });
+  failedRows[2].resolve({ month: '2032-02' });
+  try { await failed; throw new Error('failed refresh resolved'); } catch (error) { if (!String(error.message).includes('offline')) throw error; }
+  if (v25Remote.loadedMonths['2032-02']) throw new Error('failed refresh retained loaded cache');
+  console.log('PASS');
+})().catch((error) => { console.error(error.stack || error); process.exit(1); });
+"""
+    _assert_ok(_run(script))
+
+
+def test_van16_stats_failure_clears_previous_month_facts_and_filters_past_week_plan():
+    """Failure and week cards must use the current backend range only."""
+    script = r"""
+const fs = require('fs');
+const source = fs.readFileSync('static/index.html', 'utf8');
+const ids = {};
+function element() { return { textContent: '', hidden: false, style: {}, setAttribute: function (name, value) { this[name] = value; } }; }
+['monthStatsSummary','monthCompletionRate','monthDurationMetric','monthGoalDesc','monthGoalStat','monthGoalSub','monthGoalFill','weekCompletionMetric','monthPieFill','monthPieText','monthPieChart','monthPieCompleted','monthPieRemaining','monthTrendArea','monthTrendLine','monthTrendEmpty','monthTrendLabels','monthChartFoot','monthMostActionName','monthMostActionCount','monthMostActionMsg','monthMostActionScale','monthMostActionBar','monthLeastActionName','monthLeastActionCount','monthLeastActionMsg','monthLeastActionScale','monthLeastActionBar','monthRetryBtn','weekCompletedMain','weekCompletedSub','weekNextMain','weekNextSub','weekRestMain','weekRestSub'].forEach((id) => { ids[id] = element(); });
+var v25Remote = { weekStats: null };
+var calendarDisplayYear = 2026, calendarDisplayMonth = 9;
+function v25SetText(id, value) { ids[id].textContent = value == null ? '' : String(value); }
+var document = { getElementById: (id) => ids[id] || null };
+const start = source.indexOf('function v25ApplyStats(');
+const end = source.indexOf('function v25ApplyWeekStats(');
+eval(source.slice(start, end));
+const weekStart = source.indexOf('function v25ApplyWeekStats(');
+const weekEnd = source.indexOf('function v25ApplyTemplates(');
+eval(source.slice(weekStart, weekEnd));
+function monthDetail() { return { completed: 1, days: [{date:'2026-10-01', status:'completed', is_training:true}] }; }
+v25ApplyStats({ month:'2026-10', completion_rate:100, completed:1, training_days:1, duration_seconds:60, action_stats:[{name:'真实动作', sets:1}] }, 'ready', monthDetail());
+if (ids.monthGoalDesc.textContent !== '本月真实计划 · 1 个训练日' || ids.monthGoalFill.style.width !== '100%' || ids.monthPieCompleted.textContent !== '1' || ids.monthPieRemaining.textContent !== '0' || ids.monthMostActionName.textContent !== '真实动作') process.exit(1);
+v25ApplyStats(null, 'partial_error');
+if (ids.monthGoalDesc.textContent === '本月真实计划 · 1 个训练日' || ids.monthGoalFill.style.width !== '0%' || ids.monthPieCompleted.textContent !== '—' || ids.monthPieRemaining.textContent !== '—' || ids.monthMostActionName.textContent !== '暂无数据' || ids.monthRetryBtn.hidden !== false) process.exit(2);
+v25ApplyStats(null, 'error');
+if (ids.monthRetryBtn.hidden !== false) process.exit(4);
+function v25TodayKey() { return '2026-10-02'; }
+v25ApplyWeekStats({training_days:2, days:[
+  {date:'2026-09-30', is_training:true, status:'completed'},
+  {date:'2026-10-01', is_training:true, status:'completed'},
+  {date:'2026-10-02', is_training:false, status:'rest'}
+]}, 'ready');
+if (!ids.weekNextMain.textContent.includes('本周暂无待训练计划')) process.exit(3);
+console.log('PASS');
+"""
+    _assert_ok(_run(script))

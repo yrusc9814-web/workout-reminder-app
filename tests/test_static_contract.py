@@ -49,6 +49,27 @@ def test_frontend_primary_copy_is_chinese():
     assert "运动提醒 App" not in index_html
 
 
+def test_v25_formal_page_has_no_demo_business_facts():
+    """The production page starts from empty/loading state and backend data."""
+    index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert "demoPlans" not in index_html
+    assert "DEMO_YEAR" not in index_html
+    assert "完成度 58%" not in index_html
+    assert "累计 <strong>210</strong> 分钟" not in index_html
+    assert "已完成 7" not in index_html
+    assert "18 组" not in index_html
+    assert "v25ClearMonth" in index_html
+    assert "monthRequests" in index_html
+    assert "训练已由后端确认，但回读刷新失败" in index_html
+    assert "monthRetryBtn" in index_html
+    assert "v25RemoteDataVerified" in index_html
+    assert "bootOwnsDisplay" in index_html
+    assert "v25ApplyStats(v25Remote.stats, bootRangeStatus" in index_html
+    assert "data-month-status" in index_html
+    assert "action_stats" in index_html
+
+
 def test_windows_one_click_launcher_exists():
     launcher = APP_DIR / "scripts" / "start_workout_app.cmd"
     shortcut_script = APP_DIR / "scripts" / "create_start_shortcut.ps1"

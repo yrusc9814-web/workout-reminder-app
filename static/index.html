@@ -2775,18 +2775,11 @@
             <h3><span class="g-icon">🎯</span><span id="goalMonthTitle">月训练目标</span></h3>
             <span class="g-date" id="monthDateLabel"></span>
           </div>
-          <div class="goal-desc">
-            缓解久坐腰背紧张
-            <span class="g-tag">每周 3 次</span>
-            <span class="g-tag">每次 15–25 分钟</span>
-          </div>
+          <div class="goal-desc" id="monthGoalDesc">本月目标将根据真实计划读取</div>
           <div class="goal-progress">
-            <div class="gp-bar"><div class="gp-fill" style="width:58%"></div></div>
-            <span class="gp-stat">已完成 <strong>7</strong> / 12 次</span>
-            <div class="gp-sub">
-              距本月目标还差 <strong>5</strong> 次
-              <span class="gp-next">本周还差 1 次 · 周五建议「腰背舒缓」15 分钟</span>
-            </div>
+            <div class="gp-bar"><div class="gp-fill" id="monthGoalFill" style="width:0%"></div></div>
+            <span class="gp-stat" id="monthGoalStat">等待读取本月数据…</span>
+            <div class="gp-sub" id="monthGoalSub">本月目标和建议将在后端数据读取成功后显示</div>
           </div>
         </div>
 
@@ -2796,6 +2789,7 @@
           <div class="month-nav">
             <button type="button" id="monthPrevBtn" aria-label="上月">‹</button>
             <button class="pill-btn" type="button" id="monthTodayBtn">回到今天</button>
+            <button class="pill-btn" type="button" id="monthRetryBtn" hidden>重试读取</button>
             <button type="button" id="monthNextBtn" aria-label="下月">›</button>
           </div>
         </div>
@@ -2822,40 +2816,40 @@
           <div class="wrh-card">
             <span class="wr-icon">✅</span>
             <span class="wr-label">本周已完成</span>
-            <span class="wr-main">2 次 · 核心 + 下肢</span>
-            <span class="wr-sub">周一 · 周三</span>
+            <span class="wr-main" id="weekCompletedMain">等待读取本周数据…</span>
+            <span class="wr-sub" id="weekCompletedSub"></span>
           </div>
           <div class="wrh-card today">
             <span class="wr-icon">📍</span>
             <span class="wr-label">下一次训练</span>
-            <span class="wr-main">周五 · 腰背舒缓</span>
-            <span class="wr-sub">约 15 分钟 · 低强度</span>
+            <span class="wr-main" id="weekNextMain">等待读取本周数据…</span>
+            <span class="wr-sub" id="weekNextSub"></span>
           </div>
           <div class="wrh-card">
             <span class="wr-icon">🛌</span>
             <span class="wr-label">恢复日</span>
-            <span class="wr-main">周四 · 六 · 日</span>
-            <span class="wr-sub">休息 / 轻量拉伸</span>
+            <span class="wr-main" id="weekRestMain">等待读取本周数据…</span>
+            <span class="wr-sub" id="weekRestSub"></span>
           </div>
         </div>
       </section>
 
             <details class="ai-video-capability" id="monthStatsCollapse">
-        <summary>📊 本月统计 · 完成度 58%</summary>
+        <summary id="monthStatsSummary">📊 本月统计 · 等待读取</summary>
 
         <!-- A: 完成度 / 本周完成 / 总时长 -->
         <div class="metrics" aria-label="本月指标">
           <div class="metric" tabindex="0">
             <span>本月计划完成度</span>
-            <strong>58%</strong>
+            <strong id="monthCompletionRate">—</strong>
           </div>
           <div class="metric" tabindex="0">
             <span>本周完成</span>
-            <strong>2<span style="font-size:13px;color:var(--brown-soft);font-weight:700"> /3</span></strong>
+            <strong id="weekCompletionMetric">—</strong>
           </div>
           <div class="metric" tabindex="0">
             <span>总训练时长</span>
-            <strong>210<span style="font-size:13px;color:var(--brown-soft);font-weight:700"> 分</span></strong>
+            <strong id="monthDurationMetric">—</strong>
           </div>
         </div>
 
@@ -2863,7 +2857,7 @@
           <article class="chart-card" aria-label="本月完成占比">
             <h3>完成占比</h3>
             <div class="chart-body">
-              <svg class="pie-svg" viewBox="0 0 120 120" role="img" aria-label="完成 58%，未完成 42%">
+              <svg class="pie-svg" viewBox="0 0 120 120" role="img" aria-label="本月完成占比，等待读取" id="monthPieChart">
                 <circle cx="60" cy="60" r="42" fill="none" stroke="var(--line)" stroke-width="16" />
                 <circle
                   cx="60" cy="60" r="42"
@@ -2871,50 +2865,31 @@
                   stroke="var(--sage)"
                   stroke-width="16"
                   stroke-linecap="round"
-                  stroke-dasharray="153 264"
+                  stroke-dasharray="0 264"
+                  id="monthPieFill"
                   transform="rotate(-90 60 60)"
                 />
-                <text x="60" y="56" text-anchor="middle" font-size="20" font-weight="800" fill="var(--ink)">58%</text>
+                <text x="60" y="56" text-anchor="middle" font-size="20" font-weight="800" fill="var(--ink)" id="monthPieText">—</text>
                 <text x="60" y="72" text-anchor="middle" font-size="10" font-weight="700" fill="var(--brown-soft)">完成度</text>
               </svg>
             </div>
             <div class="legend">
-              <span><i style="background:var(--sage)"></i>已完成 7</span>
-              <span><i style="background:var(--line)"></i>剩余 5</span>
+              <span><i style="background:var(--sage)"></i>已完成 <strong id="monthPieCompleted">—</strong></span>
+              <span><i style="background:var(--line)"></i>剩余 <strong id="monthPieRemaining">—</strong></span>
             </div>
           </article>
 
           <article class="chart-card" aria-label="本月每日完成趋势">
             <h3>整月完成趋势</h3>
             <div class="chart-body" style="align-items:end;width:100%">
-              <svg class="line-svg" viewBox="0 0 360 140" role="img" aria-label="本月整月训练完成趋势">
+              <svg class="line-svg" viewBox="0 0 360 140" role="img" aria-label="本月整月训练完成趋势，等待读取" id="monthTrendChart">
                 <line x1="28" y1="12" x2="28" y2="108" stroke="var(--line)" stroke-width="1" />
                 <line x1="28" y1="108" x2="348" y2="108" stroke="var(--line)" stroke-width="1" />
                 <line x1="28" y1="60" x2="348" y2="60" stroke="var(--line-soft)" stroke-width="1" stroke-dasharray="3 4" />
-                <path
-                  d="M28,108 L28,100 L48,96 L68,100 L88,92 L108,96 L128,84 L148,88 L168,72 L188,78 L208,64 L228,70 L248,58 L268,62 L288,52 L308,56 L328,48 L348,50 L348,108 Z"
-                  fill="rgba(124,185,168,.16)"
-                />
-                <path
-                  d="M28,100 L48,96 L68,100 L88,92 L108,96 L128,84 L148,88 L168,72 L188,78 L208,64 L228,70 L248,58 L268,62 L288,52 L308,56 L328,48 L348,50"
-                  fill="none"
-                  stroke="var(--sage)"
-                  stroke-width="2.8"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <circle cx="88" cy="92" r="3.2" fill="var(--sage)" stroke="var(--panel)" stroke-width="1.4" />
-                <circle cx="128" cy="84" r="3.2" fill="#9ec069" stroke="var(--panel)" stroke-width="1.4" />
-                <circle cx="168" cy="72" r="3.2" fill="var(--sage)" stroke="var(--panel)" stroke-width="1.4" />
-                <circle cx="208" cy="64" r="3.2" fill="#9ec069" stroke="var(--panel)" stroke-width="1.4" />
-                <circle cx="248" cy="58" r="3.2" fill="var(--sage)" stroke="var(--panel)" stroke-width="1.4" />
-                <circle cx="288" cy="52" r="3.2" fill="#9ec069" stroke="var(--panel)" stroke-width="1.4" />
-                <circle cx="348" cy="50" r="3.5" fill="#e8a87c" stroke="var(--panel)" stroke-width="1.5" />
-                <text x="28" y="126" text-anchor="middle" font-size="9" font-weight="700" fill="var(--brown-soft)">1</text>
-                <text x="108" y="126" text-anchor="middle" font-size="9" font-weight="700" fill="var(--brown-soft)">8</text>
-                <text x="188" y="126" text-anchor="middle" font-size="9" font-weight="700" fill="var(--brown-soft)">15</text>
-                <text x="268" y="126" text-anchor="middle" font-size="9" font-weight="700" fill="var(--brown-soft)">22</text>
-                <text x="348" y="126" text-anchor="middle" font-size="9" font-weight="700" fill="var(--brown-soft)">31</text>
+                <path id="monthTrendArea" d="" fill="rgba(124,185,168,.16)" />
+                <path id="monthTrendLine" d="" fill="none" stroke="var(--sage)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
+                <text id="monthTrendEmpty" x="188" y="76" text-anchor="middle" font-size="11" font-weight="700" fill="var(--brown-soft)">等待读取</text>
+                <text id="monthTrendLabels" x="28" y="126" text-anchor="middle" font-size="9" font-weight="700" fill="var(--brown-soft)"></text>
               </svg>
             </div>
             <p class="chart-foot" id="monthChartFoot"></p>
@@ -2926,23 +2901,23 @@
           <div class="action-stat most">
             <span class="emoji" aria-hidden="true">👍✨</span>
             <span class="label">完成量最多</span>
-            <span class="name">臀桥</span>
-            <span class="count">18 组</span>
-            <span class="msg">太棒了，这项保持得很好！</span>
+            <span class="name" id="monthMostActionName">暂无数据</span>
+            <span class="count" id="monthMostActionCount"></span>
+            <span class="msg" id="monthMostActionMsg">后端读取成功后显示真实动作统计</span>
             <div class="bar-wrap" aria-hidden="true">
-              <div class="bar-track"><div class="bar-fill" style="width:100%"></div></div>
-              <div class="bar-scale">相对本月最高组数</div>
+              <div class="bar-track"><div class="bar-fill" id="monthMostActionBar" style="width:0%"></div></div>
+              <div class="bar-scale" id="monthMostActionScale"></div>
             </div>
           </div>
           <div class="action-stat least">
             <span class="emoji" aria-hidden="true">🌱</span>
             <span class="label">完成量最少</span>
-            <span class="name">Bird Dog</span>
-            <span class="count">6 组</span>
-            <span class="msg">没关系，慢慢加，下周可以多练一点</span>
+            <span class="name" id="monthLeastActionName">暂无数据</span>
+            <span class="count" id="monthLeastActionCount"></span>
+            <span class="msg" id="monthLeastActionMsg">后端读取成功后显示真实动作统计</span>
             <div class="bar-wrap" aria-hidden="true">
-              <div class="bar-track"><div class="bar-fill" style="width:33%"></div></div>
-              <div class="bar-scale">相对最多动作 · 约 1/3</div>
+              <div class="bar-track"><div class="bar-fill" id="monthLeastActionBar" style="width:0%"></div></div>
+              <div class="bar-scale" id="monthLeastActionScale"></div>
             </div>
             <button class="btn mini" type="button" id="planMore" disabled title="训练统计完善后开放">下周多安排</button>
           </div>
@@ -3390,31 +3365,16 @@
       function displayedMonthLabel() { return (calendarDisplayMonth + 1) + ' 月'; }
       function displayedYearMonthLabel() { return calendarDisplayYear + ' 年 ' + (calendarDisplayMonth + 1) + ' 月'; }
 
-      // ── 演示 seed 数据：仅属于 2026 年 7 月，使用完整日期 key ──
-      // 只作为 seed，不参与运行时日期；展示其他月份时自动隔离为空态，
-      // 也不会把演示 13 日当作今天。
-      var DEMO_YEAR = 2026, DEMO_MONTH = 6; // 0 基，2026-07
-      var demoPlans = {
-        '2026-07-01':{title:'核心控制',status:'done',label:'已完成',time:25,intensity:'低强度',body:'核心',items:['骨盆后倾 · 3×10 秒','死虫式 · 3×10','臀桥 · 3×12']},
-        '2026-07-03':{title:'下肢激活',status:'done',label:'已完成',time:20,intensity:'低强度',body:'下肢',items:['臀桥 · 3×12','靠墙静蹲 · 3×30 秒']},
-        '2026-07-05':{title:'上肢力量',status:'done',label:'已完成',time:30,intensity:'中强度',body:'上肢',items:['俯卧撑 · 3×10','靠墙天使 · 3×12']},
-        '2026-07-07':{title:'八段锦',status:'done',label:'已完成',time:12,intensity:'低强度',body:'全身',items:['八段锦完整八式']},
-        '2026-07-09':{title:'下肢力量',status:'done',label:'已完成',time:25,intensity:'中强度',body:'下肢',items:['臀桥 · 3×12','靠墙静蹲 · 3×30 秒','徒手深蹲 · 3×15']},
-        '2026-07-11':{title:'上肢推举',status:'done',label:'已完成',time:30,intensity:'中强度',body:'上肢',items:['俯卧撑 · 3×10','靠墙天使 · 3×12']},
-        '2026-07-13':{title:'核心控制',status:'partial',label:'进行中',time:15,intensity:'低强度',body:'核心',items:['骨盆后倾 · 3×10 秒','死虫式 · 3×10','臀桥 · 3×12']},
-        '2026-07-15':{title:'腰背舒缓',status:'planned',label:'计划中',time:15,intensity:'低强度',body:'核心',items:['骨盆后倾 · 3×8','猫牛式 · 3×10','死虫式 · 3×10']},
-        '2026-07-17':{title:'下肢力量',status:'planned',label:'计划中',time:25,intensity:'中强度',body:'下肢',items:['臀桥 · 3×12','靠墙静蹲 · 3×30 秒','徒手深蹲 · 3×15']},
-        '2026-07-19':{title:'上肢力量',status:'planned',label:'计划中',time:30,intensity:'中强度',body:'上肢',items:['俯卧撑 · 3×10','靠墙天使 · 3×12']},
-        '2026-07-21':{title:'核心控制',status:'planned',label:'计划中',time:20,intensity:'低强度',body:'核心',items:['骨盆后倾 · 3×10 秒','死虫式 · 3×10','臀桥 · 3×12']},
-        '2026-07-23':{title:'下肢力量',status:'planned',label:'计划中',time:25,intensity:'中强度',body:'下肢',items:['臀桥 · 3×12','靠墙静蹲 · 3×30 秒']},
-        '2026-07-25':{title:'上肢力量',status:'planned',label:'计划中',time:20,intensity:'中强度',body:'上肢',items:['俯卧撑 · 3×10']},
-        '2026-07-27':{title:'核心+腰背',status:'planned',label:'计划中',time:25,intensity:'低强度',body:'核心',items:['骨盆后倾 · 3×10 秒','猫牛式 · 3×10','死虫式 · 3×10','仰卧骨盆时钟 · 3×8']},
-        '2026-07-29':{title:'下肢力量',status:'planned',label:'计划中',time:25,intensity:'中强度',body:'下肢',items:['臀桥 · 3×12','靠墙静蹲 · 3×30 秒']},
-        '2026-07-31':{title:'上肢推举',status:'planned',label:'计划中',time:30,intensity:'中强度',body:'上肢',items:['俯卧撑 · 3×10','靠墙天使 · 3×12']}
-      };
-      // 运行时工作态：调整/安排/推迟写入这里（未来 P0-2 持久化目标）；起步为空对象。
+      // 运行时工作态：只接收后端返回的真实计划；初始为空，避免正式页面展示演示事实。
       var calendarPlans = {};
-      var restPlan = {title:'恢复日',status:'rest',label:'恢复日',time:0,intensity:'轻量恢复',body:'恢复',items:['不安排正式训练','可选：5 分钟舒展或轻松散步']};
+      var restPlan = {title:'恢复日',status:'rest',label:'恢复日',time:0,intensity:'轻量恢复',body:'恢复',items:[]};
+      var loadingPlan = {title:'读取中…',status:'loading',label:'读取中',time:0,intensity:'',body:'',items:[]};
+      var errorPlan = {title:'读取失败',status:'error',label:'读取失败',time:0,intensity:'',body:'',items:[]};
+      // localStorage remains available for recovery/export, but it cannot
+      // become formal calendar or today's business facts before the backend
+      // verifies the current range.
+      var v25RemoteDataVerified = false;
+      var v25TodayDisplayState = 'loading';
 
       // 筛选 pill 切换（示意）
       document.querySelectorAll('.filter-pills').forEach(function (group) {
@@ -4120,6 +4080,20 @@
         todayDone = !!s.done;
         todayIsRest = !!s.rest;
       }
+      function resetTodayRuntimeForUnverifiedData() {
+        todayPlan = [];
+        todayStepIndex = 0;
+        todaySetIndex = 0;
+        todayActionElapsedSeconds = 0;
+        todayActionStartedAt = null;
+        todaySkipped = [];
+        todayRecordFacts = [];
+        todayPendingProgress = null;
+        todayStarted = false;
+        todayDone = false;
+        todayIsRest = true;
+        v25TodayDisplayState = 'loading';
+      }
       // 启动 hydration 顺序：
       // 1 内置 seed → 2 loadTrainingState → 3 validate / migrate → 4 hydrate calendarPlans
       // → 5 合并 customTrainingPlans → 6 按真实 todayKey 恢复 dailySession
@@ -4133,7 +4107,7 @@
         mergeTrainingPlans();
         todaySessionKey = formatDateKey(getToday());
         if (Object.prototype.hasOwnProperty.call(dailySessions, todaySessionKey)) {
-          restoreSessionToToday(dailySessions[todaySessionKey]);
+          resetTodayRuntimeForUnverifiedData();
         } else {
           initTodayFromCalendar(); // 从未建立 session：按现有 calendar plan 初始化（含休息日）
         }
@@ -4144,20 +4118,10 @@
         var oldKey = todaySessionKey;
         if (oldKey && oldKey !== newKey) persistTodayToSession(oldKey, false);
         todaySessionKey = newKey;
-        if (Object.prototype.hasOwnProperty.call(dailySessions, newKey)) {
+        if (v25RemoteDataVerified && Object.prototype.hasOwnProperty.call(dailySessions, newKey)) {
           restoreSessionToToday(dailySessions[newKey]);
         } else {
-          todayPlan = [];
-          todayStepIndex = 0;
-          todaySetIndex = 0;
-          todayActionElapsedSeconds = 0;
-          todayActionStartedAt = null;
-          todaySkipped = [];
-          todayRecordFacts = [];
-          todayPendingProgress = null;
-          todayStarted = false;
-          todayDone = false;
-          todayIsRest = false;
+          resetTodayRuntimeForUnverifiedData();
           initTodayFromCalendar();
         }
         renderTodayPlan();
@@ -4223,8 +4187,11 @@
       document.addEventListener('keydown', function(event) { if (event.key === 'Escape') closeModal(); });
 
       function getCalendarPlan(dateKey) {
+        var token = String(dateKey || '').slice(0, 7);
+        var status = v25Remote && v25Remote.monthStatus ? v25Remote.monthStatus[token] : null;
+        if (status === 'error' || status === 'partial_error') return errorPlan;
+        if (status !== 'ready') return loadingPlan;
         if (calendarPlans[dateKey]) return calendarPlans[dateKey];
-        if (demoPlans[dateKey]) return demoPlans[dateKey];
         return restPlan;
       }
       function getCalendarDateState(day) {
@@ -4252,6 +4219,8 @@
         var icon = plan.body === '下肢' ? '🦵' : plan.body === '上肢' ? '💪' : plan.title === '八段锦' ? '🧘' : plan.status === 'rest' ? '' : '💪';
         if (plan.status === 'rest') {
           cell.innerHTML = '<span class="d-num">' + day + '</span><span class="d-badge">休</span>';
+        } else if (plan.status === 'loading' || plan.status === 'error') {
+          cell.innerHTML = '<span class="d-num">' + day + '</span><span class="d-badge">' + escapeHtml(plan.title) + '</span>';
         } else {
           cell.innerHTML = '<span class="d-num">' + day + '</span><span class="d-dot"></span><span class="d-badge">' + icon + ' ' + escapeHtml(plan.title) + ' · ' + plan.time + "'</span>";
         }
@@ -4265,6 +4234,14 @@
           renderCalendarCell(day);
         }
         var plan = getCalendarPlan(displayedDateKey(day));
+        if (plan.status === 'loading' || plan.status === 'error') {
+          openModal(
+            '<button class="modal-close" type="button" data-modal-close>×</button>' +
+            '<div class="modal-head"><div><h3>' + displayedMonthLabel() + ' ' + day + ' 日 · ' + escapeHtml(plan.title) + '</h3><p>' + (plan.status === 'loading' ? '该日期还未完成后端读取。' : '该月份读取失败，未显示本地旧数据。') + '</p></div></div>' +
+            '<div class="modal-actions"><button class="btn primary" type="button" data-v25-retry-month>重试读取</button><button class="btn ghost" type="button" data-modal-close>关闭</button></div>'
+          );
+          return;
+        }
         // 每天都可调整（含已完成/休息日），修改只影响当天
         var list = plan.items.map(function(item) { return '<div class="modal-list-item"><span>✓</span>' + escapeHtml(item) + '</div>'; }).join('');
         var headHint = plan.status === 'rest'
@@ -4429,7 +4406,15 @@
           if (heroProgress) heroProgress.hidden = true;
           if (detailPanel) detailPanel.hidden = true;
           if (skipBtn) skipBtn.hidden = true;
-          if (todayIsRest) {
+          if (v25TodayDisplayState === 'loading') {
+            if (list) list.innerHTML = '<div class="today-empty">正在读取今日真实计划…</div>';
+            if (title) title.textContent = '今日计划读取中';
+            if (meta) meta.textContent = '正在从后端读取今天的计划，请稍候';
+          } else if (v25TodayDisplayState === 'error') {
+            if (list) list.innerHTML = '<div class="today-empty">今日计划读取失败。<br><button class="btn mini" type="button" data-v25-retry-today>重试读取</button></div>';
+            if (title) title.textContent = '今日计划读取失败';
+            if (meta) meta.textContent = '未确认到后端数据，页面不会把未知状态当作恢复日';
+          } else if (todayIsRest) {
             // 休息日态
             if (list) list.innerHTML = '<div class="today-empty" style="text-align:center;padding:24px 16px;">🌿 今天是恢复日，好好休息<br><small style="opacity:.7;margin-top:8px;display:inline-block">想加练？去动作库挑几个轻量动作</small><br><button class="btn mini" type="button" data-view="library" style="margin-top:12px">去动作库</button></div>';
             if (title) title.textContent = '恢复日';
@@ -4910,7 +4895,22 @@
           v25RemoteProgressPending = false;
           saveTrainingState();
           renderTodayPlan();
-          return true;
+          // The completion response is the commit point. Only after it is
+          // confirmed do we invalidate loaded ranges and read the real month,
+          // week and today data back so calendar, history and statistics agree.
+          if (!isFinal || typeof v25RefreshCanonical !== 'function' || !v25Remote || !v25Remote.monthRequests || typeof calendarDisplayYear === 'undefined') return true;
+          return v25RefreshCanonical([v25TodayKey()], { refreshLoaded: true, forceToday: true }).then(function () {
+            var refreshedMonth = calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1);
+            if (typeof v25ApplyStats === 'function') v25ApplyStats(v25Remote.stats, v25Remote.stats ? 'ready' : 'error', v25Remote.detailByMonth[refreshedMonth]);
+            if (typeof v25ApplyWeekStats === 'function') v25ApplyWeekStats(v25Remote.weekStats, v25Remote.weekStats ? 'ready' : 'error');
+            renderTodayPlan();
+            renderWeek();
+            renderCalendarMonth();
+            return true;
+          }).catch(function (refreshError) {
+            showToast('训练已由后端确认，但回读刷新失败：' + (refreshError && refreshError.message ? refreshError.message : '请重试'), 'error');
+            return true;
+          });
         }).catch(function(error) {
           v25RemoteProgressPending = false;
           // Keep the frozen pending payload for an exact retry after a lost or
@@ -5221,6 +5221,8 @@
       document.addEventListener('click', function(event) {
         var target = event.target.closest('button, a'); if (!target) return;
         if (target.id === 'chatSendBtn') { sendChat(chatInput.value); return; }
+        if (target.hasAttribute('data-v25-retry-today')) { v25BootPromise = bootV25Api(); return; }
+        if (target.hasAttribute('data-v25-retry-month')) { closeModal(); v25RetryDisplayedMonth(); return; }
         if (target.hasAttribute('data-chat-q')) { sendChat(target.getAttribute('data-chat-q')); return; }
         // P1-2：新建训练方案 / 数据导入导出
         if (target.id === 'newPlanBtn') { renderNewPlanModal(); return; }
@@ -5392,9 +5394,12 @@
           if (isToday) cls += ' today is-selected';
           else if (plan.status === 'done') cls += ' done';
           else if (plan.status === 'rest') cls += ' rest';
+          else if (plan.status === 'loading' || plan.status === 'error') cls += ' unknown';
           var planText = plan.status === 'rest'
             ? '休息日'
-            : (isToday ? '今日 · ' + plan.title : plan.title + (plan.status === 'done' ? ' ✓' : ''));
+            : (plan.status === 'loading' || plan.status === 'error'
+              ? plan.title
+              : (isToday ? '今日 · ' + plan.title : plan.title + (plan.status === 'done' ? ' ✓' : '')));
           if (isToday) todayPlanInfo = plan;
           html += '<button class="' + cls + '" type="button" role="listitem" data-date="' + dk + '" data-plan="' + escapeHtml(plan.title) + '">' +
             '<span class="wd">' + WEEKDAY_NAMES[d.getDay()] + '</span>' +
@@ -5423,7 +5428,7 @@
         if (svg) svg.setAttribute('aria-label', displayedYearMonthLabel() + '整月训练完成趋势');
         if (chartFoot) {
           var isCurrent = calendarDisplayYear === getToday().getFullYear() && calendarDisplayMonth === getToday().getMonth();
-          chartFoot.innerHTML = (calendarDisplayMonth + 1) + ' 月 1–' + getDaysInMonth(calendarDisplayYear, calendarDisplayMonth) + ' 日 · 累计 <strong>210</strong> 分钟' + (isCurrent ? ' · 今日为第 ' + getToday().getDate() + ' 日' : '');
+          chartFoot.innerHTML = (calendarDisplayMonth + 1) + ' 月 1–' + getDaysInMonth(calendarDisplayYear, calendarDisplayMonth) + ' 日' + (isCurrent ? ' · 今日为第 ' + getToday().getDate() + ' 日' : '');
         }
       }
       // 仅 class 级更新（不重建 DOM）：补齐 today / current-week 标记
@@ -5449,6 +5454,10 @@
         var calendarEl = document.getElementById('calendar');
         if (!calendarEl) return;
         var year = calendarDisplayYear, month = calendarDisplayMonth;
+        var monthToken = v25DisplayedMonthToken();
+        var monthStatus = v25Remote && v25Remote.monthStatus ? v25Remote.monthStatus[monthToken] : null;
+        calendarEl.setAttribute('data-month-status', monthStatus || (v25RemoteDataVerified ? 'ready' : 'unverified'));
+        calendarEl.setAttribute('aria-label', monthStatus === 'error' || monthStatus === 'partial_error' ? '本月训练日历，读取失败' : '本月训练日历');
         var days = getDaysInMonth(year, month);
         var offset = getMonthStartOffset(year, month);
         var html = ['日','一','二','三','四','五','六'].map(function (w) { return '<div class="cal-wd">' + w + '</div>'; }).join('');
@@ -5459,7 +5468,9 @@
           var icon = plan.body === '下肢' ? '🦵' : plan.body === '上肢' ? '💪' : plan.title === '八段锦' ? '🧘' : plan.status === 'rest' ? '' : '💪';
           var body = plan.status === 'rest'
             ? '<span class="d-num">' + d + '</span><span class="d-badge">休</span>'
-            : '<span class="d-num">' + d + '</span><span class="d-dot"></span><span class="d-badge">' + icon + ' ' + escapeHtml(plan.title) + ' · ' + plan.time + "'</span>";
+            : (plan.status === 'loading' || plan.status === 'error'
+              ? '<span class="d-num">' + d + '</span><span class="d-badge">' + escapeHtml(plan.title) + '</span>'
+              : '<span class="d-num">' + d + '</span><span class="d-dot"></span><span class="d-badge">' + icon + ' ' + escapeHtml(plan.title) + ' · ' + plan.time + "'</span>");
           html += '<button class="' + cls + '" type="button" data-day="' + d + '">' + body + '</button>';
         }
         calendarEl.innerHTML = html;
@@ -5468,29 +5479,91 @@
       }
 
       // ── P0-1：上月 / 下月 / 回到今天（跨年正确）──
+      var v25DisplayedMonthRequest = 0;
+      function v25DisplayedMonthToken() { return calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1); }
+      function v25LoadDisplayedMonth(token, requestId) {
+        var read;
+        if (v25Remote.ready) {
+          read = v25RefreshMonth(token);
+        } else if (v25BootPromise) {
+          read = v25BootPromise.then(function () {
+            return v25Remote.monthStatus[token] === 'ready' ? { month: token } : v25RefreshMonth(token);
+          });
+        } else {
+          read = Promise.reject(new Error('后端尚未完成初始化，请稍后重试'));
+        }
+        return read.then(function (result) {
+          if (v25Remote.monthStatus[token] !== 'ready') throw new Error('月份计划或统计读取不完整，请重试');
+          if (requestId !== v25DisplayedMonthRequest || token !== v25DisplayedMonthToken()) return result;
+          renderCalendarMonth();
+          v25ApplyStats(v25Remote.statsByMonth[token], 'ready', v25Remote.detailByMonth[token]);
+          return result;
+        });
+      }
+      function v25RetryDisplayedMonth() {
+        var token = v25DisplayedMonthToken();
+        var requestId = ++v25DisplayedMonthRequest;
+        renderCalendarMonth();
+        v25ApplyStats(null, 'loading');
+        return v25LoadDisplayedMonth(token, requestId).catch(function (error) {
+          if (requestId === v25DisplayedMonthRequest && token === v25DisplayedMonthToken()) {
+            renderCalendarMonth();
+            v25ApplyStats(null, 'error');
+            showToast(error.message || '月份计划读取失败，请重试', 'error');
+          }
+          return null;
+        });
+      }
       function shiftDisplayMonth(delta) {
         calendarDisplayMonth += delta;
         if (calendarDisplayMonth < 0) { calendarDisplayMonth = 11; calendarDisplayYear -= 1; }
         if (calendarDisplayMonth > 11) { calendarDisplayMonth = 0; calendarDisplayYear += 1; }
         selectedDay = null;
+        var requestId = ++v25DisplayedMonthRequest;
+        var targetMonth = v25DisplayedMonthToken();
         renderCalendarMonth();
-        if (v25Remote.ready) {
-          v25RefreshMonth(calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)).then(function () { renderCalendarMonth(); }).catch(function (error) { showToast(error.message || '月份计划读取失败', 'error'); });
-        }
+        v25ApplyStats(null, 'loading');
+        v25LoadDisplayedMonth(targetMonth, requestId).catch(function (error) {
+          if (requestId !== v25DisplayedMonthRequest || targetMonth !== v25DisplayedMonthToken()) return;
+          renderCalendarMonth();
+          v25ApplyStats(null, 'error');
+          showToast(error.message || '月份计划读取失败，请点击“重试读取”', 'error');
+        });
       }
       var monthPrevBtnEl = document.getElementById('monthPrevBtn');
       var monthNextBtnEl = document.getElementById('monthNextBtn');
       var monthTodayBtnEl = document.getElementById('monthTodayBtn');
+      var monthRetryBtnEl = document.getElementById('monthRetryBtn');
       if (monthPrevBtnEl) monthPrevBtnEl.addEventListener('click', function () { shiftDisplayMonth(-1); });
       if (monthNextBtnEl) monthNextBtnEl.addEventListener('click', function () { shiftDisplayMonth(1); });
+      if (monthRetryBtnEl) monthRetryBtnEl.addEventListener('click', function () { v25RetryDisplayedMonth(); });
       if (monthTodayBtnEl) monthTodayBtnEl.addEventListener('click', function () {
         var today = getToday();
-        // 若浏览其他月份：先切回真实当前年月并重绘当前月
-        if (calendarDisplayYear !== today.getFullYear() || calendarDisplayMonth !== today.getMonth()) {
+        var changedMonth = calendarDisplayYear !== today.getFullYear() || calendarDisplayMonth !== today.getMonth();
+        // 若浏览其他月份：先切回真实当前年月，但必须等目标月真实数据回读后再打开详情。
+        if (changedMonth) {
           calendarDisplayYear = today.getFullYear();
           calendarDisplayMonth = today.getMonth();
           selectedDay = null;
+        }
+        var todayMonthToken = v25DisplayedMonthToken();
+        var needsRead = changedMonth || !v25RemoteDataVerified || v25Remote.monthStatus[todayMonthToken] !== 'ready';
+        if (needsRead) {
+          var todayMonthRequestId = ++v25DisplayedMonthRequest;
           renderCalendarMonth();
+          v25ApplyStats(null, 'loading');
+          v25LoadDisplayedMonth(todayMonthToken, todayMonthRequestId).then(function () {
+            if (todayMonthRequestId !== v25DisplayedMonthRequest || todayMonthToken !== v25DisplayedMonthToken()) return;
+            var cellAfterRead = document.querySelector('.cal-cell[data-day="' + today.getDate() + '"]');
+            if (cellAfterRead) cellAfterRead.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            renderDayModal(today.getDate());
+          }).catch(function (error) {
+            if (todayMonthRequestId !== v25DisplayedMonthRequest || todayMonthToken !== v25DisplayedMonthToken()) return;
+            renderCalendarMonth();
+            v25ApplyStats(null, 'error');
+            showToast(error.message || '当前月数据读取失败，请点击“重试读取”', 'error');
+          });
+          return;
         }
         var day = today.getDate();
         var cell = document.querySelector('.cal-cell[data-day="' + day + '"]');
@@ -5602,7 +5675,9 @@
         renderResourceCards();
       });
       // ── v25 rehearsal API 接线层：同源服务优先，localStorage 仅作离线 fallback ──
-      var v25Remote = { ready: false, today: null, calendar: {}, calendarDays: {}, planDays: {}, loadedMonths: {}, stats: null, weekStats: null, exercises: [], templates: [], favorites: [] };
+      var v25Remote = { ready: false, today: null, calendar: {}, calendarDays: {}, planDays: {}, loadedMonths: {}, monthStatus: {}, monthRequests: {}, statsByMonth: {}, detailByMonth: {}, stats: null, weekStats: null, exercises: [], templates: [], favorites: [] };
+      var v25MonthRequestSequence = 0;
+      var v25BootPromise = null;
       var v25RemotePlanId = null, v25RemotePlanPromise = null, v25RemoteSessionId = null, v25RemoteSessionPromise = null, v25RemoteStepPromise = Promise.resolve(), v25RemoteCompleted = false, v25RemoteSessionConflict = null, v25RemoteSessionConflictPrompted = false;
       var v25RemoteProgressPending = false, v25RemoteFinalUpdateConfirmed = false, v25RemoteStatusVerified = false, v25LocalDoneAwaitingVerification = false;
       function v25ApiFetch(path, options) {
@@ -5759,7 +5834,26 @@
         }
         return v25PlanPayload(dateKey, plan, itemsOverride);
       }
-      function v25ApplyPlanDays(days, detail) {
+      function v25ClearMonth(token) {
+        if (!v25Remote.planDays || typeof v25Remote.planDays !== 'object') v25Remote.planDays = {};
+        if (!v25Remote.calendarDays || typeof v25Remote.calendarDays !== 'object') v25Remote.calendarDays = {};
+        if (!v25Remote.loadedMonths || typeof v25Remote.loadedMonths !== 'object') v25Remote.loadedMonths = {};
+        Object.keys(v25Remote.planDays).forEach(function (dateKey) {
+          if (v25MonthForDate(dateKey) === token) delete v25Remote.planDays[dateKey];
+        });
+        Object.keys(v25Remote.calendarDays).forEach(function (dateKey) {
+          if (v25MonthForDate(dateKey) === token) delete v25Remote.calendarDays[dateKey];
+        });
+        if (typeof calendarPlans !== 'undefined' && calendarPlans) Object.keys(calendarPlans).forEach(function (dateKey) {
+          if (v25MonthForDate(dateKey) === token) delete calendarPlans[dateKey];
+        });
+        delete v25Remote.loadedMonths[token];
+        if (v25Remote.statsByMonth) delete v25Remote.statsByMonth[token];
+        if (v25Remote.detailByMonth) delete v25Remote.detailByMonth[token];
+      }
+      function v25ApplyPlanDays(days, detail, token) {
+        var targetMonth = token || (days && days.length ? v25MonthForDate(days[0].date) : null);
+        if (targetMonth) v25ClearMonth(targetMonth);
         var statusByDate = {};
         (detail && detail.days || []).forEach(function (day) { statusByDate[day.date] = day.status; });
         (days || []).forEach(function (day) {
@@ -5781,14 +5875,74 @@
       function v25RefreshMonth(month) {
         var token = String(month || '').slice(0, 7);
         if (!/^\d{4}-\d{2}$/.test(token)) return Promise.reject(new Error('日期格式错误'));
+        if (typeof v25MonthRequestSequence !== 'number') v25MonthRequestSequence = 0;
+        if (!v25Remote.monthRequests || typeof v25Remote.monthRequests !== 'object') v25Remote.monthRequests = {};
+        if (!v25Remote.monthStatus || typeof v25Remote.monthStatus !== 'object') v25Remote.monthStatus = {};
+        if (!v25Remote.statsByMonth || typeof v25Remote.statsByMonth !== 'object') v25Remote.statsByMonth = {};
+        if (!v25Remote.detailByMonth || typeof v25Remote.detailByMonth !== 'object') v25Remote.detailByMonth = {};
+        var requestId = ++v25MonthRequestSequence;
+        v25Remote.monthRequests[token] = requestId;
+        v25Remote.monthStatus[token] = 'loading';
+        // Remove the old range before the new response arrives. A failed
+        // refresh must not leave a previous month's facts visible.
+        if (typeof v25ClearMonth === 'function') {
+          v25ClearMonth(token);
+        } else {
+          // Keep the refresh helper independently testable when embedded in
+          // a narrow harness that omits the page's state helper section.
+          if (v25Remote.loadedMonths) delete v25Remote.loadedMonths[token];
+        }
+        if (typeof calendarDisplayYear !== 'undefined' && token === calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)) {
+          if (typeof renderCalendarMonth === 'function') renderCalendarMonth();
+          if (typeof v25ApplyStats === 'function') v25ApplyStats(null, 'loading');
+        }
+        var request = function (path) {
+          return v25ApiFetch(path).then(function (data) { return { ok: true, data: data }; }).catch(function (error) { return { ok: false, error: error }; });
+        };
         return Promise.all([
-          v25ApiFetch('/api/plans/month?month=' + token),
-          v25ApiFetch('/api/stats/month/detail?month=' + token)
+          request('/api/plans/month?month=' + token),
+          request('/api/stats/month/detail?month=' + token),
+          request('/api/stats/month?month=' + token)
         ]).then(function (results) {
+          // A late response for the same range must never replace a newer
+          // request's data. Different ranges remain independently cacheable.
+          if (v25Remote.monthRequests[token] !== requestId) return { stale: true, month: token };
+          if (!results[0].ok) {
+            v25Remote.monthStatus[token] = 'error';
+            if (typeof calendarDisplayYear !== 'undefined' && token === calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)) {
+              v25Remote.stats = null;
+              if (typeof v25ApplyStats === 'function') v25ApplyStats(null, 'error');
+              showToast('月份计划读取失败，请点击“重试读取”', 'error');
+            }
+            throw results[0].error || new Error('月份计划读取失败');
+          }
+          var partialError = !results[1].ok || !results[2].ok;
+          v25Remote.monthStatus[token] = partialError ? 'partial_error' : 'ready';
           v25Remote.loadedMonths[token] = true;
-          v25ApplyPlanDays((results[0] && results[0].days) || [], results[1]);
-          v25Remote.ready = true;
-          return results[0];
+          if (partialError) {
+            // A range with incomplete statistics is not a valid display
+            // snapshot. Clear its plan and both metric caches so it renders
+            // as an explicit unavailable range until retry succeeds.
+            v25ClearMonth(token);
+            v25Remote.monthStatus[token] = 'partial_error';
+          } else {
+            v25ApplyPlanDays((results[0].data && results[0].data.days) || [], results[1].data, token);
+            v25Remote.detailByMonth[token] = results[1].data;
+            if (typeof calendarDisplayYear !== 'undefined' && token === calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)) v25RemoteDataVerified = true;
+          }
+          if (results[2].ok && !partialError) {
+            v25Remote.statsByMonth[token] = results[2].data;
+            if (!partialError && typeof calendarDisplayYear !== 'undefined' && token === calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)) {
+              v25Remote.stats = results[2].data;
+              if (typeof v25ApplyStats === 'function') v25ApplyStats(results[2].data, 'ready', results[1].ok ? results[1].data : null);
+            }
+          }
+          if (partialError && typeof calendarDisplayYear !== 'undefined' && token === calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)) {
+            v25Remote.stats = null;
+            if (typeof v25ApplyStats === 'function') v25ApplyStats(null, 'partial_error');
+            showToast('月份计划或统计读取不完整，请重试', 'error');
+          }
+          return { month: token, plans: results[0].data, detail: results[1].ok ? results[1].data : null, stats: results[2].ok ? results[2].data : null, partial_error: partialError };
         });
       }
       function v25RefreshCanonical(dateKeys, options) {
@@ -5801,6 +5955,10 @@
         var jobs = months.map(v25RefreshMonth);
         if (refreshOptions.forceToday || keys.indexOf(v25TodayKey()) >= 0 || !v25Remote.today) {
           jobs.push(v25ApiFetch('/api/plans/today').then(function (today) { v25Remote.today = today; return today; }));
+          jobs.push(v25ApiFetch('/api/stats/week/detail?date=' + v25TodayKey()).then(function (weekStats) {
+            if (typeof v25ApplyWeekStats === 'function') v25ApplyWeekStats(weekStats, 'ready');
+            return weekStats;
+          }));
         }
         return Promise.all(jobs).then(function () {
           var today = v25Remote.today;
@@ -5818,6 +5976,14 @@
             todayIsRest = true;
           }
           renderTodayPlan(); renderWeek(); renderCalendarMonth();
+          if (typeof v25DisplayedMonthToken === 'function' && typeof v25ApplyStats === 'function') {
+            var displayedToken = v25DisplayedMonthToken();
+            if (v25Remote.monthStatus[displayedToken] === 'ready' && v25Remote.statsByMonth[displayedToken]) {
+              v25ApplyStats(v25Remote.statsByMonth[displayedToken], 'ready', v25Remote.detailByMonth[displayedToken]);
+            } else if (v25Remote.monthStatus[displayedToken] === 'partial_error') {
+              v25ApplyStats(null, 'partial_error');
+            }
+          }
           saveTrainingState();
           return { today: today, months: months };
         });
@@ -6013,8 +6179,8 @@
       function v25ApplyCalendar(calendar, detail) {
         var statusByDate = {};
         (detail && detail.days || []).forEach(function (day) { statusByDate[day.date] = day.status; });
-        calendarPlans = {};
-        v25Remote.calendarDays = {};
+        var token = calendar && calendar.year && calendar.month ? String(calendar.year) + '-' + pad2(calendar.month) : null;
+        if (token) v25ClearMonth(token);
         (calendar && calendar.days || []).forEach(function (day) {
           v25Remote.loadedMonths[v25MonthForDate(day.date)] = true;
           v25Remote.calendarDays[day.date] = day;
@@ -6043,15 +6209,168 @@
         exCards.forEach(function (card) { card.addEventListener('click', function () { openDrawer(card.getAttribute('data-name')); }); });
         renderFavorites();
       }
-      function v25ApplyStats(stats) {
-        if (!stats) return;
-        var rate = Number(stats.completion_rate || 0), collapse = document.getElementById('monthStatsCollapse');
-        if (collapse) { var summary = collapse.querySelector('summary'); if (summary) summary.textContent = '📊 本月统计 · 完成度 ' + rate + '%'; }
-        var strongs = collapse ? collapse.querySelectorAll('.metric strong') : [];
-        if (strongs[0]) strongs[0].textContent = rate + '%';
-        if (strongs[2]) strongs[2].innerHTML = Math.round((stats.duration_seconds || 0) / 60) + '<span style="font-size:13px;color:var(--brown-soft);font-weight:700"> 分钟</span>';
-        var foot = document.getElementById('monthChartFoot'); if (foot) foot.innerHTML = stats.month + ' · 完成 ' + (stats.completed || 0) + ' 天 · 训练日 ' + (stats.training_days || 0) + ' 天';
-        var pieText = collapse && collapse.querySelector('.pie-svg text'); if (pieText) pieText.textContent = rate + '%';
+      function v25SetText(id, value) {
+        var element = document.getElementById(id);
+        if (element) element.textContent = value == null ? '' : String(value);
+        return element;
+      }
+      function v25ApplyStats(stats, state, detail) {
+        var summary = document.getElementById('monthStatsSummary');
+        var weekEl = document.getElementById('weekCompletionMetric');
+        var pieFill = document.getElementById('monthPieFill');
+        var pieText = document.getElementById('monthPieText');
+        var pieChart = document.getElementById('monthPieChart');
+        var trendArea = document.getElementById('monthTrendArea');
+        var trendLine = document.getElementById('monthTrendLine');
+        var trendEmpty = document.getElementById('monthTrendEmpty');
+        var retryBtn = document.getElementById('monthRetryBtn');
+        var status = state || (stats ? 'ready' : 'loading');
+        if (status !== 'ready' || !stats) {
+          var statusText = status === 'error' ? '读取失败，请重试' : (status === 'partial_error' ? '读取不完整，请重试' : '等待读取');
+          if (summary) summary.textContent = '📊 本月统计 · ' + statusText;
+          if (retryBtn) retryBtn.hidden = status === 'loading';
+          v25SetText('monthCompletionRate', '—');
+          v25SetText('monthDurationMetric', '—');
+          v25SetText('monthGoalDesc', status === 'loading' ? '本月目标将根据真实计划读取' : '本月数据暂不可用');
+          v25SetText('monthGoalStat', status === 'error' || status === 'partial_error' ? '本月数据读取失败' : '等待读取本月数据…');
+          v25SetText('monthGoalSub', status === 'error' || status === 'partial_error' ? '请检查网络后重试，页面不会使用演示数据。' : '本月目标和建议将在后端数据读取成功后显示');
+          var goalFill = document.getElementById('monthGoalFill');
+          if (goalFill) goalFill.style.width = '0%';
+          if (weekEl && !v25Remote.weekStats) weekEl.textContent = '—';
+          if (pieFill) pieFill.setAttribute('stroke-dasharray', '0 264');
+          if (pieText) pieText.textContent = '—';
+          v25SetText('monthPieCompleted', '—');
+          v25SetText('monthPieRemaining', '—');
+          if (pieChart) pieChart.setAttribute('aria-label', '本月完成占比，' + statusText);
+          if (trendArea) trendArea.setAttribute('d', '');
+          if (trendLine) trendLine.setAttribute('d', '');
+          if (trendEmpty) trendEmpty.textContent = status === 'error' ? '读取失败' : (status === 'partial_error' ? '读取不完整' : '等待读取');
+          v25SetText('monthTrendLabels', '');
+          v25SetText('monthMostActionName', '暂无数据');
+          v25SetText('monthMostActionCount', '');
+          v25SetText('monthMostActionMsg', '本月统计读取成功后显示真实动作组数');
+          v25SetText('monthMostActionScale', '');
+          v25SetText('monthLeastActionName', '暂无数据');
+          v25SetText('monthLeastActionCount', '');
+          v25SetText('monthLeastActionMsg', '本月统计读取成功后显示真实动作组数');
+          v25SetText('monthLeastActionScale', '');
+          var mostBar = document.getElementById('monthMostActionBar'), leastBar = document.getElementById('monthLeastActionBar');
+          if (mostBar) mostBar.style.width = '0%';
+          if (leastBar) leastBar.style.width = '0%';
+          v25SetText('monthChartFoot', status === 'error' || status === 'partial_error' ? '本月统计读取失败，未显示本地或演示数据' : '正在读取本月真实数据…');
+          return;
+        }
+        var rate = Number(stats.completion_rate);
+        if (!isFinite(rate)) rate = 0;
+        var completed = Number(stats.completed);
+        if (!isFinite(completed)) completed = 0;
+        // The month card counts completed training days. The aggregate API
+        // also exposes historical log counts (including rest-day logs), so
+        // prefer the range detail when it is available for this UI.
+        if (detail && isFinite(Number(detail.completed))) completed = Number(detail.completed);
+        var trainingDays = Number(stats.training_days);
+        if (!isFinite(trainingDays)) trainingDays = 0;
+        var durationSeconds = Number(stats.duration_seconds);
+        if (!isFinite(durationSeconds)) durationSeconds = 0;
+        var remaining = Math.max(0, trainingDays - completed);
+        var monthLabel = stats.month || (calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1));
+        if (summary) summary.textContent = '📊 本月统计 · 完成度 ' + rate + '%';
+        if (retryBtn) retryBtn.hidden = true;
+        v25SetText('monthGoalDesc', trainingDays ? '本月真实计划 · ' + trainingDays + ' 个训练日' : '本月暂无训练计划');
+        v25SetText('monthCompletionRate', rate + '%');
+        v25SetText('monthDurationMetric', Math.round(durationSeconds / 60) + ' 分钟');
+        var goalFill = document.getElementById('monthGoalFill');
+        if (goalFill) goalFill.style.width = Math.max(0, Math.min(100, rate)) + '%';
+        v25SetText('monthGoalStat', '已完成 ' + completed + ' / ' + trainingDays + ' 次');
+        v25SetText('monthGoalSub', trainingDays ? '剩余 ' + remaining + ' 次训练日' : '本月暂无训练计划');
+        var week = v25Remote.weekStats;
+        if (week) {
+          var weekCompleted = Number(week.completed);
+          var weekTraining = Number(week.training_days);
+          if (isFinite(weekCompleted) && isFinite(weekTraining)) v25SetText('weekCompletionMetric', weekCompleted + ' / ' + weekTraining);
+        }
+        var circumference = 264;
+        if (pieFill) pieFill.setAttribute('stroke-dasharray', (circumference * Math.max(0, Math.min(100, rate)) / 100).toFixed(2) + ' ' + circumference);
+        if (pieText) pieText.textContent = rate + '%';
+        if (pieChart) pieChart.setAttribute('aria-label', '本月完成占比 ' + rate + '%');
+        v25SetText('monthPieCompleted', completed);
+        v25SetText('monthPieRemaining', remaining);
+        if (detail && Array.isArray(detail.days) && detail.days.length) {
+          var points = detail.days.map(function (day, index) {
+            var x = detail.days.length === 1 ? 188 : 28 + (320 * index / (detail.days.length - 1));
+            var y = day.status === 'completed' ? 32 : 108;
+            return { x: Math.round(x * 10) / 10, y: y };
+          });
+          var linePath = points.map(function (point, index) { return (index ? 'L' : 'M') + point.x + ',' + point.y; }).join(' ');
+          var areaPath = linePath + ' L' + points[points.length - 1].x + ',108 L' + points[0].x + ',108 Z';
+          if (trendLine) trendLine.setAttribute('d', linePath);
+          if (trendArea) trendArea.setAttribute('d', areaPath);
+          if (trendEmpty) trendEmpty.textContent = '';
+          var labelIndexes = [0, Math.floor((detail.days.length - 1) / 4), Math.floor((detail.days.length - 1) / 2), Math.floor((detail.days.length - 1) * 3 / 4), detail.days.length - 1];
+          v25SetText('monthTrendLabels', labelIndexes.map(function (index) { return detail.days[index].date.slice(8); }).join('    '));
+        } else {
+          if (trendArea) trendArea.setAttribute('d', '');
+          if (trendLine) trendLine.setAttribute('d', '');
+          if (trendEmpty) trendEmpty.textContent = '暂无趋势数据';
+        }
+        v25SetText('monthChartFoot', monthLabel + ' · 完成 ' + completed + ' 天 · 训练日 ' + trainingDays + ' 天');
+        var actionStats = Array.isArray(stats.action_stats)
+          ? stats.action_stats
+          : (detail && Array.isArray(detail.action_stats) ? detail.action_stats : []);
+        if (actionStats.length) {
+          var most = actionStats[0];
+          var least = actionStats[actionStats.length - 1];
+          var maxSets = Math.max(1, Number(most.sets || 0));
+          var leastSets = Math.max(0, Number(least.sets || 0));
+          v25SetText('monthMostActionName', most.name || '未命名动作');
+          v25SetText('monthMostActionCount', maxSets + ' 组');
+          v25SetText('monthMostActionMsg', '本月真实完成组数');
+          v25SetText('monthMostActionScale', '相对本月最高组数');
+          v25SetText('monthLeastActionName', least.name || '未命名动作');
+          v25SetText('monthLeastActionCount', leastSets + ' 组');
+          v25SetText('monthLeastActionMsg', '本月真实完成组数');
+          v25SetText('monthLeastActionScale', '相对本月最高组数');
+          var mostBar = document.getElementById('monthMostActionBar'), leastBar = document.getElementById('monthLeastActionBar');
+          if (mostBar) mostBar.style.width = '100%';
+          if (leastBar) leastBar.style.width = Math.max(0, Math.min(100, leastSets / maxSets * 100)) + '%';
+        } else {
+          v25SetText('monthMostActionName', '暂无动作数据');
+          v25SetText('monthLeastActionName', '暂无动作数据');
+          v25SetText('monthMostActionMsg', '本月暂无已完成动作组数');
+          v25SetText('monthLeastActionMsg', '本月暂无已完成动作组数');
+          v25SetText('monthMostActionScale', '');
+          v25SetText('monthLeastActionScale', '');
+          var mostBar = document.getElementById('monthMostActionBar'), leastBar = document.getElementById('monthLeastActionBar');
+          if (mostBar) mostBar.style.width = '0%';
+          if (leastBar) leastBar.style.width = '0%';
+        }
+      }
+      function v25ApplyWeekStats(detail, state) {
+        var status = state || (detail ? 'ready' : 'loading');
+        if (status !== 'ready' || !detail) {
+          v25Remote.weekStats = null;
+          v25SetText('weekCompletedMain', status === 'error' ? '本周数据读取失败' : '等待读取本周数据…');
+          v25SetText('weekCompletedSub', '');
+          v25SetText('weekNextMain', status === 'error' ? '本周数据读取失败' : '等待读取本周数据…');
+          v25SetText('weekNextSub', '');
+          v25SetText('weekRestMain', status === 'error' ? '本周数据读取失败' : '等待读取本周数据…');
+          v25SetText('weekRestSub', '');
+          v25SetText('weekCompletionMetric', '—');
+          return;
+        }
+        v25Remote.weekStats = detail;
+        var completedDays = (detail.days || []).filter(function (day) { return day.status === 'completed'; });
+        var todayKey = v25TodayKey();
+        var plannedDays = (detail.days || []).filter(function (day) { return day.date >= todayKey && day.is_training && day.status !== 'completed'; });
+        var restDays = (detail.days || []).filter(function (day) { return !day.is_training; });
+        v25SetText('weekCompletedMain', '已完成 ' + completedDays.length + ' 次');
+        v25SetText('weekCompletedSub', completedDays.length ? completedDays.map(function (day) { return day.date.slice(5); }).join(' · ') : '本周暂无完成记录');
+        var next = plannedDays[0];
+        v25SetText('weekNextMain', next ? next.date.slice(5) + ' · 计划训练' : '本周暂无待训练计划');
+        v25SetText('weekNextSub', next ? '训练计划来自真实数据' : '');
+        v25SetText('weekRestMain', restDays.length ? '恢复日 ' + restDays.length + ' 天' : '本周暂无恢复日');
+        v25SetText('weekRestSub', restDays.length ? restDays.map(function (day) { return day.date.slice(5); }).join(' · ') : '');
+        v25SetText('weekCompletionMetric', completedDays.length + ' / ' + Number(detail.training_days || 0));
       }
       function v25ApplyTemplates() {
         if (!v25Remote.templates.length) return;
@@ -6217,7 +6536,8 @@
             v25RemoteSessionConflict = null;
             v25RemoteSessionConflictPrompted = false;
             showToast('已保留原训练记录并取消会话，请重新安排当前计划', 'success');
-            return bootV25Api();
+            v25BootPromise = bootV25Api();
+            return v25BootPromise;
           }).catch(function (error) {
             conflictButton.disabled = false;
             showToast('错位会话未取消：' + (error && error.message ? error.message : '请重试'), 'error');
@@ -6228,9 +6548,31 @@
         var payload = JSON.parse(button.getAttribute('data-v25-catalog-commit'));
         v25ApiFetch('/api/migration/catalog/v24/commit', { method: 'POST', body: JSON.stringify(payload) }).then(function (data) { closeModal(); openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>迁移完成</h3><p>' + (data.status === 'already_committed' ? '本次是幂等重放，数据未重复新增。' : '已新增 ' + (data.created || []).length + ' 条动作。') + '</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div>'); }).catch(function (error) { openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>迁移未提交</h3><p>' + escapeHtml(error.message) + '</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div>'); });
       });
+      function v25WeekMonthTokens() {
+        var tokens = [];
+        getCurrentWeekDates(getToday()).forEach(function (day) {
+          var token = formatDateKey(day).slice(0, 7);
+          if (tokens.indexOf(token) < 0) tokens.push(token);
+        });
+        return tokens;
+      }
       function bootV25Api() {
+        var bootDisplayRequest = v25DisplayedMonthRequest;
         var month = formatDateKey(getToday()).slice(0, 7), todayKey = formatDateKey(getToday());
-        var jobs = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month, '/api/session/current?include_completed=true'].map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data, error: null }; }).catch(function (error) { return { ok: false, data: null, error: error }; }); });
+        v25Remote.ready = false;
+        v25RemoteDataVerified = false;
+        v25TodayDisplayState = 'loading';
+        renderTodayPlan();
+        renderWeek();
+        var basePaths = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month, '/api/session/current?include_completed=true'];
+        var adjacentMonths = v25WeekMonthTokens().filter(function (token) { return token !== month; });
+        var jobs = basePaths.map(function (path) { return v25ApiFetch(path).then(function (data) { return { ok: true, data: data, error: null }; }).catch(function (error) { return { ok: false, data: null, error: error }; }); });
+        // A Sunday/Saturday week can cross a month or year boundary. Load each
+        // visible range during boot so the week never depends on opening a
+        // neighbouring month first.
+        adjacentMonths.forEach(function (token) {
+          jobs.push(v25RefreshMonth(token).then(function (data) { return { ok: true, data: data, error: null }; }).catch(function (error) { return { ok: false, data: null, error: error }; }));
+        });
         return Promise.all(jobs).then(function (results) {
           if (!results[0].ok && !results[1].ok) {
             // A local done flag is not enough to claim completion when the
@@ -6244,6 +6586,15 @@
               renderTodayPlan();
               showToast('后端暂时无法确认训练状态，未显示完成', 'error');
             }
+            if (bootDisplayRequest === v25DisplayedMonthRequest && month === v25DisplayedMonthToken()) {
+              v25Remote.monthStatus[month] = 'error';
+              v25TodayDisplayState = 'error';
+              renderTodayPlan();
+              renderWeek();
+              renderCalendarMonth();
+              v25ApplyStats(null, 'error');
+              showToast('当前月数据读取失败，请点击“重试读取”', 'error');
+            }
             return;
           }
           var todayStatusKnown = results[3].ok;
@@ -6251,16 +6602,36 @@
           var todayBackendDone = todayStatusKnown && todayBackendStatus === 'completed';
           v25RemoteStatusVerified = todayStatusKnown;
           v25Remote.ready = true;
+          var bootOwnsDisplay = bootDisplayRequest === v25DisplayedMonthRequest && month === v25DisplayedMonthToken();
           v25Remote.today = results[0].data;
-          v25Remote.calendar = results[1].data;
-          v25ApplyCalendar(results[1].data, results[3].data);
-          if (results[10].ok) v25ApplyPlanDays(results[10].data.days || [], results[3].data);
-          v25Remote.stats = results[2].data; v25Remote.weekStats = results[4].data;
-          v25ApplyStats(v25Remote.stats);
+          v25Remote.calendar = results[1].ok ? results[1].data : null;
+          if (bootOwnsDisplay) {
+            var bootHasPlans = results[1].ok || results[10].ok;
+            var bootMetricsReady = results[2].ok && results[3].ok;
+            var bootRangeStatus = bootHasPlans && bootMetricsReady ? 'ready' : (bootHasPlans || results[2].ok || results[3].ok ? 'partial_error' : 'error');
+            v25Remote.monthStatus[month] = bootRangeStatus;
+            v25RemoteDataVerified = bootRangeStatus === 'ready';
+            if (bootRangeStatus === 'ready') {
+              if (results[1].ok) v25ApplyCalendar(results[1].data, results[3].data);
+              if (results[10].ok) v25ApplyPlanDays(results[10].data.days || [], results[3].data, month);
+            } else {
+              v25ClearMonth(month);
+              v25Remote.monthStatus[month] = bootRangeStatus;
+            }
+            v25Remote.stats = bootRangeStatus === 'ready' ? results[2].data : null;
+            v25ApplyStats(v25Remote.stats, bootRangeStatus, bootRangeStatus === 'ready' ? results[3].data : null);
+          }
+          v25ApplyWeekStats(results[4].ok ? results[4].data : null, results[4].ok ? 'ready' : 'error');
+          adjacentMonths.forEach(function (token, index) {
+            var result = results[basePaths.length + index];
+            if (result && (!result.ok || (result.data && result.data.partial_error))) showToast('跨月周数据读取不完整：' + token, 'error');
+          });
+          if (!results[3].ok || !results[2].ok) showToast('当前月计划或统计读取不完整，请重试', 'error');
           if (results[5].ok) { v25Remote.exercises = results[5].data.exercises || []; v25RenderLibrary(); }
           if (results[6].ok) { v25Remote.templates = results[6].data.templates || []; v25ApplyTemplates(); }
           if (results[7].ok) { v25Remote.favorites = results[7].data.favorites || []; favorites = v25Remote.favorites.map(function (row) { return row.exercise_name; }); saveFavorites(); renderFavorites(); }
           if (results[8].ok) { apiSettings.model = results[8].data.model || ''; apiSettings.provider = results[8].data.provider || 'local-demo'; mode(); }
+          v25TodayDisplayState = results[0].ok ? 'ready' : 'error';
           if (v25Remote.today && (v25Remote.today.isTrainingDay || v25Remote.today.is_training)) {
             v25RemotePlanId = v25Remote.today.id; v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
             todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
@@ -6302,7 +6673,7 @@
             v25RemoteSessionPromise = null;
           }
           if (todaySessionKey) {
-            var localSessionForReconcile = v25RemoteSessionConflict ? null : dailySessions[todaySessionKey];
+            var localSessionForReconcile = v25RemoteSessionConflict || !activeSession ? null : dailySessions[todaySessionKey];
             var reconciledSession = v25ReconcileTodaySession(localSessionForReconcile, todayPlan, todayPlan.source || '', todayIsRest, todayStatusKnown, todayBackendDone, activeSession);
             dailySessions[todaySessionKey] = reconciledSession;
             if (todaySessionKey === todayKey) {
@@ -6334,7 +6705,9 @@
             showToast('后端暂时无法确认训练状态，未显示完成', 'error');
           }
           v25LocalDoneAwaitingVerification = false;
-          renderTodayPlan(); renderWeek(); renderCalendarMonth(); v25ApplyStats(v25Remote.stats);
+          renderTodayPlan(); renderWeek(); renderCalendarMonth();
+          if (bootOwnsDisplay) v25ApplyStats(v25Remote.stats, bootRangeStatus, bootRangeStatus === 'ready' ? results[3].data : null);
+          v25ApplyWeekStats(results[4].ok ? results[4].data : null, results[4].ok ? 'ready' : 'error');
           saveTrainingState();
         });
       }
@@ -6366,7 +6739,7 @@
       renderTodayPlan();
       renderWeek();
       renderCalendarMonth();
-      bootV25Api();
+      v25BootPromise = bootV25Api();
 
       // 已存在的旧监听器在本稿前已绑定；用捕获阶段接管，确保“直接开始”真正创建今日计划。
       var tplOneClickButton = document.getElementById('tplOneClick');

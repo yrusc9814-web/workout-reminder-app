@@ -604,6 +604,57 @@ def _duration_metrics(db: Session, start: date | None = None, end: date | None =
     }
 
 
+def _action_metrics(db: Session, start: date, end: date) -> list[dict]:
+    """Return completed action groups for a log-date range.
+
+    The range is anchored to ``WorkoutLog.log_date``.  Session records remain
+    execution facts and are only counted after their completed session has a
+    completed log, preserving the existing session/log date contract.
+    """
+    logs = (
+        db.query(WorkoutLog)
+        .filter(
+            WorkoutLog.log_date >= start,
+            WorkoutLog.log_date <= end,
+            WorkoutLog.status == "completed",
+            WorkoutLog.session_id.isnot(None),
+        )
+        .all()
+    )
+    session_ids = {row.session_id for row in logs if row.session_id is not None}
+    if not session_ids:
+        return []
+    sessions = db.query(WorkoutSession).filter(WorkoutSession.id.in_(session_ids)).all()
+    counts: dict[str, int] = {}
+    for session in sessions:
+        snapshot = list(session.plan.exercises or []) if session.plan else []
+        for record in session.records or []:
+            if record.status not in {"completed", "skipped"}:
+                continue
+            sets = int(record.sets_completed or 0)
+            if sets <= 0:
+                continue
+            snapshot_item = next(
+                (
+                    item
+                    for item in snapshot
+                    if item.exercise_id == record.exercise_id
+                    or (item.exercise_id is None and record.exercise is not None and item.name == record.exercise.name)
+                ),
+                None,
+            )
+            name = (
+                record.exercise.name
+                if record.exercise is not None
+                else (snapshot_item.name if snapshot_item is not None else "未命名动作")
+            )
+            counts[name] = counts.get(name, 0) + sets
+    return [
+        {"name": name, "sets": sets}
+        for name, sets in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+    ]
+
+
 @app.get("/api/stats")
 def stats(db: Session = Depends(get_db)) -> dict:
     total = db.query(WorkoutPlan).count()
@@ -664,6 +715,7 @@ def stats_month(month: str = Query(...), db: Session = Depends(get_db)) -> dict:
         "skipped": skipped,
         "postponed": postponed,
         "completion_rate": _completion_rate(completed_training_days, training_days),
+        "action_stats": _action_metrics(db, start, end),
         **_duration_metrics(db, start, end),
     }
 
@@ -718,6 +770,7 @@ def _stats_detail(db: Session, start: date, end: date, period: str) -> dict:
         "training_days": training_days,
         "completed": completed,
         "completion_rate": _completion_rate(completed, training_days),
+        "action_stats": _action_metrics(db, start, end),
         "days": days,
     }
     result.update(_duration_metrics(db, start, end))
