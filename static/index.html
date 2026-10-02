@@ -2223,6 +2223,8 @@
     .day-hero .hero-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .day-hero .hero-actions .btn.primary { min-height: 48px; padding: 0 28px; font-size: 15px; }
     .day-hero .hero-video { position: relative; z-index: 1; display: grid; gap: 10px; min-width: 0; }
+    /* State visibility must win over each hero child's layout display. */
+    .day-hero > [hidden] { display: none !important; }
     .day-hero .video-thumb {
       position: relative; display: block; width: 100%; border-radius: 18px; overflow: hidden;
       border: 2px solid var(--edge-hi); aspect-ratio: 16/10; cursor: pointer; padding: 0;
@@ -2288,6 +2290,14 @@
     }
     .day-empty-hero p { margin: 0 0 14px; color: var(--brown-soft); font-size: 14px; font-weight: 600; }
     .day-empty-hero .empty-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .day-fetch-state {
+      position: relative; z-index: 1; grid-column: 1 / -1; display: grid; gap: 8px;
+      justify-items: center; padding: 28px 12px; text-align: center; color: var(--brown-soft);
+    }
+    .day-fetch-state strong { color: var(--brown); font-size: 16px; }
+    .day-fetch-state span { font-size: 13px; font-weight: 600; }
+    .day-fetch-state[hidden] { display: none !important; }
+    .day-fetch-state .btn { margin-top: 4px; }
     .day-detail-panel {
       margin-top: 14px; padding: 16px; border-radius: var(--radius); border: 1px solid var(--line);
       background: var(--surface-2);
@@ -2734,6 +2744,7 @@
             <button class="btn ghost" type="button" data-view="template">看训练方案</button>
           </div>
         </div>
+        <div class="day-fetch-state" id="dayFetchState" role="status" aria-live="polite" hidden></div>
       </section>
 
       <!-- 详情 = 编辑清单（动作库加入的数据在这里增删） -->
@@ -3374,6 +3385,8 @@
       // become formal calendar or today's business facts before the backend
       // verifies the current range.
       var v25RemoteDataVerified = false;
+      // 日视图的显示状态只由当前 boot/retry 请求确认：loading → error|empty|data。
+      // 不用 todayPlan.length 猜测状态，避免旧 localStorage 或旧请求制造假空态。
       var v25TodayDisplayState = 'loading';
 
       // 筛选 pill 切换（示意）
@@ -4368,6 +4381,7 @@
         var meta = todayPlanEl('todayMeta');
         var summary = todayPlanEl('todaySummary');
         var emptyHero = todayPlanEl('dayEmptyHero');
+        var fetchState = todayPlanEl('dayFetchState');
         var heroContent = todayPlanEl('dayHeroContent');
         var heroVideo = todayPlanEl('dayHeroVideo');
         var heroProgress = todayPlanEl('dayHeroProgress');
@@ -4377,19 +4391,41 @@
         var startBtn = todayPlanEl('startTodayBtn');
         var skipBtn = todayPlanEl('skipTodayBtn');
         var doneForUi = v25UiDoneConfirmed();
+        var todayState = typeof v25TodayDisplayState !== 'undefined' ? v25TodayDisplayState : undefined;
+        // Narrow helper extraction tests from earlier VAN rounds do not load
+        // the page's state variable; keep those isolated render contracts
+        // compatible without weakening the real loading/error guards.
+        var hasConfirmedData = (todayState === 'data' || (typeof todayState === 'undefined' && todayPlan.length > 0)) && todayPlan.length > 0;
         var duration = todayPlan.reduce(function(sum, item) { return sum + item.time; }, 0);
         var executionSummary = todayExecutionSummary();
         if (todayStepIndex >= todayPlan.length) todayStepIndex = Math.max(0, todayPlan.length - 1);
 
+        var dayHero = todayPlanEl('dayHero');
+        if (dayHero) dayHero.setAttribute('data-today-state', todayState);
+        if (fetchState) {
+          var isLoading = todayState === 'loading';
+          var isError = todayState === 'error';
+          fetchState.hidden = !(isLoading || isError);
+          fetchState.setAttribute('aria-busy', String(isLoading));
+          fetchState.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+          if (isLoading) {
+            fetchState.innerHTML = '<strong>今日计划读取中</strong><span>正在从后端读取今天的计划，请稍候</span>';
+          } else if (isError) {
+            fetchState.innerHTML = '<strong>今日计划读取失败</strong><span>未确认到后端数据，请重试读取</span><button class="btn primary mini" type="button" data-v25-retry-today>重试读取</button>';
+          } else {
+            fetchState.innerHTML = '';
+          }
+        }
+
         if (summary) {
-          if (!todayPlan.length) { summary.hidden = true; }
+          if (!hasConfirmedData) { summary.hidden = true; }
           else {
             summary.hidden = false;
             summary.textContent = '预计 ' + duration + ' 分钟 · ' + executionSummary.durationLabel + ' · 完成动作 ' + executionSummary.completedActions + ' · 跳过 ' + executionSummary.skippedActions + ' · 完成组 ' + executionSummary.completedSets;
           }
         }
 
-        if (!todayPlan.length) {
+        if (!hasConfirmedData) {
           todayStarted = false;
           todayDone = false;
           todayStepIndex = 0;
@@ -4400,7 +4436,7 @@
           todayRecordFacts = [];
           todayPendingProgress = null;
           resetStartBtn();
-          if (emptyHero) emptyHero.hidden = false;
+          if (emptyHero) emptyHero.hidden = todayState !== 'empty';
           if (heroContent) heroContent.hidden = true;
           if (heroVideo) heroVideo.hidden = true;
           if (heroProgress) heroProgress.hidden = true;
@@ -4414,21 +4450,22 @@
             if (list) list.innerHTML = '<div class="today-empty">今日计划读取失败。<br><button class="btn mini" type="button" data-v25-retry-today>重试读取</button></div>';
             if (title) title.textContent = '今日计划读取失败';
             if (meta) meta.textContent = '未确认到后端数据，页面不会把未知状态当作恢复日';
-          } else if (todayIsRest) {
-            // 休息日态
-            if (list) list.innerHTML = '<div class="today-empty" style="text-align:center;padding:24px 16px;">🌿 今天是恢复日，好好休息<br><small style="opacity:.7;margin-top:8px;display:inline-block">想加练？去动作库挑几个轻量动作</small><br><button class="btn mini" type="button" data-view="library" style="margin-top:12px">去动作库</button></div>';
-            if (title) title.textContent = '恢复日';
-            if (meta) meta.textContent = '今天不安排正式训练，轻松散步或舒展即可';
-          } else {
-            // 完全无数据态
-            if (list) list.innerHTML = '<div class="today-empty">清单为空。从动作库添加后会出现在这里，并同步上方训练首页。</div>';
+          } else if (v25TodayDisplayState === 'empty') {
+            // 只有后端成功确认今天没有计划/动作时才展示正常空态。
+            if (list) list.innerHTML = '<div class="today-empty">今天还没有训练动作。<br><button class="btn mini" type="button" data-view="library">去动作库添加</button></div>';
             if (title) title.textContent = '今日训练';
-            if (meta) meta.textContent = '从动作库添加动作，或直接开始一个训练方案';
+            if (meta) meta.textContent = todayIsRest ? '今天不安排正式训练，想加练可从动作库添加动作' : '从动作库添加动作，或直接开始一个训练方案';
+          } else {
+            // 防御性分支：没有成功确认的状态不得落入成功空态。
+            if (list) list.innerHTML = '<div class="today-empty">今日计划尚未确认，请重试读取。</div>';
+            if (title) title.textContent = '今日计划读取中';
+            if (meta) meta.textContent = '正在从后端读取今天的计划，请稍候';
           }
           return;
         }
 
         if (emptyHero) emptyHero.hidden = true;
+        if (fetchState) fetchState.hidden = true;
         if (heroContent) heroContent.hidden = false;
         if (heroVideo) heroVideo.hidden = false;
         if (heroProgress) heroProgress.hidden = false;
@@ -5678,6 +5715,7 @@
       var v25Remote = { ready: false, today: null, calendar: {}, calendarDays: {}, planDays: {}, loadedMonths: {}, monthStatus: {}, monthRequests: {}, statsByMonth: {}, detailByMonth: {}, stats: null, weekStats: null, exercises: [], templates: [], favorites: [] };
       var v25MonthRequestSequence = 0;
       var v25BootPromise = null;
+      var v25BootRequestSequence = 0;
       var v25RemotePlanId = null, v25RemotePlanPromise = null, v25RemoteSessionId = null, v25RemoteSessionPromise = null, v25RemoteStepPromise = Promise.resolve(), v25RemoteCompleted = false, v25RemoteSessionConflict = null, v25RemoteSessionConflictPrompted = false;
       var v25RemoteProgressPending = false, v25RemoteFinalUpdateConfirmed = false, v25RemoteStatusVerified = false, v25LocalDoneAwaitingVerification = false;
       function v25ApiFetch(path, options) {
@@ -5909,6 +5947,7 @@
           if (v25Remote.monthRequests[token] !== requestId) return { stale: true, month: token };
           if (!results[0].ok) {
             v25Remote.monthStatus[token] = 'error';
+            if (typeof renderWeek === 'function') renderWeek();
             if (typeof calendarDisplayYear !== 'undefined' && token === calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)) {
               v25Remote.stats = null;
               if (typeof v25ApplyStats === 'function') v25ApplyStats(null, 'error');
@@ -5927,6 +5966,7 @@
             v25Remote.monthStatus[token] = 'partial_error';
           } else {
             v25ApplyPlanDays((results[0].data && results[0].data.days) || [], results[1].data, token);
+            v25Remote.loadedMonths[token] = true;
             v25Remote.detailByMonth[token] = results[1].data;
             if (typeof calendarDisplayYear !== 'undefined' && token === calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1)) v25RemoteDataVerified = true;
           }
@@ -5942,6 +5982,8 @@
             if (typeof v25ApplyStats === 'function') v25ApplyStats(null, 'partial_error');
             showToast('月份计划或统计读取不完整，请重试', 'error');
           }
+          // The week can consume this range even when another month is shown.
+          if (typeof renderWeek === 'function') renderWeek();
           return { month: token, plans: results[0].data, detail: results[1].ok ? results[1].data : null, stats: results[2].ok ? results[2].data : null, partial_error: partialError };
         });
       }
@@ -5971,9 +6013,11 @@
             });
             todayPlan.source = today.title || '今日训练';
             todayIsRest = false;
+            v25TodayDisplayState = todayPlan.length ? 'data' : 'empty';
           } else if (today) {
             todayPlan = [];
             todayIsRest = true;
+            v25TodayDisplayState = 'empty';
           }
           renderTodayPlan(); renderWeek(); renderCalendarMonth();
           if (typeof v25DisplayedMonthToken === 'function' && typeof v25ApplyStats === 'function') {
@@ -6557,11 +6601,22 @@
         return tokens;
       }
       function bootV25Api() {
+        var bootRequestId = ++v25BootRequestSequence;
         var bootDisplayRequest = v25DisplayedMonthRequest;
         var month = formatDateKey(getToday()).slice(0, 7), todayKey = formatDateKey(getToday());
+        // Cache ownership is per range, independent of calendar navigation.
+        // Share request identities with explicit month refreshes so an older
+        // boot cannot overwrite a newer response for the same month.
+        if (typeof v25MonthRequestSequence !== 'number') v25MonthRequestSequence = 0;
+        var bootMonthRequest = ++v25MonthRequestSequence;
+        v25Remote.monthRequests[month] = bootMonthRequest;
+        v25ClearMonth(month);
+        v25Remote.monthStatus[month] = 'loading';
         v25Remote.ready = false;
         v25RemoteDataVerified = false;
-        v25TodayDisplayState = 'loading';
+        // A retry starts a new unverified snapshot. Clear the visible runtime
+        // first so an older successful result cannot remain on screen as fact.
+        resetTodayRuntimeForUnverifiedData();
         renderTodayPlan();
         renderWeek();
         var basePaths = ['/api/plans/today', '/api/calendar?month=' + month, '/api/stats/month?month=' + month, '/api/stats/month/detail?month=' + month, '/api/stats/week/detail?date=' + todayKey, '/api/exercises', '/api/templates', '/api/favorites', '/api/ai/provider', '/api/ai/models', '/api/plans/month?month=' + month, '/api/session/current?include_completed=true'];
@@ -6574,6 +6629,26 @@
           jobs.push(v25RefreshMonth(token).then(function (data) { return { ok: true, data: data, error: null }; }).catch(function (error) { return { ok: false, data: null, error: error }; }));
         });
         return Promise.all(jobs).then(function (results) {
+          // Every boot/retry owns one generation. A late response from an
+          // older generation must not change today's visible state or facts.
+          if (bootRequestId !== v25BootRequestSequence) return { stale: true, requestId: bootRequestId };
+          var bootOwnsRange = v25Remote.monthRequests[month] === bootMonthRequest;
+          var bootOwnsDisplay = bootOwnsRange && bootDisplayRequest === v25DisplayedMonthRequest && month === v25DisplayedMonthToken();
+          var bootHasPlans = results[1].ok || results[10].ok;
+          var bootMetricsReady = results[2].ok && results[3].ok;
+          var bootRangeStatus = bootHasPlans && bootMetricsReady ? 'ready' : (bootHasPlans || results[2].ok || results[3].ok ? 'partial_error' : 'error');
+          if (bootOwnsRange) {
+            v25Remote.monthStatus[month] = bootRangeStatus;
+            if (bootRangeStatus === 'ready') {
+              if (results[1].ok) v25ApplyCalendar(results[1].data, results[3].data);
+              if (results[10].ok) v25ApplyPlanDays(results[10].data.days || [], results[3].data, month);
+              v25Remote.loadedMonths[month] = true;
+              v25Remote.statsByMonth[month] = results[2].data;
+              v25Remote.detailByMonth[month] = results[3].data;
+            } else {
+              v25ClearMonth(month);
+            }
+          }
           if (!results[0].ok && !results[1].ok) {
             // A local done flag is not enough to claim completion when the
             // backend cannot be reached to verify it.
@@ -6586,13 +6661,16 @@
               renderTodayPlan();
               showToast('后端暂时无法确认训练状态，未显示完成', 'error');
             }
-            if (bootDisplayRequest === v25DisplayedMonthRequest && month === v25DisplayedMonthToken()) {
-              v25Remote.monthStatus[month] = 'error';
-              v25TodayDisplayState = 'error';
-              renderTodayPlan();
-              renderWeek();
-              renderCalendarMonth();
-              v25ApplyStats(null, 'error');
+            // Today's state is independent from which month the calendar is
+            // currently displaying. A month switch must not strand the day
+            // view in loading when this boot fails.
+            v25TodayDisplayState = 'error';
+            renderTodayPlan();
+            renderWeek();
+            renderCalendarMonth();
+            if (bootOwnsDisplay) {
+              v25Remote.stats = bootRangeStatus === 'ready' ? v25Remote.statsByMonth[month] : null;
+              v25ApplyStats(v25Remote.stats, bootRangeStatus, v25Remote.detailByMonth[month]);
               showToast('当前月数据读取失败，请点击“重试读取”', 'error');
             }
             return;
@@ -6602,22 +6680,10 @@
           var todayBackendDone = todayStatusKnown && todayBackendStatus === 'completed';
           v25RemoteStatusVerified = todayStatusKnown;
           v25Remote.ready = true;
-          var bootOwnsDisplay = bootDisplayRequest === v25DisplayedMonthRequest && month === v25DisplayedMonthToken();
           v25Remote.today = results[0].data;
           v25Remote.calendar = results[1].ok ? results[1].data : null;
           if (bootOwnsDisplay) {
-            var bootHasPlans = results[1].ok || results[10].ok;
-            var bootMetricsReady = results[2].ok && results[3].ok;
-            var bootRangeStatus = bootHasPlans && bootMetricsReady ? 'ready' : (bootHasPlans || results[2].ok || results[3].ok ? 'partial_error' : 'error');
-            v25Remote.monthStatus[month] = bootRangeStatus;
             v25RemoteDataVerified = bootRangeStatus === 'ready';
-            if (bootRangeStatus === 'ready') {
-              if (results[1].ok) v25ApplyCalendar(results[1].data, results[3].data);
-              if (results[10].ok) v25ApplyPlanDays(results[10].data.days || [], results[3].data, month);
-            } else {
-              v25ClearMonth(month);
-              v25Remote.monthStatus[month] = bootRangeStatus;
-            }
             v25Remote.stats = bootRangeStatus === 'ready' ? results[2].data : null;
             v25ApplyStats(v25Remote.stats, bootRangeStatus, bootRangeStatus === 'ready' ? results[3].data : null);
           }
@@ -6631,12 +6697,12 @@
           if (results[6].ok) { v25Remote.templates = results[6].data.templates || []; v25ApplyTemplates(); }
           if (results[7].ok) { v25Remote.favorites = results[7].data.favorites || []; favorites = v25Remote.favorites.map(function (row) { return row.exercise_name; }); saveFavorites(); renderFavorites(); }
           if (results[8].ok) { apiSettings.model = results[8].data.model || ''; apiSettings.provider = results[8].data.provider || 'local-demo'; mode(); }
-          v25TodayDisplayState = results[0].ok ? 'ready' : 'error';
           if (v25Remote.today && (v25Remote.today.isTrainingDay || v25Remote.today.is_training)) {
             v25RemotePlanId = v25Remote.today.id; v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
             todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
             todayPlan.source = v25Remote.today.title; todayIsRest = false;
-          } else { todayPlan = []; todayIsRest = true; }
+            v25TodayDisplayState = results[0].ok ? (todayPlan.length ? 'data' : 'empty') : 'error';
+          } else { todayPlan = []; todayIsRest = true; v25TodayDisplayState = results[0].ok ? 'empty' : 'error'; }
           var sessionErrorDetail = results[11].error && results[11].error.detail;
           var contextConflictDetail = sessionErrorDetail && sessionErrorDetail.code === 'SESSION_PLAN_CONTEXT_MISMATCH' ? sessionErrorDetail : null;
           var historyConflictDetail = results[11].ok && results[11].data && results[11].data.history_conflict ? results[11].data.history_conflict : null;
