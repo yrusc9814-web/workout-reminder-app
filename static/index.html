@@ -2699,7 +2699,7 @@
 
         <!-- 有计划时显示 -->
         <div class="hero-content" id="dayHeroContent">
-          <p class="hero-kicker">日计划 · 今日</p>
+          <p class="hero-kicker" id="todayKicker">日计划 · 今日</p>
           <h1 id="todayTitle">今日训练</h1>
           <p class="hero-lead" id="todayMeta">从动作库添加动作，或直接开始一个训练方案</p>
           <div class="hero-meta">
@@ -2768,7 +2768,7 @@
         <div class="today-plan" id="todayPlanList"></div>
         <div class="plan-actions" id="todayPlanActions">
           <button class="btn ghost" type="button" data-view="library">继续添加动作</button>
-          <button class="btn ghost" type="button" id="clearTodayBtn">清空今日计划</button>
+          <button class="btn ghost" type="button" id="clearTodayBtn">清空当前计划</button>
         </div>
       </section>
     </div>
@@ -3870,6 +3870,7 @@
       var dailySessions = {};        // 按 YYYY-MM-DD 隔离的训练执行状态
       var todaySessionKey = null;    // 当前 todayPlan 所属的完整日期 key
       var todayIsRest = false;       // 今日是否为休息日（与 dailySession 一起持久化）
+      var v25ActiveContextGeneration = 0;
 
       function isValidDateKey(k) {
         return typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k);
@@ -3887,7 +3888,8 @@
       function validateTrainingState(raw) {
         if (!raw || typeof raw !== 'object' || !raw.data || typeof raw.data !== 'object') return null;
         var data = raw.data;
-        var out = { calendarPlans: {}, customTrainingPlans: {}, dailySessions: {} };
+        var out = { calendarPlans: {}, customTrainingPlans: {}, dailySessions: {}, activeDateKey: null };
+        if (isValidDateKey(data.activeDateKey)) out.activeDateKey = data.activeDateKey;
         if (data.calendarPlans && typeof data.calendarPlans === 'object') {
           Object.keys(data.calendarPlans).forEach(function (k) {
             if (!isValidDateKey(k)) return;                 // 坏 key：丢弃
@@ -4069,7 +4071,8 @@
         var data = {
           calendarPlans: clonePlain(calendarPlans),
           customTrainingPlans: clonePlain(customTrainingPlans),
-          dailySessions: clonePlain(dailySessions)
+          dailySessions: clonePlain(dailySessions),
+          activeDateKey: isValidDateKey(todaySessionKey) ? todaySessionKey : null
         };
         var env = { version: TRAINING_STATE_VERSION, updatedAt: new Date().toISOString(), data: data };
         try {
@@ -4118,7 +4121,11 @@
         customTrainingPlans = (data && data.customTrainingPlans) || {};
         dailySessions = (data && data.dailySessions) || {};
         mergeTrainingPlans();
-        todaySessionKey = formatDateKey(getToday());
+        var persistedActiveDate = data && isValidDateKey(data.activeDateKey) ? data.activeDateKey : null;
+        todaySessionKey = persistedActiveDate && (
+          Object.prototype.hasOwnProperty.call(dailySessions, persistedActiveDate)
+          || Object.prototype.hasOwnProperty.call(calendarPlans, persistedActiveDate)
+        ) ? persistedActiveDate : formatDateKey(getToday());
         if (Object.prototype.hasOwnProperty.call(dailySessions, todaySessionKey)) {
           resetTodayRuntimeForUnverifiedData();
         } else {
@@ -4138,6 +4145,37 @@
           initTodayFromCalendar();
         }
         renderTodayPlan();
+      }
+      // VAN-17：训练目标日期由当前活动 session 持有，而不是固定绑定真实今天。
+      // 切换日期时先保存旧日期，再按日期恢复本地 pending 状态，避免历史/未来
+      // 计划被改写到今天，或重复训练复用上一轮已完成的本地状态。
+      function v25ActiveSessionDateKey() {
+        return isValidDateKey(todaySessionKey) ? todaySessionKey : formatDateKey(getToday());
+      }
+      function v25SetActiveSessionDate(dateKey, options) {
+        var nextKey = isValidDateKey(dateKey) ? dateKey : formatDateKey(getToday());
+        var oldKey = todaySessionKey;
+        if (oldKey && oldKey !== nextKey) persistTodayToSession(oldKey, false);
+        if (oldKey !== nextKey || (options && options.reset === true)) v25ActiveContextGeneration += 1;
+        todaySessionKey = nextKey;
+        var opts = options || {};
+        var existing = dailySessions[nextKey];
+        var shouldReset = opts.reset === true || !existing || !existing.started || existing.done;
+        if (!shouldReset) {
+          restoreSessionToToday(existing);
+          return nextKey;
+        }
+        todayStepIndex = 0;
+        todaySetIndex = 0;
+        todayActionElapsedSeconds = 0;
+        todayActionStartedAt = null;
+        todaySkipped = [];
+        todayRecordFacts = [];
+        todayPendingProgress = null;
+        todayStarted = false;
+        todayDone = false;
+        todayIsRest = !!opts.rest;
+        return nextKey;
       }
       // P0-2 隔离测试钩子：验证持久化 / 损坏数据 / 自定义方案，不影响正常运行。
       window.__qdTrainingState = {
@@ -4360,10 +4398,26 @@
           if (!record) return;
           if (record.status === 'completed') completedActions += 1;
           if (record.status === 'skipped') skippedActions += 1;
-          if (record.status === 'completed' || record.status === 'skipped') completedSets += Number(record.setsCompleted || 0);
-          if (record.status === 'completed' || record.status === 'skipped') {
-            if (record.durationSeconds != null) {
-              durationSeconds += Number(record.durationSeconds || 0);
+          // A resumed in-progress session can contain confirmed sets and
+          // elapsed seconds while its action is still pending. Those are real
+          // execution facts and must remain visible after refresh; terminal
+          // action counts still distinguish completed/skipped actions.
+          var setsCompleted = Number(record.setsCompleted || 0);
+          var durationValue = record.durationSeconds != null ? Number(record.durationSeconds) : null;
+          var hasExecutionFact = record.status === 'completed'
+            || record.status === 'skipped'
+            || setsCompleted > 0
+            || durationValue != null;
+          if (hasExecutionFact) completedSets += setsCompleted;
+          // A terminal skip with zero sets and no positive duration is a
+          // deliberate no-op. Keep the skipped action count, but do not
+          // manufacture an unknown/zero duration fact for the summary.
+          var hasDurationFact = record.status === 'completed'
+            || setsCompleted > 0
+            || (durationValue != null && durationValue > 0);
+          if (hasDurationFact) {
+            if (durationValue != null) {
+              durationSeconds += durationValue;
               durationKnownRecords += 1;
             } else {
               durationUnknownRecords += 1;
@@ -4392,6 +4446,12 @@
         var skipBtn = todayPlanEl('skipTodayBtn');
         var doneForUi = v25UiDoneConfirmed();
         var todayState = typeof v25TodayDisplayState !== 'undefined' ? v25TodayDisplayState : undefined;
+        var renderDateKey = typeof v25CurrentExecutionDateKey === 'function'
+          ? v25CurrentExecutionDateKey()
+          : (typeof todaySessionKey === 'string' ? todaySessionKey : (typeof v25TodayKey === 'function' ? v25TodayKey() : ''));
+        var renderTodayKey = typeof v25TodayKey === 'function' ? v25TodayKey() : renderDateKey;
+        var renderDateLabel = renderDateKey && renderDateKey !== renderTodayKey ? renderDateKey : '今日';
+        var renderDateNoun = renderDateLabel === '今日' ? '今天' : renderDateLabel;
         // Narrow helper extraction tests from earlier VAN rounds do not load
         // the page's state variable; keep those isolated render contracts
         // compatible without weakening the real loading/error guards.
@@ -4409,9 +4469,9 @@
           fetchState.setAttribute('aria-busy', String(isLoading));
           fetchState.setAttribute('aria-live', isError ? 'assertive' : 'polite');
           if (isLoading) {
-            fetchState.innerHTML = '<strong>今日计划读取中</strong><span>正在从后端读取今天的计划，请稍候</span>';
+            fetchState.innerHTML = '<strong>' + escapeHtml(renderDateLabel) + '计划读取中</strong><span>正在从后端读取' + escapeHtml(renderDateNoun) + '的计划，请稍候</span>';
           } else if (isError) {
-            fetchState.innerHTML = '<strong>今日计划读取失败</strong><span>未确认到后端数据，请重试读取</span><button class="btn primary mini" type="button" data-v25-retry-today>重试读取</button>';
+            fetchState.innerHTML = '<strong>' + escapeHtml(renderDateLabel) + '计划读取失败</strong><span>未确认到后端数据，请重试读取' + escapeHtml(renderDateNoun) + '的计划</span><button class="btn primary mini" type="button" data-v25-retry-today>重试读取</button>';
           } else {
             fetchState.innerHTML = '';
           }
@@ -4443,23 +4503,27 @@
           if (detailPanel) detailPanel.hidden = true;
           if (skipBtn) skipBtn.hidden = true;
           if (v25TodayDisplayState === 'loading') {
-            if (list) list.innerHTML = '<div class="today-empty">正在读取今日真实计划…</div>';
-            if (title) title.textContent = '今日计划读取中';
-            if (meta) meta.textContent = '正在从后端读取今天的计划，请稍候';
+            if (list) list.innerHTML = '<div class="today-empty">正在读取' + escapeHtml(renderDateNoun) + '真实计划…</div>';
+            if (title) title.textContent = renderDateLabel + '计划读取中';
+            if (meta) meta.textContent = '正在从后端读取' + renderDateNoun + '的计划，请稍候';
           } else if (v25TodayDisplayState === 'error') {
-            if (list) list.innerHTML = '<div class="today-empty">今日计划读取失败。<br><button class="btn mini" type="button" data-v25-retry-today>重试读取</button></div>';
-            if (title) title.textContent = '今日计划读取失败';
-            if (meta) meta.textContent = '未确认到后端数据，页面不会把未知状态当作恢复日';
+            if (list) list.innerHTML = '<div class="today-empty">' + escapeHtml(renderDateLabel) + '计划读取失败。<br><button class="btn mini" type="button" data-v25-retry-today>重试读取</button></div>';
+            if (title) title.textContent = renderDateLabel + '计划读取失败';
+            if (meta) meta.textContent = '未确认到' + renderDateNoun + '后端数据，页面不会把未知状态当作恢复日';
           } else if (v25TodayDisplayState === 'empty') {
-            // 只有后端成功确认今天没有计划/动作时才展示正常空态。
-            if (list) list.innerHTML = '<div class="today-empty">今天还没有训练动作。<br><button class="btn mini" type="button" data-view="library">去动作库添加</button></div>';
-            if (title) title.textContent = '今日训练';
-            if (meta) meta.textContent = todayIsRest ? '今天不安排正式训练，想加练可从动作库添加动作' : '从动作库添加动作，或直接开始一个训练方案';
+            // 只有后端成功确认当前选中日期没有计划/动作时才展示正常空态。
+            if (emptyHero) {
+              var emptyCopy = emptyHero.querySelector('p');
+              if (emptyCopy) emptyCopy.innerHTML = escapeHtml(renderDateNoun) + '还没有训练动作。<br/>从动作库加入，或去训练方案一键开始，都会进入这份' + escapeHtml(renderDateLabel) + '计划。';
+            }
+            if (list) list.innerHTML = '<div class="today-empty">' + escapeHtml(renderDateNoun) + '还没有训练动作。<br><button class="btn mini" type="button" data-view="library">去动作库添加</button></div>';
+            if (title) title.textContent = renderDateLabel + '训练';
+            if (meta) meta.textContent = todayIsRest ? renderDateNoun + '不安排正式训练，想加练可从动作库添加动作' : '从动作库添加动作，或直接开始一个训练方案';
           } else {
             // 防御性分支：没有成功确认的状态不得落入成功空态。
-            if (list) list.innerHTML = '<div class="today-empty">今日计划尚未确认，请重试读取。</div>';
-            if (title) title.textContent = '今日计划读取中';
-            if (meta) meta.textContent = '正在从后端读取今天的计划，请稍候';
+            if (list) list.innerHTML = '<div class="today-empty">' + escapeHtml(renderDateLabel) + '计划尚未确认，请重试读取。</div>';
+            if (title) title.textContent = renderDateLabel + '计划读取中';
+            if (meta) meta.textContent = '正在从后端读取' + renderDateNoun + '的计划，请稍候';
           }
           return;
         }
@@ -4471,8 +4535,18 @@
         if (heroProgress) heroProgress.hidden = false;
 
         var source = todayPlan.source || '临时训练';
-        if (title) title.textContent = source + ' · 预计 ' + duration + ' 分钟';
-        if (meta) meta.textContent = todayPlan.map(function(item) { return item.name; }).join('、') + ' · ' + aggregateIntensity();
+        var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : (typeof todaySessionKey === 'string' ? todaySessionKey : '');
+        var activeTodayKey = typeof v25TodayKey === 'function'
+          ? v25TodayKey()
+          : (typeof formatDateKey === 'function' && typeof getToday === 'function' ? formatDateKey(getToday()) : activeDateKey);
+        var activeDatePrefix = activeDateKey && activeDateKey !== activeTodayKey ? activeDateKey + ' · ' : '';
+        var activeDateLabel = activeDatePrefix ? activeDateKey : '今日';
+        var kicker = document.getElementById('todayKicker');
+        if (kicker) kicker.textContent = '日计划 · ' + activeDateLabel;
+        var clearPlanButton = document.getElementById('clearTodayBtn');
+        if (clearPlanButton) clearPlanButton.textContent = '清空' + activeDateLabel + '计划';
+        if (title) title.textContent = activeDatePrefix + source + ' · 预计 ' + duration + ' 分钟';
+        if (meta) meta.textContent = activeDatePrefix + todayPlan.map(function(item) { return item.name; }).join('、') + ' · ' + aggregateIntensity();
         if (statusPill) {
           var currentItemForStatus = todayPlan[Math.min(todayStepIndex, todayPlan.length - 1)] || {};
           var targetSetsForStatus = Math.max(1, Number(currentItemForStatus.sets || 1));
@@ -4485,11 +4559,11 @@
           var currentItemForButton = todayPlan[Math.min(todayStepIndex, todayPlan.length - 1)] || {};
           var targetSetsForButton = Math.max(1, Number(currentItemForButton.sets || 1));
           startBtn.textContent = v25RemoteProgressPending ? '同步中…'
-            : doneForUi ? '✓ 今日已完成'
+            : doneForUi ? '✓ ' + (activeDatePrefix ? activeDateKey : '今日') + '已完成'
             : (!todayStarted ? '开始训练'
-            : (!todayActionStartedAt ? '开始当前动作 · 第 1 组'
+            : (!todayActionStartedAt ? '开始当前动作 · 第 ' + Math.min(todaySetIndex + 1, targetSetsForButton) + ' 组'
             : (todaySetIndex + 1 < targetSetsForButton ? '完成第 ' + (todaySetIndex + 1) + ' 组'
-            : (todayStepIndex < todayPlan.length - 1 ? '完成动作 · 下一步' : '完成今日训练'))));
+            : (todayStepIndex < todayPlan.length - 1 ? '完成动作 · 下一步' : '完成' + activeDateLabel + '训练'))));
         }
         if (skipBtn) {
           skipBtn.hidden = doneForUi;
@@ -4527,7 +4601,7 @@
         var progressCaption = todayPlanEl('dayProgressCaption');
         var n = todayPlan.length;
         var stepNo = todayPlan.length ? (todayStepIndex + 1) : 0;
-        if (progressLabel) progressLabel.textContent = '今日 ' + n + ' 个动作 · 每组确认完成';
+        if (progressLabel) progressLabel.textContent = (activeDatePrefix ? activeDateKey : '今日') + ' ' + n + ' 个动作 · 每组确认完成';
         if (progressStat) {
           var terminalActions = executionSummary.completedActions + executionSummary.skippedActions;
           progressStat.textContent = doneForUi
@@ -4574,55 +4648,91 @@
         var editMeta = todayPlanEl('todayEditMeta');
         if (editMeta) editMeta.textContent = todayPlan.length + ' 个动作 · 约 ' + duration + ' 分钟 · 增删后上方首页同步刷新';
       }
-      function startPlan(plan) {
-        if (!plan) return;
-        if (typeof v25RemoteSessionConflict !== 'undefined' && v25RemoteSessionConflict && v25RemoteSessionConflict.kind !== 'completed_mismatch') {
+      function startPlan(plan, dateKey) {
+        if (!plan || plan.status === 'loading' || plan.status === 'error' || plan.status === 'rest') return;
+        var targetDateKey = isValidDateKey(dateKey) ? dateKey : (isValidDateKey(plan.date) ? plan.date : v25TodayKey());
+        var conflictBelongsToSelectedPlan = typeof v25RemoteSessionConflict !== 'undefined'
+          && v25RemoteSessionConflict
+          && v25RemoteSessionConflict.kind === 'foreign_active'
+          && plan.id != null
+          && String(plan.id) === String(v25RemoteSessionConflict.planId);
+        if (typeof v25RemoteSessionConflict !== 'undefined' && v25RemoteSessionConflict && v25RemoteSessionConflict.kind !== 'completed_mismatch' && !conflictBelongsToSelectedPlan) {
           showToast(v25RemoteSessionConflict.kind === 'mismatch' ? '当前训练会话与计划不一致，请先保留记录并取消会话' : '已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划', 'error');
           return;
         }
-        if (typeof v25RemoteSessionId !== 'undefined' && typeof v25RemotePlanId !== 'undefined' && v25RemoteSessionId && v25RemotePlanId && (!plan.remote || plan.id === v25RemotePlanId)) {
-          showToast('当前计划已有进行中的训练，会话已恢复', 'error');
+        var sourceItems = Array.isArray(plan.itemRecords) && plan.itemRecords.length ? plan.itemRecords : (plan.items || []);
+        var nextItems = sourceItems.map(function(item) {
+          var record = v25ParseUiItem(item);
+          var remote = record.exercise_id != null ? { id: record.exercise_id } : v25RemoteExerciseByName(record.name);
+          return {
+            id: record.id,
+            name: record.name,
+            exerciseId: remote && remote.id,
+            sets: record.sets,
+            reps: record.reps,
+            duration_seconds: record.duration_seconds,
+            notes: record.notes,
+            video_url: record.video_url,
+            spec: record.spec || '按方案完成',
+            time: record.duration_seconds ? Math.max(1, Math.round(record.duration_seconds / 60)) : Math.max(2, Math.round((plan.time || 5) / Math.max(sourceItems.length, 1)))
+          };
+        }).filter(function(item) { return item.name; });
+        if (!nextItems.length) {
+          showToast('当前日期没有可开始的训练动作', 'error');
           return;
         }
-        var nextItems = plan.items.map(function(item, index) {
-          var name = item.split(' · ')[0];
-          var remote = v25RemoteExerciseByName(name);
-          return {name:name, exerciseId:remote && remote.id, spec:item.indexOf(' · ') >= 0 ? item.slice(item.indexOf(' · ') + 3) : '按方案完成', time:Math.max(2, Math.round(plan.time / plan.items.length))};
-        });
         if (!v25Remote.ready) {
           showToast('后端未连接，计划未保存', 'error');
           return;
         }
-        if (v25Remote.ready) {
-          var remotePlan = { title:plan.title, status:'planned', label:'计划中', time:plan.time, intensity:plan.intensity, scene:plan.scene || '训练', focus:plan.scene || '训练', notes:plan.reason || '', items:nextItems };
-          v25SaveCanonicalPlan(v25TodayKey(), nextItems, remotePlan).then(function () {
-            todayStepIndex = 0;
-            todaySetIndex = 0;
-            todayActionElapsedSeconds = 0;
-            todayActionStartedAt = null;
-            todaySkipped = [];
-            todayRecordFacts = [];
-            todayPendingProgress = null;
-            todayStarted = false;
-            todayDone = false;
-            todayIsRest = false;
-            resetStartBtn();
-            saveTrainingState();
-            renderTodayPlan();
-            showView('home');
-            v25RemoteCompleted = false;
-            v25RemoteSessionConflict = null;
-            v25RemoteSessionId = null;
-            v25RemoteSessionPromise = null;
-            v25RemoteStepPromise = Promise.resolve();
-            v25RemoteProgressPending = false;
-            v25RemoteFinalUpdateConfirmed = false;
-            v25RemoteStatusVerified = true;
-            v25LocalDoneAwaitingVerification = false;
-            v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
-          }).catch(function (error) { showToast(error.message || '训练方案保存失败', 'error'); });
+        var remotePlan = { title:plan.title, status:'planned', label:'计划中', time:plan.time, intensity:plan.intensity, scene:plan.scene || '训练', focus:plan.scene || '训练', notes:plan.reason || plan.notes || '', items:nextItems };
+        var activate = function(planId) {
+          var existing = typeof dailySessions !== 'undefined' && dailySessions ? dailySessions[targetDateKey] : null;
+          var resumeLocal = !!(existing && existing.started && !existing.done && !conflictBelongsToSelectedPlan);
+          if (!resumeLocal && typeof dailySessions !== 'undefined' && dailySessions) delete dailySessions[targetDateKey];
+          v25SetActiveSessionDate(targetDateKey, { reset: !resumeLocal });
+          todayPlan = nextItems;
+          todayPlan.source = plan.title || '训练计划';
+          todayIsRest = false;
+          v25TodayDisplayState = 'data';
+          v25RemotePlanId = planId;
+          v25RemotePlanPromise = Promise.resolve(planId);
+          v25RemoteCompleted = false;
+          v25RemoteSessionConflict = null;
+          v25RemoteSessionConflictPrompted = false;
+          v25RemoteSessionId = null;
+          v25RemoteSessionPromise = null;
+          v25RemoteStepPromise = Promise.resolve();
+          v25RemoteProgressPending = false;
+          v25RemoteFinalUpdateConfirmed = false;
+          v25RemoteStatusVerified = false;
+          v25LocalDoneAwaitingVerification = false;
+          resetStartBtn();
+          saveTrainingState();
+          renderTodayPlan();
+          showView('home');
+        };
+        // A plan already read from the canonical date range is immutable here:
+        // starting it must keep its selected historical/future date and ID.
+        if (plan.remote && plan.id) {
+          activate(plan.id);
           return;
         }
+        var activeDateBeforeStart = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var generationBeforeStart = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0;
+        var startPayload = typeof v25CanonicalPlan === 'function' ? v25CanonicalPlan(targetDateKey, nextItems, remotePlan) : null;
+        var startActionContextChanged = typeof v25CanonicalActionContextChanged === 'function'
+          ? v25CanonicalActionContextChanged(targetDateKey, startPayload)
+          : true;
+        var expectedSaveGeneration = generationBeforeStart + (targetDateKey === activeDateBeforeStart && startActionContextChanged ? 1 : 0);
+        v25SaveCanonicalPlan(targetDateKey, nextItems, remotePlan).then(function (result) {
+          var planId = result && result.plan && result.plan.id;
+          if (!planId) throw new Error('后端未返回训练计划 ID');
+          var currentDate = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+          var currentGeneration = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0;
+          if (currentDate !== activeDateBeforeStart || currentGeneration !== expectedSaveGeneration) return;
+          activate(planId);
+        }).catch(function (error) { showToast(error.message || '训练方案保存失败', 'error'); });
       }
       function addToToday(name) {
         var detail = exerciseDetails[name];
@@ -4651,9 +4761,10 @@
             time: parseInt((detail.tags.join(' ').match(/约 (\d+) 分钟/) || [])[1]) || (remoteDuration != null ? Math.max(1, Math.round(remoteDuration / 60)) : 5)
           };
           nextItems.push(nextItem);
-          var base = calendarPlans[v25TodayKey()] || restPlan;
+          var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+          var base = calendarPlans[activeDateKey] || restPlan;
           var nextPlan = Object.assign({}, base, { title: base.status === 'rest' ? '今日训练' : base.title, status:'planned', focus:base.focus || '临时训练', scene:base.scene || '临时训练', items:nextItems });
-          v25SaveCanonicalPlan(v25TodayKey(), nextItems, nextPlan).then(function () {
+          v25SaveCanonicalPlan(activeDateKey, nextItems, nextPlan).then(function () {
             openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>已加入今日计划</h3><p>' + escapeHtml(name) + ' · 已保存到后端并完成回读。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-view="home" data-modal-close>查看今日计划</button><button class="btn ghost" type="button" data-modal-close>继续添加</button></div>');
           }).catch(function (error) { showToast(error.message || '今日计划保存失败', 'error'); });
           return;
@@ -4914,13 +5025,28 @@
         }
         return actionTerminal;
       }
-      function v25SubmitProgress(status) {
+      function v25SubmitProgress(status, suppliedContext) {
         var progress = v25ProgressPayload(status);
         var actionTerminal = progress.status === 'skipped' || progress.setsCompleted >= v25TargetSets(progress.index);
         var isFinal = actionTerminal && (progress.finalAction || progress.index >= todayPlan.length - 1);
+        var requestContext = suppliedContext || v25CaptureExecutionContext();
+        requestContext.progressIndex = progress.index;
+        requestContext.isFinal = isFinal;
         v25RemoteProgressPending = true;
         renderTodayPlan();
-        return v25QueueRemoteProgress(progress.index, isFinal, progress).then(function(syncResult) {
+        return v25QueueRemoteProgress(progress.index, isFinal, progress, requestContext).then(function(syncResult) {
+          // The server may finish an old session after the user has selected a
+          // different date/plan. That result remains durable in its own date,
+          // but it must not mutate the newly selected page state.
+          if (!v25ExecutionContextOwns(requestContext)) {
+            if (typeof v25RefreshCanonical === 'function' && requestContext.dateKey) {
+              return v25RefreshCanonical([requestContext.dateKey], {
+                refreshLoaded: true,
+                forceToday: requestContext.dateKey === v25TodayKey()
+              }).catch(function () { return null; }).then(function () { return false; });
+            }
+            return false;
+          }
           if (isFinal) {
             todayDone = true;
             v25RemoteStatusVerified = true;
@@ -4936,19 +5062,29 @@
           // confirmed do we invalidate loaded ranges and read the real month,
           // week and today data back so calendar, history and statistics agree.
           if (!isFinal || typeof v25RefreshCanonical !== 'function' || !v25Remote || !v25Remote.monthRequests || typeof calendarDisplayYear === 'undefined') return true;
-          return v25RefreshCanonical([v25TodayKey()], { refreshLoaded: true, forceToday: true }).then(function () {
-            var refreshedMonth = calendarDisplayYear + '-' + pad2(calendarDisplayMonth + 1);
-            if (typeof v25ApplyStats === 'function') v25ApplyStats(v25Remote.stats, v25Remote.stats ? 'ready' : 'error', v25Remote.detailByMonth[refreshedMonth]);
+          var activeDateKey = requestContext.dateKey;
+          var refreshToday = activeDateKey === v25TodayKey();
+          return v25RefreshCanonical([activeDateKey], { refreshLoaded: true, forceToday: refreshToday }).then(function () {
+            if (!v25ExecutionContextOwns(requestContext)) return false;
+            var refreshedMonth = v25MonthForDate(activeDateKey);
+            var displayedMonth = typeof v25DisplayedMonthToken === 'function' ? v25DisplayedMonthToken() : refreshedMonth;
+            if (refreshedMonth === displayedMonth && typeof v25ApplyStats === 'function') {
+              var displayedStats = v25Remote.statsByMonth[displayedMonth] || null;
+              var displayedDetail = v25Remote.detailByMonth[displayedMonth] || null;
+              v25ApplyStats(displayedStats, displayedStats ? 'ready' : 'error', displayedDetail);
+            }
             if (typeof v25ApplyWeekStats === 'function') v25ApplyWeekStats(v25Remote.weekStats, v25Remote.weekStats ? 'ready' : 'error');
             renderTodayPlan();
             renderWeek();
             renderCalendarMonth();
             return true;
           }).catch(function (refreshError) {
+            if (!v25ExecutionContextOwns(requestContext)) return false;
             showToast('训练已由后端确认，但回读刷新失败：' + (refreshError && refreshError.message ? refreshError.message : '请重试'), 'error');
             return true;
           });
         }).catch(function(error) {
+          if (!v25ExecutionContextOwns(requestContext)) return false;
           v25RemoteProgressPending = false;
           // Keep the frozen pending payload for an exact retry after a lost or
           // failed response.  It is persisted before the request above.
@@ -4965,18 +5101,26 @@
           return false;
         }
         if (!todayStarted) {
+          var startContext = v25CaptureExecutionContext();
           v25RemoteProgressPending = true;
           renderTodayPlan();
-          return v25EnsureRemoteSession().then(function() {
+          return v25EnsureRemoteSession(startContext).then(function() {
+            if (!v25ExecutionContextOwns(startContext)) return false;
             todayStarted = true;
-            todayActionElapsedSeconds = 0;
-            todaySetIndex = 0;
-            todayPendingProgress = null;
-            v25BeginCurrentAction();
+            // A resumed session may already contain confirmed sets and
+            // elapsed time. The backend hydration above is authoritative;
+            // only a genuinely fresh session needs an empty local cursor.
+            if (!startContext.hydrated) {
+              todayActionElapsedSeconds = 0;
+              todaySetIndex = 0;
+              todayPendingProgress = null;
+            }
+            if (!todayActionStartedAt && !todayPendingProgress) v25BeginCurrentAction();
             v25RemoteProgressPending = false;
             renderTodayPlan();
             return true;
           }).catch(function(error) {
+            if (!v25ExecutionContextOwns(startContext)) return false;
             v25RemoteProgressPending = false;
             renderTodayPlan();
             showToast('训练开始失败：' + (error && error.message ? error.message : '请重试'), 'error');
@@ -4992,18 +5136,21 @@
           showToast('后端未连接，训练进度未保存，请重试', 'error');
           return false;
         }
-        var begin = todayStarted ? Promise.resolve(true) : v25EnsureRemoteSession().then(function() {
+        var skipContext = v25CaptureExecutionContext();
+        var begin = todayStarted ? Promise.resolve(true) : v25EnsureRemoteSession(skipContext).then(function() {
+          if (!v25ExecutionContextOwns(skipContext)) return false;
           todayStarted = true;
-          todayActionElapsedSeconds = 0;
-          todaySetIndex = 0;
-          todayActionStartedAt = null;
           return true;
         });
         v25RemoteProgressPending = true;
         renderTodayPlan();
-        return begin.then(function() { return v25SubmitProgress('skipped'); }).then(function(result) {
+        return begin.then(function(canContinue) {
+          if (!canContinue || !v25ExecutionContextOwns(skipContext)) return false;
+          return v25SubmitProgress('skipped', skipContext);
+        }).then(function(result) {
           return result;
         }).catch(function(error) {
+          if (!v25ExecutionContextOwns(skipContext)) return false;
           v25RemoteProgressPending = false;
           saveTrainingState();
           renderTodayPlan();
@@ -5268,7 +5415,7 @@
         if (target.id === 'importDataBtn') { promptImportFile(); return; }
         if (target.hasAttribute('data-import-confirm')) { applyImportedTrainingState(); return; }
         if (target.hasAttribute('data-modal-close')) { if (target.hasAttribute('data-view')) showView(target.getAttribute('data-view')); closeModal(); return; }
-        if (target.hasAttribute('data-start-day')) { var day = parseInt(target.getAttribute('data-start-day')); startPlan(getCalendarPlan(displayedDateKey(day))); closeModal(); return; }
+        if (target.hasAttribute('data-start-day')) { var day = parseInt(target.getAttribute('data-start-day')); var dateKey = displayedDateKey(day); startPlan(getCalendarPlan(dateKey), dateKey); closeModal(); return; }
         if (target.hasAttribute('data-adjust-day')) { renderAdjustModal(parseInt(target.getAttribute('data-adjust-day'))); return; }
         if (target.hasAttribute('data-back-day')) { renderDayModal(parseInt(target.getAttribute('data-back-day'))); return; }
         if (target.hasAttribute('data-adjust-reason')) { renderAdjustModal(selectedDay, target.getAttribute('data-adjust-reason')); return; }
@@ -5307,13 +5454,14 @@
         if (target.hasAttribute('data-remove-today')) {
           var removeName = target.getAttribute('data-remove-today');
           var nextTodayItems = todayPlan.filter(function(item) { return item.name !== removeName; });
+          var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
           if (!v25Remote.ready) {
             showToast('后端未连接，今日动作未删除', 'error');
             return;
           }
           if (v25Remote.ready) {
-            var currentTodayPlan = calendarPlans[v25TodayKey()] || { title:'今日训练', status:'planned', focus:'训练建议', items:todayPlan };
-            v25SaveCanonicalPlan(v25TodayKey(), nextTodayItems, currentTodayPlan).then(function () {
+            var currentTodayPlan = calendarPlans[activeDateKey] || { title:'训练计划', status:'planned', focus:'训练建议', items:todayPlan };
+            v25SaveCanonicalPlan(activeDateKey, nextTodayItems, currentTodayPlan).then(function () {
               showToast('今日动作已删除并同步', 'success');
             }).catch(function (error) { showToast(error.message || '今日动作删除失败', 'error'); });
             return;
@@ -5326,9 +5474,10 @@
             return;
           }
           if (v25Remote.ready) {
-            var clearBase = calendarPlans[v25TodayKey()] || { title:'恢复日', status:'rest', focus:'恢复与轻量活动', items:[] };
+            var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+            var clearBase = calendarPlans[activeDateKey] || { title:'恢复日', status:'rest', focus:'恢复与轻量活动', items:[] };
             var clearPlan = Object.assign({}, clearBase, { title:'恢复日', status:'rest', focus:'恢复与轻量活动', items:[] });
-            v25SaveCanonicalPlan(v25TodayKey(), [], clearPlan).then(function () {
+            v25SaveCanonicalPlan(activeDateKey, [], clearPlan).then(function () {
               showToast('今日计划已清空并同步', 'success');
             }).catch(function (error) { showToast(error.message || '清空今日计划失败', 'error'); });
             return;
@@ -5714,6 +5863,7 @@
       // ── v25 rehearsal API 接线层：同源服务优先，localStorage 仅作离线 fallback ──
       var v25Remote = { ready: false, today: null, calendar: {}, calendarDays: {}, planDays: {}, loadedMonths: {}, monthStatus: {}, monthRequests: {}, statsByMonth: {}, detailByMonth: {}, stats: null, weekStats: null, exercises: [], templates: [], favorites: [] };
       var v25MonthRequestSequence = 0;
+      var v25WeekRequestSequence = 0, v25WeekRequestOwner = 0, v25WeekRequestDateKey = '';
       var v25BootPromise = null;
       var v25BootRequestSequence = 0;
       var v25RemotePlanId = null, v25RemotePlanPromise = null, v25RemoteSessionId = null, v25RemoteSessionPromise = null, v25RemoteStepPromise = Promise.resolve(), v25RemoteCompleted = false, v25RemoteSessionConflict = null, v25RemoteSessionConflictPrompted = false;
@@ -5900,6 +6050,7 @@
           var status = day.is_training ? (statusByDate[day.date] === 'completed' ? 'done' : 'planned') : 'rest';
           calendarPlans[day.date] = v25PlanToUi({
             id: day.id,
+            date: day.date,
             title: day.title,
             theme: day.theme,
             focus: day.theme,
@@ -5995,16 +6146,70 @@
         if (refreshOptions.refreshLoaded) Object.keys(v25Remote.loadedMonths).forEach(function (month) { if (months.indexOf(month) < 0) months.push(month); });
         if (!months.length) months.push(v25MonthForDate(v25TodayKey()));
         var jobs = months.map(v25RefreshMonth);
-        if (refreshOptions.forceToday || keys.indexOf(v25TodayKey()) >= 0 || !v25Remote.today) {
+        var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var activeDateIsHistorical = activeDateKey !== v25TodayKey();
+        var refreshContextGeneration = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0;
+        var refreshOwnerPlanId = typeof v25RemotePlanId !== 'undefined' ? v25RemotePlanId : null;
+        var refreshToday = !activeDateIsHistorical && (refreshOptions.forceToday || keys.indexOf(v25TodayKey()) >= 0 || !v25Remote.today);
+        var weekDateKey = v25TodayKey();
+        var activeDateInCurrentWeek = typeof getCurrentWeekDates === 'function' && typeof getToday === 'function' && typeof formatDateKey === 'function'
+          ? getCurrentWeekDates(getToday()).some(function (day) { return formatDateKey(day) === activeDateKey; })
+          : false;
+        // Cache invalidation follows the dates actually changed by the
+        // mutation. The selected active date may be in a different week
+        // (for example, selecting Sunday 10-04 while postponing Saturday
+        // 10-03), so using only activeDateKey leaves the visible current week
+        // stale.
+        var changedDateInCurrentWeek = typeof getCurrentWeekDates === 'function' && typeof getToday === 'function' && typeof formatDateKey === 'function'
+          ? keys.some(function (key) {
+            return getCurrentWeekDates(getToday()).some(function (day) { return formatDateKey(day) === key; });
+          })
+          : false;
+        var refreshWeek = refreshToday || activeDateInCurrentWeek || changedDateInCurrentWeek || refreshOptions.forceWeek === true;
+        if (refreshToday) {
           jobs.push(v25ApiFetch('/api/plans/today').then(function (today) { v25Remote.today = today; return today; }));
-          jobs.push(v25ApiFetch('/api/stats/week/detail?date=' + v25TodayKey()).then(function (weekStats) {
-            if (typeof v25ApplyWeekStats === 'function') v25ApplyWeekStats(weekStats, 'ready');
+        }
+        if (refreshWeek) {
+          if (typeof v25WeekRequestSequence !== 'number') v25WeekRequestSequence = 0;
+          if (typeof v25WeekRequestOwner !== 'number') v25WeekRequestOwner = 0;
+          if (typeof v25WeekRequestDateKey !== 'string') v25WeekRequestDateKey = '';
+          var weekRequestId = ++v25WeekRequestSequence;
+          v25WeekRequestOwner = weekRequestId;
+          v25WeekRequestDateKey = weekDateKey;
+          jobs.push(v25ApiFetch('/api/stats/week/detail?date=' + weekDateKey).then(function (weekStats) {
+            if (weekRequestId === v25WeekRequestOwner && weekDateKey === v25WeekRequestDateKey && typeof v25ApplyWeekStats === 'function') {
+              v25ApplyWeekStats(weekStats, 'ready');
+            }
             return weekStats;
           }));
         }
         return Promise.all(jobs).then(function () {
+          var currentContextGeneration = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : refreshContextGeneration;
+          var currentPlanId = typeof v25RemotePlanId !== 'undefined' ? v25RemotePlanId : null;
+          var contextStillOwned = refreshContextGeneration === currentContextGeneration
+            && activeDateKey === (typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey())
+            && ((refreshOwnerPlanId == null && currentPlanId == null)
+              || (refreshOwnerPlanId != null && currentPlanId != null && String(refreshOwnerPlanId) === String(currentPlanId)));
+          // A historical/future active target owns the visible training
+          // context. Refreshing a range must not replace it with /plans/today;
+          // when no execution is active, apply the freshly read target plan.
+          var activeTargetDay = v25Remote.planDays && v25Remote.planDays[activeDateKey];
+          var activeExecutionOwned = (typeof v25RemoteSessionId !== 'undefined' && !!v25RemoteSessionId)
+            || (typeof todayStarted !== 'undefined' && !!todayStarted)
+            || (typeof todayDone !== 'undefined' && !!todayDone)
+            || (typeof v25RemoteProgressPending !== 'undefined' && !!v25RemoteProgressPending);
+          var activeTargetIsRest = !!(activeTargetDay && activeTargetDay.is_training === false);
+          if (contextStillOwned && activeDateIsHistorical && activeTargetDay && (!activeExecutionOwned || activeTargetIsRest || refreshOptions.forceActivePlan === true)) {
+            v25ApplyActiveSessionPlan({
+              id: activeTargetDay.id,
+              date: activeTargetDay.date,
+              title: activeTargetDay.title,
+              items: activeTargetDay.items || [],
+              isTrainingDay: activeTargetDay.is_training
+            }, activeDateKey);
+          }
           var today = v25Remote.today;
-          if (today && (today.isTrainingDay || today.is_training)) {
+          if (contextStillOwned && refreshToday && today && (today.isTrainingDay || today.is_training)) {
             v25RemotePlanId = today.id;
             todayPlan = (today.items || []).map(function (item) {
               var duration = item.durationSeconds || item.duration_seconds;
@@ -6014,12 +6219,13 @@
             todayPlan.source = today.title || '今日训练';
             todayIsRest = false;
             v25TodayDisplayState = todayPlan.length ? 'data' : 'empty';
-          } else if (today) {
+          } else if (contextStillOwned && refreshToday && today) {
             todayPlan = [];
             todayIsRest = true;
             v25TodayDisplayState = 'empty';
           }
-          renderTodayPlan(); renderWeek(); renderCalendarMonth();
+          if (contextStillOwned) renderTodayPlan();
+          renderWeek(); renderCalendarMonth();
           if (typeof v25DisplayedMonthToken === 'function' && typeof v25ApplyStats === 'function') {
             var displayedToken = v25DisplayedMonthToken();
             if (v25Remote.monthStatus[displayedToken] === 'ready' && v25Remote.statsByMonth[displayedToken]) {
@@ -6032,33 +6238,102 @@
           return { today: today, months: months };
         });
       }
+      function v25RefreshCanonicalWithReadbackState(dateKeys, options) {
+        var keys = (dateKeys || []).filter(Boolean);
+        var context = v25CaptureExecutionContext();
+        var affectedActiveDate = keys.indexOf(context.dateKey) >= 0;
+        return v25RefreshCanonical(keys, options).catch(function (error) {
+          // A successful mutation followed by a failed canonical readback is
+          // a real Error state for the still-owned active date. A late failure
+          // for an old date must not replace the newly selected page state.
+          if (affectedActiveDate
+            && v25CurrentExecutionDateKey() === context.dateKey
+            && typeof v25ActiveContextGeneration === 'number'
+            && v25ActiveContextGeneration === context.generation) {
+            v25TodayDisplayState = 'error';
+            renderTodayPlan();
+          }
+          throw error;
+        });
+      }
       function v25SaveCanonicalPlan(dateKey, itemsOverride, planOverride) {
         if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，计划编辑未保存'));
         var payload = v25CanonicalPlan(dateKey, itemsOverride, planOverride);
         if (payload.is_training_day && !payload.items.length) return Promise.reject(new Error('训练日必须至少包含一个动作'));
+        var activeDateBeforeSave = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var generationBeforeSave = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0;
+        var actionContextChanged = v25CanonicalActionContextChanged(dateKey, payload);
         return v25ApiFetch('/api/plans/by-date/' + encodeURIComponent(dateKey), {
           method: 'PUT',
           body: JSON.stringify(payload)
         }).then(function (result) {
-          return v25RefreshCanonical([dateKey]).then(function () { return result; });
+          var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+          // Invalidate only after the plan write commits. A failed 409/5xx
+          // must leave the unchanged execution context valid for a held
+          // progress response to apply.
+          var invalidated = false;
+          if (actionContextChanged && dateKey === activeDateBeforeSave
+            && activeDateKey === activeDateBeforeSave
+            && typeof v25ActiveContextGeneration === 'number'
+            && v25ActiveContextGeneration === generationBeforeSave) {
+            invalidated = v25InvalidateExecutionBinding(dateKey);
+          }
+          if (dateKey === activeDateKey && result && result.plan && result.plan.id) {
+            v25RemotePlanId = result.plan.id;
+            v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
+          }
+          return v25RefreshCanonicalWithReadbackState([dateKey], { forceActivePlan: invalidated }).then(function () { return result; });
         });
       }
       function v25PostponeCanonical(sourceDate, targetDate) {
         if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，计划编辑未保存'));
+        var activeDateBeforeMove = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var generationBeforeMove = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0;
         return v25ApiFetch('/api/plans/postpone', {
           method: 'POST',
           body: JSON.stringify({ source_date: sourceDate, target_date: targetDate })
         }).then(function (result) {
-          return v25RefreshCanonical([sourceDate, targetDate]).then(function () { return result; });
+          var activeDateAfterMove = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+          var invalidated = false;
+          if ((sourceDate === activeDateBeforeMove || targetDate === activeDateBeforeMove)
+            && activeDateAfterMove === activeDateBeforeMove
+            && typeof v25ActiveContextGeneration === 'number'
+            && v25ActiveContextGeneration === generationBeforeMove) {
+            invalidated = v25InvalidateExecutionBinding(activeDateBeforeMove);
+          }
+          return v25RefreshCanonicalWithReadbackState([sourceDate, targetDate], { forceActivePlan: invalidated }).then(function () { return result; });
         });
       }
       function v25ImportCanonical(entries) {
         if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，导入未保存'));
+        var activeDateBeforeImport = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var generationBeforeImport = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0;
+        var activeImportEntry = (entries || []).find(function (entry) { return entry && entry.date === activeDateBeforeImport; });
+        var replacedMonths = [];
+        (entries || []).forEach(function (entry) {
+          var month = entry && entry.date ? String(entry.date).slice(0, 7) : '';
+          if (month && replacedMonths.indexOf(month) < 0) replacedMonths.push(month);
+        });
+        // replace_months=true also clears unlisted pending dates in every
+        // represented month. An omitted active date is therefore an action
+        // context change; an explicitly listed metadata-only snapshot is not.
+        var importAffectsActive = replacedMonths.indexOf(String(activeDateBeforeImport).slice(0, 7)) >= 0
+          && (!activeImportEntry || v25CanonicalActionContextChanged(activeDateBeforeImport, activeImportEntry));
         return v25ApiFetch('/api/plans/import', {
           method: 'POST',
           body: JSON.stringify({ plans: entries, replace_months: true })
         }).then(function (result) {
-          return v25RefreshCanonical(entries.map(function (entry) { return entry.date; }), { refreshLoaded: true, forceToday: true }).then(function () { return result; });
+          var activeDateAfterImport = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+          var invalidated = false;
+          if (importAffectsActive
+            && activeDateAfterImport === activeDateBeforeImport
+            && typeof v25ActiveContextGeneration === 'number'
+            && v25ActiveContextGeneration === generationBeforeImport) {
+            invalidated = v25InvalidateExecutionBinding(activeDateBeforeImport);
+          }
+          var importRefreshDates = (entries || []).map(function (entry) { return entry.date; });
+          if (importAffectsActive && importRefreshDates.indexOf(activeDateBeforeImport) < 0) importRefreshDates.push(activeDateBeforeImport);
+          return v25RefreshCanonicalWithReadbackState(importRefreshDates, { refreshLoaded: true, forceToday: true, forceActivePlan: invalidated }).then(function () { return result; });
         });
       }
       function v25ItemText(item) {
@@ -6073,7 +6348,7 @@
         var items = itemRecords.map(v25ItemText).filter(Boolean);
         var duration = itemRecords.reduce(function (sum, item) { return sum + (item.duration_seconds || 0); }, 0);
         var minutes = duration ? Math.max(1, Math.round(duration / 60)) : Math.max(5, items.length * 5);
-        return { id: plan.id, title: plan.title || '训练计划', status: status || (plan.isTrainingDay ? 'planned' : 'rest'), label: status === 'done' ? '已完成' : '计划中', time: minutes, intensity: '低强度', body: plan.theme || plan.focus || '全身', focus: plan.focus || plan.theme || '', notes: plan.notes || '', templateId: plan.template_id != null ? String(plan.template_id) : null, items: items, itemRecords: itemRecords, remote: true };
+        return { id: plan.id, date: plan.date || plan.plan_date || null, title: plan.title || '训练计划', status: status || (plan.isTrainingDay ? 'planned' : 'rest'), label: status === 'done' ? '已完成' : '计划中', time: minutes, intensity: '低强度', body: plan.theme || plan.focus || '全身', focus: plan.focus || plan.theme || '', notes: plan.notes || '', templateId: plan.template_id != null ? String(plan.template_id) : null, items: items, itemRecords: itemRecords, remote: true };
       }
       function v25BackendStatusForDay(detail, dateKey) {
         var days = detail && Array.isArray(detail.days) ? detail.days : [];
@@ -6128,9 +6403,14 @@
             updatedAt: new Date().toISOString()
           };
         }
-        var reconciledDone = !!backendStatusKnown && !!backendDone;
         var active = backendSession && backendSession.status === 'in_progress';
         var backendCompleted = backendSession && backendSession.status === 'completed';
+        // A plan-day completion fact describes historical work on that date;
+        // it must never mask a newer in-progress session for the same plan.
+        // When a session is present, its terminal status is authoritative.
+        var reconciledDone = backendSession
+          ? backendCompleted
+          : (!!backendStatusKnown && !!backendDone);
         var facts = Array.isArray(previous.records) ? previous.records.map(function (record) {
           return record ? clonePlain(record) : null;
         }) : [];
@@ -6229,7 +6509,7 @@
           v25Remote.loadedMonths[v25MonthForDate(day.date)] = true;
           v25Remote.calendarDays[day.date] = day;
           var status = day.is_training ? (statusByDate[day.date] === 'completed' ? 'done' : 'planned') : 'rest';
-          calendarPlans[day.date] = v25PlanToUi({ id: day.plan_id, title: day.title, theme: '', isTrainingDay: day.is_training, items: day.items || [] }, status);
+          calendarPlans[day.date] = v25PlanToUi({ id: day.plan_id, date: day.date, title: day.title, theme: '', isTrainingDay: day.is_training, items: day.items || [] }, status);
         });
       }
       function v25ExerciseDetail(ex) {
@@ -6306,12 +6586,13 @@
         }
         var rate = Number(stats.completion_rate);
         if (!isFinite(rate)) rate = 0;
-        var completed = Number(stats.completed);
+        var completed = Number(stats.completed_days);
+        if (!isFinite(completed)) {
+          completed = detail && isFinite(Number(detail.completed_days))
+            ? Number(detail.completed_days)
+            : (detail && isFinite(Number(detail.completed)) ? Number(detail.completed) : Number(stats.completed));
+        }
         if (!isFinite(completed)) completed = 0;
-        // The month card counts completed training days. The aggregate API
-        // also exposes historical log counts (including rest-day logs), so
-        // prefer the range detail when it is available for this UI.
-        if (detail && isFinite(Number(detail.completed))) completed = Number(detail.completed);
         var trainingDays = Number(stats.training_days);
         if (!isFinite(trainingDays)) trainingDays = 0;
         var durationSeconds = Number(stats.duration_seconds);
@@ -6325,11 +6606,12 @@
         v25SetText('monthDurationMetric', Math.round(durationSeconds / 60) + ' 分钟');
         var goalFill = document.getElementById('monthGoalFill');
         if (goalFill) goalFill.style.width = Math.max(0, Math.min(100, rate)) + '%';
-        v25SetText('monthGoalStat', '已完成 ' + completed + ' / ' + trainingDays + ' 次');
-        v25SetText('monthGoalSub', trainingDays ? '剩余 ' + remaining + ' 次训练日' : '本月暂无训练计划');
+        v25SetText('monthGoalStat', '已完成 ' + completed + ' / ' + trainingDays + ' 天');
+        v25SetText('monthGoalSub', trainingDays ? '剩余 ' + remaining + ' 个训练日' : '本月暂无训练计划');
         var week = v25Remote.weekStats;
         if (week) {
-          var weekCompleted = Number(week.completed);
+          var weekCompleted = Number(week.completed_days);
+          if (!isFinite(weekCompleted)) weekCompleted = Number(week.completed);
           var weekTraining = Number(week.training_days);
           if (isFinite(weekCompleted) && isFinite(weekTraining)) v25SetText('weekCompletionMetric', weekCompleted + ' / ' + weekTraining);
         }
@@ -6407,7 +6689,7 @@
         var todayKey = v25TodayKey();
         var plannedDays = (detail.days || []).filter(function (day) { return day.date >= todayKey && day.is_training && day.status !== 'completed'; });
         var restDays = (detail.days || []).filter(function (day) { return !day.is_training; });
-        v25SetText('weekCompletedMain', '已完成 ' + completedDays.length + ' 次');
+        v25SetText('weekCompletedMain', '已完成 ' + completedDays.length + ' 天');
         v25SetText('weekCompletedSub', completedDays.length ? completedDays.map(function (day) { return day.date.slice(5); }).join(' · ') : '本周暂无完成记录');
         var next = plannedDays[0];
         v25SetText('weekNextMain', next ? next.date.slice(5) + ' · 计划训练' : '本周暂无待训练计划');
@@ -6459,7 +6741,8 @@
         var names = (plan.items || []).map(function (x) { return String(x).split(' · ')[0]; });
         var ids = names.map(function (name) { var ex = v25Remote.exercises.find(function (row) { return row.name === name; }); return ex && ex.id; }).filter(function (id) { return id != null; });
         if (!ids.length) return Promise.reject(new Error('训练计划缺少可同步动作'));
-        var request = v25ApiFetch('/api/plans/generate', { method: 'POST', body: JSON.stringify({ date: formatDateKey(getToday()), title: plan.title, theme: plan.scene || '训练', exerciseIds: ids, notes: plan.reason || '' }) }).then(function (body) {
+        var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var request = v25ApiFetch('/api/plans/generate', { method: 'POST', body: JSON.stringify({ date: activeDateKey, title: plan.title, theme: plan.scene || '训练', exerciseIds: ids, notes: plan.reason || '' }) }).then(function (body) {
           v25RemotePlanId = body.plan && body.plan.id;
           if (!v25RemotePlanId) throw new Error('后端未返回训练计划 ID');
           return v25RemotePlanId;
@@ -6470,91 +6753,346 @@
         });
         return v25RemotePlanPromise;
       }
-      function v25EnsureRemoteSession() {
-        if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，训练会话未保存'));
-        if (!v25RemotePlanId) return Promise.reject(new Error('训练计划未确认，无法创建训练会话'));
-        if (typeof v25RemoteSessionConflict !== 'undefined' && v25RemoteSessionConflict && v25RemoteSessionConflict.kind !== 'completed_mismatch') return Promise.reject(new Error(v25RemoteSessionConflict.kind === 'mismatch' ? '当前训练会话与计划不一致，请先保留记录并取消会话' : '已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划'));
-        if (v25RemoteSessionId) return Promise.resolve(v25RemoteSessionId);
-        if (v25RemoteSessionPromise) return v25RemoteSessionPromise;
-        v25RemoteSessionPromise = v25ApiFetch('/api/session/start', { method: 'POST', body: JSON.stringify({ plan_id: v25RemotePlanId }) }).then(function (body) {
-          if (!body.session || body.session.plan_id !== v25RemotePlanId) {
+      function v25CurrentExecutionDateKey() {
+        if (typeof v25ActiveSessionDateKey === 'function') return v25ActiveSessionDateKey();
+        if (typeof todaySessionKey === 'string') return todaySessionKey;
+        if (typeof v25TodayKey === 'function') {
+          try { return v25TodayKey(); } catch (error) { return null; }
+        }
+        return null;
+      }
+      function v25CaptureExecutionContext() {
+        var dateKey = v25CurrentExecutionDateKey();
+        var planId = typeof v25RemotePlanId !== 'undefined' ? v25RemotePlanId : null;
+        var sessionId = typeof v25RemoteSessionId !== 'undefined' ? v25RemoteSessionId : null;
+        var items = typeof todayPlan !== 'undefined' && Array.isArray(todayPlan)
+          ? todayPlan.map(function (item) {
+            return {
+              id: item && item.id != null ? item.id : null,
+              name: item && item.name || '',
+              exerciseId: item && item.exerciseId != null ? item.exerciseId : null,
+              sets: item && item.sets != null ? item.sets : null,
+              reps: item && item.reps != null ? item.reps : null,
+              duration_seconds: item && item.duration_seconds != null ? item.duration_seconds : null,
+              notes: item && item.notes != null ? item.notes : null,
+              video_url: item && item.video_url != null ? item.video_url : null,
+              spec: item && item.spec || '',
+              time: item && item.time
+            };
+          }) : [];
+        return {
+          dateKey: dateKey,
+          planId: planId,
+          sessionId: sessionId,
+          generation: typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0,
+          items: items,
+          source: typeof todayPlan !== 'undefined' ? (todayPlan.source || '') : '',
+          queue: typeof v25RemoteStepPromise !== 'undefined' ? v25RemoteStepPromise : Promise.resolve(),
+          startPromise: null,
+          completePromise: null,
+          hydrated: false,
+          resumed: false,
+          finalUpdateConfirmed: typeof v25RemoteFinalUpdateConfirmed !== 'undefined' && !!v25RemoteFinalUpdateConfirmed,
+          completed: typeof v25RemoteCompleted !== 'undefined' && !!v25RemoteCompleted
+        };
+      }
+      function v25ExecutionContextOwns(context) {
+        if (!context) return false;
+        var currentDate = v25CurrentExecutionDateKey();
+        var currentGeneration = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0;
+        var currentPlanId = typeof v25RemotePlanId !== 'undefined' ? v25RemotePlanId : null;
+        var currentSessionId = typeof v25RemoteSessionId !== 'undefined' ? v25RemoteSessionId : null;
+        if (currentDate !== context.dateKey || currentGeneration !== context.generation) return false;
+        if (context.planId != null && (currentPlanId == null || String(context.planId) !== String(currentPlanId))) return false;
+        if (context.sessionId != null && (currentSessionId == null || String(context.sessionId) !== String(currentSessionId))) return false;
+        return true;
+      }
+      function v25ApplyBackendSession(session, context) {
+        if (!session || !Array.isArray(session.records)) return null;
+        var owner = context || v25CaptureExecutionContext();
+        var key = owner.dateKey;
+        var items = owner.items && owner.items.length
+          ? owner.items
+          : (typeof todayPlan !== 'undefined' ? todayPlan : []);
+        if (!items.length) {
+          owner.hydrated = true;
+          owner.sessionPayload = session;
+          return null;
+        }
+        var previous = dailySessions[key] || null;
+        var source = owner.source || (typeof todayPlan !== 'undefined' ? todayPlan.source || '' : '');
+        var reconciled = v25ReconcileTodaySession(previous, items, source, false, true, false, session);
+        owner.hydrated = true;
+        owner.resumed = session.status === 'in_progress' && reconciled.started;
+        owner.sessionPayload = session;
+        if (!v25ExecutionContextOwns(owner)) return reconciled;
+        dailySessions[key] = reconciled;
+        todayStepIndex = reconciled.stepIndex || 0;
+        todaySetIndex = reconciled.setIndex || 0;
+        todayActionElapsedSeconds = reconciled.actionElapsedSeconds || 0;
+        todayActionStartedAt = reconciled.actionStartedAt || null;
+        todaySkipped = reconciled.skipped || [];
+        todayRecordFacts = reconciled.records || [];
+        todayPendingProgress = reconciled.pending || null;
+        todayStarted = !!reconciled.started;
+        todayDone = !!reconciled.done;
+        saveTrainingState();
+        renderTodayPlan();
+        return reconciled;
+      }
+      function v25ActionSnapshotKey(payload) {
+        var items = (payload && payload.items || []).map(function (item) {
+          return {
+            exercise_id: item.exercise_id != null ? item.exercise_id : null,
+            name: item.name || '',
+            sets: item.sets != null ? Number(item.sets) : null,
+            reps: item.reps != null ? Number(item.reps) : null,
+            duration_seconds: item.duration_seconds != null ? Number(item.duration_seconds) : null,
+            notes: item.notes || '',
+            video_url: item.video_url || null,
+            spec: item.spec || ''
+          };
+        });
+        return JSON.stringify({
+          is_training_day: !!(payload && payload.is_training_day),
+          template_id: payload && payload.template_id != null ? Number(payload.template_id) : null,
+          items: items
+        });
+      }
+      function v25ExistingCanonicalPlanPayload(dateKey) {
+        var existing = (typeof calendarPlans !== 'undefined' && calendarPlans && calendarPlans[dateKey])
+          || (v25Remote.planDays && v25Remote.planDays[dateKey])
+          || (v25Remote.calendarDays && v25Remote.calendarDays[dateKey]);
+        if (!existing) return null;
+        var sourceItems = existing.itemRecords || existing.items || [];
+        return v25PlanPayload(dateKey, existing, sourceItems);
+      }
+      function v25CanonicalActionContextChanged(dateKey, nextPayload) {
+        var previousPayload = v25ExistingCanonicalPlanPayload(dateKey);
+        if (!previousPayload) return false;
+        return v25ActionSnapshotKey(previousPayload) !== v25ActionSnapshotKey(nextPayload);
+      }
+      function v25InvalidateExecutionBinding(dateKey) {
+        var activeDate = v25CurrentExecutionDateKey();
+        if (activeDate !== dateKey) return false;
+        if (typeof v25ActiveContextGeneration === 'number') v25ActiveContextGeneration += 1;
+        v25RemoteSessionId = null;
+        v25RemoteSessionPromise = null;
+        v25RemoteStepPromise = Promise.resolve();
+        v25RemoteCompleted = false;
+        v25RemoteFinalUpdateConfirmed = false;
+        v25RemoteStatusVerified = false;
+        v25RemoteProgressPending = false;
+        v25LocalDoneAwaitingVerification = false;
+        if (typeof dailySessions !== 'undefined' && dailySessions) delete dailySessions[dateKey];
+        todayPlan = [];
+        todayPlan.source = '';
+        todayStepIndex = 0;
+        todaySetIndex = 0;
+        todayActionElapsedSeconds = 0;
+        todayActionStartedAt = null;
+        todaySkipped = [];
+        todayRecordFacts = [];
+        todayPendingProgress = null;
+        todayStarted = false;
+        todayDone = false;
+        todayIsRest = true;
+        v25TodayDisplayState = 'loading';
+        saveTrainingState();
+        renderTodayPlan();
+        return true;
+      }
+      function v25ApplyActiveSessionPlan(plan, dateKey) {
+        if (!plan || !isValidDateKey(dateKey)) return false;
+        var sourceItems = Array.isArray(plan.items) ? plan.items : (Array.isArray(plan.itemRecords) ? plan.itemRecords : []);
+        var items = sourceItems.map(function (item) {
+          var record = v25ParseUiItem(item);
+          var duration = record.duration_seconds;
+          return {
+            id: record.id,
+            name: record.name,
+            exerciseId: record.exercise_id,
+            sets: record.sets,
+            reps: record.reps,
+            duration_seconds: duration,
+            notes: record.notes,
+            video_url: record.video_url,
+            spec: record.spec || v25SpecForItem(record),
+            time: duration ? Math.max(1, Math.round(duration / 60)) : 5
+          };
+        }).filter(function (item) { return item.name; });
+        if (!items.length) {
+          v25SetActiveSessionDate(dateKey, { reset: true, rest: true });
+          todayPlan = [];
+          todayIsRest = true;
+          v25TodayDisplayState = 'empty';
+          return true;
+        }
+        v25SetActiveSessionDate(dateKey, { reset: false });
+        todayPlan = items;
+        todayPlan.source = plan.title || '训练计划';
+        todayIsRest = false;
+        v25TodayDisplayState = 'data';
+        return true;
+      }
+      function v25ResolveBootSessionContext(remoteSession, remoteSessionPlan, currentPlanId, selectedDateKey) {
+        var dateKey = remoteSessionPlan && (remoteSessionPlan.date || remoteSessionPlan.plan_date)
+          || (remoteSession && (remoteSession.date || remoteSession.plan_date));
+        var active = !!(remoteSession && remoteSession.status === 'in_progress');
+        var samePlan = !!(currentPlanId != null && remoteSession && String(remoteSession.plan_id) === String(currentPlanId));
+        var terminalSelected = !!(
+          remoteSession
+          && remoteSession.status === 'completed'
+          && remoteSessionPlan
+          && isValidDateKey(dateKey)
+          && (samePlan || (selectedDateKey && dateKey === selectedDateKey))
+        );
+        // An explicitly selected date owns the visible context. A global
+        // session from another date remains a conflict, but must not replace
+        // the selected plan during refresh or cold boot.
+        var selectedDateMatches = !selectedDateKey || dateKey === selectedDateKey;
+        var targetActive = !!((active || terminalSelected) && remoteSessionPlan && isValidDateKey(dateKey) && !samePlan && selectedDateMatches);
+        return {
+          activeSession: (active || terminalSelected) && (samePlan || targetActive) ? remoteSession : null,
+          activePlan: targetActive ? remoteSessionPlan : null,
+          activeDateKey: targetActive ? dateKey : null,
+          targetActive: targetActive,
+          foreignActive: active && !samePlan && !targetActive
+        };
+      }
+      function v25EnsureRemoteSession(context) {
+        var owner = context || v25CaptureExecutionContext();
+        if (!v25Remote.ready && !owner.sessionId) return Promise.reject(new Error('后端未连接，训练会话未保存'));
+        if (!owner.planId) return Promise.reject(new Error('训练计划未确认，无法创建训练会话'));
+        var conflictBelongsToOwnerPlan = typeof v25RemoteSessionConflict !== 'undefined'
+          && v25RemoteSessionConflict
+          && v25RemoteSessionConflict.kind === 'foreign_active'
+          && owner.planId != null
+          && String(owner.planId) === String(v25RemoteSessionConflict.planId);
+        if (v25ExecutionContextOwns(owner)
+          && typeof v25RemoteSessionConflict !== 'undefined'
+          && v25RemoteSessionConflict
+          && v25RemoteSessionConflict.kind !== 'completed_mismatch'
+          && !conflictBelongsToOwnerPlan) {
+          return Promise.reject(new Error(v25RemoteSessionConflict.kind === 'mismatch'
+            ? '当前训练会话与计划不一致，请先保留记录并取消会话'
+            : '已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划'));
+        }
+        if (owner.sessionId) return Promise.resolve(owner.sessionId);
+        if (owner.startPromise) return owner.startPromise;
+        owner.startPromise = v25ApiFetch('/api/session/start', {
+          method: 'POST',
+          body: JSON.stringify({ plan_id: owner.planId })
+        }).then(function (body) {
+          var returnedPlanId = body && body.session && body.session.plan_id;
+          if (!body.session || String(returnedPlanId) !== String(owner.planId)) {
             throw new Error('后端返回的训练会话与当前计划不一致');
           }
-          v25RemoteSessionId = body.session && body.session.id;
-          if (!v25RemoteSessionId) throw new Error('后端未返回训练会话 ID');
-          if (v25RemoteSessionConflict && v25RemoteSessionConflict.kind === 'completed_mismatch') {
+          var sessionId = body.session && body.session.id;
+          if (!sessionId) throw new Error('后端未返回训练会话 ID');
+          owner.sessionId = sessionId;
+          owner.resumed = body.status === 'resumed';
+          // The current global session ID is still null while this start
+          // response is being adopted. Compare date/plan ownership first,
+          // then publish the returned session ID and perform the full check.
+          var planContextOwned = v25ExecutionContextOwns(Object.assign({}, owner, { sessionId: null }));
+          if (planContextOwned) {
+            v25RemoteSessionId = sessionId;
+            v25RemoteSessionPromise = Promise.resolve(sessionId);
+          }
+          v25ApplyBackendSession(body.session, owner);
+          if (v25ExecutionContextOwns(owner)
+            && v25RemoteSessionConflict
+            && v25RemoteSessionConflict.kind === 'completed_mismatch') {
             v25RemoteSessionConflict = null;
             v25RemoteSessionConflictPrompted = false;
           }
-          return v25RemoteSessionId;
+          return sessionId;
         }).catch(function (error) {
-          v25RemoteSessionPromise = null;
+          owner.startPromise = null;
+          if (v25ExecutionContextOwns(owner) && v25RemoteSessionPromise) v25RemoteSessionPromise = null;
           throw error;
         });
-        return v25RemoteSessionPromise;
+        if (v25ExecutionContextOwns(owner)) v25RemoteSessionPromise = owner.startPromise;
+        return owner.startPromise;
       }
-      function v25RemoteExerciseId(index) {
-        var item = todayPlan[index];
+      function v25RemoteExerciseId(index, context) {
+        var item = context && context.items ? context.items[index] : (typeof todayPlan !== 'undefined' ? todayPlan[index] : null);
         if (!item) return null;
         if (item.exerciseId != null) return item.exerciseId;
         var match = v25Remote.exercises.find(function (row) { return row.name === item.name; });
         return match && match.id;
       }
-      function v25SyncRemoteRecord(index, status, progress) {
-        var exerciseId = v25RemoteExerciseId(index);
+      function v25SyncRemoteRecord(index, status, progress, context) {
+        var owner = context || v25CaptureExecutionContext();
+        var exerciseId = v25RemoteExerciseId(index, owner);
         if (exerciseId == null) return Promise.reject(new Error('当前动作未绑定后端动作 ID'));
         var body = { session_id: null, exercise_id: exerciseId, status: status };
         if (progress && typeof progress.setsCompleted === 'number') body.sets_completed = progress.setsCompleted;
         if (progress && typeof progress.durationSeconds === 'number') body.duration_seconds = progress.durationSeconds;
-        var planReady = v25RemotePlanPromise || Promise.resolve(v25RemotePlanId);
-        return planReady.then(function (planId) {
-          if (!planId) throw new Error('训练计划保存失败，无法同步动作进度');
-          return v25EnsureRemoteSession();
-        }).then(function (sessionId) {
+        if (!owner.planId) return Promise.reject(new Error('训练计划保存失败，无法同步动作进度'));
+        return v25EnsureRemoteSession(owner).then(function (sessionId) {
           if (!sessionId) throw new Error('训练会话保存失败，无法同步动作进度');
-          body.session_id = sessionId;
+          body.session_id = owner.sessionId || sessionId;
           return v25ApiFetch('/api/session/update', { method: 'POST', body: JSON.stringify(body) });
         }).then(function (result) {
           if (!result || result.status !== 'updated') throw new Error('后端未确认动作进度已保存');
+          if (result.record && result.record.session_id != null && String(result.record.session_id) !== String(owner.sessionId)) {
+            throw new Error('后端返回的动作记录与原训练会话不一致');
+          }
           return result;
         });
       }
-      function v25CompleteRemoteSession() {
-        if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，训练完成未保存'));
-        if (v25RemoteCompleted) return Promise.resolve({ status: 'already_completed' });
-        v25RemoteCompleted = true;
-        return v25EnsureRemoteSession().then(function (sessionId) {
-          if (!sessionId) throw new Error('训练会话保存失败，无法完成训练');
-          return v25ApiFetch('/api/session/complete', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) });
+      function v25CompleteRemoteSession(context) {
+        var owner = context || v25CaptureExecutionContext();
+        if (!v25Remote.ready && !owner.sessionId) return Promise.reject(new Error('后端未连接，训练完成未保存'));
+        if (owner.completed) return Promise.resolve({ status: 'already_completed' });
+        if (owner.completePromise) return owner.completePromise;
+        owner.completePromise = v25EnsureRemoteSession(owner).then(function (sessionId) {
+          if (!sessionId || !owner.sessionId) throw new Error('训练会话保存失败，无法完成训练');
+          return v25ApiFetch('/api/session/complete', { method: 'POST', body: JSON.stringify({ session_id: owner.sessionId }) });
         }).then(function (result) {
           if (!result || (result.status !== 'completed' && result.status !== 'already_completed')) {
             throw new Error('后端未确认训练已完成');
           }
+          owner.completed = true;
+          if (v25ExecutionContextOwns(owner)) v25RemoteCompleted = true;
           return result;
         }).catch(function (error) {
-          v25RemoteCompleted = false;
+          owner.completePromise = null;
+          if (v25ExecutionContextOwns(owner)) v25RemoteCompleted = false;
           throw error;
         });
+        return owner.completePromise;
       }
-      function v25QueueRemoteProgress(index, isFinal, progress) {
-        var attempt = v25RemoteStepPromise.then(function () {
+      function v25QueueRemoteProgress(index, isFinal, progress, context) {
+        var owner = context || v25CaptureExecutionContext();
+        if (!owner.queue) owner.queue = Promise.resolve();
+        var attempt = owner.queue.then(function () {
           // If the final update was confirmed but the complete response was lost,
           // retry complete directly; the update payload is already durable.
-          if (isFinal && v25RemoteFinalUpdateConfirmed) return null;
-          return v25SyncRemoteRecord(index, progress.status, progress).then(function (result) {
-            if (isFinal) v25RemoteFinalUpdateConfirmed = true;
+          if (isFinal && owner.finalUpdateConfirmed) return null;
+          return v25SyncRemoteRecord(index, progress.status, progress, owner).then(function (result) {
+            if (isFinal) {
+              owner.finalUpdateConfirmed = true;
+              if (v25ExecutionContextOwns(owner)) v25RemoteFinalUpdateConfirmed = true;
+            }
             return result;
           });
         }).then(function (updateResult) {
           if (!isFinal) return updateResult;
-          return v25CompleteRemoteSession().then(function (completeResult) {
-            v25RemoteFinalUpdateConfirmed = false;
+          return v25CompleteRemoteSession(owner).then(function (completeResult) {
+            owner.finalUpdateConfirmed = false;
+            if (v25ExecutionContextOwns(owner)) v25RemoteFinalUpdateConfirmed = false;
             return { update: updateResult, complete: completeResult };
           });
         });
         // Keep the queue retryable after a failed attempt while returning the
-        // original rejection to the caller for visible failure feedback.
-        v25RemoteStepPromise = attempt.catch(function () { return null; });
+        // original rejection to the caller for visible failure feedback. The
+        // queue belongs to this immutable context; a stale attempt cannot
+        // overwrite a newly selected plan's queue.
+        owner.queue = attempt.catch(function () { return null; });
+        if (v25ExecutionContextOwns(owner)) v25RemoteStepPromise = owner.queue;
         return attempt;
       }
       function v25MigrationPreview() {
@@ -6604,6 +7142,12 @@
         var bootRequestId = ++v25BootRequestSequence;
         var bootDisplayRequest = v25DisplayedMonthRequest;
         var month = formatDateKey(getToday()).slice(0, 7), todayKey = formatDateKey(getToday());
+        var persistedDateKeyValid = typeof isValidDateKey === 'function'
+          ? isValidDateKey(todaySessionKey)
+          : (typeof todaySessionKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(todaySessionKey));
+        var persistedActiveDateKey = persistedDateKeyValid && todaySessionKey !== todayKey ? todaySessionKey : null;
+        var dateBoundSessionDateKey = persistedDateKeyValid ? todaySessionKey : null;
+        var persistedActiveMonth = persistedActiveDateKey ? v25MonthForDate(persistedActiveDateKey) : null;
         // Cache ownership is per range, independent of calendar navigation.
         // Share request identities with explicit month refreshes so an older
         // boot cannot overwrite a newer response for the same month.
@@ -6628,6 +7172,18 @@
         adjacentMonths.forEach(function (token) {
           jobs.push(v25RefreshMonth(token).then(function (data) { return { ok: true, data: data, error: null }; }).catch(function (error) { return { ok: false, data: null, error: error }; }));
         });
+        var activeMonthJobIndex = -1;
+        var activeSessionJobIndex = -1;
+        if (persistedActiveMonth && persistedActiveMonth !== month && adjacentMonths.indexOf(persistedActiveMonth) < 0) {
+          activeMonthJobIndex = jobs.length;
+          jobs.push(v25RefreshMonth(persistedActiveMonth).then(function (data) { return { ok: true, data: data, error: null }; }).catch(function (error) { return { ok: false, data: null, error: error }; }));
+        } else if (persistedActiveMonth && persistedActiveMonth !== month) {
+          activeMonthJobIndex = basePaths.length + adjacentMonths.indexOf(persistedActiveMonth);
+        }
+        if (dateBoundSessionDateKey) {
+          activeSessionJobIndex = jobs.length;
+          jobs.push(v25ApiFetch('/api/session/current?date=' + encodeURIComponent(dateBoundSessionDateKey) + '&include_completed=true').then(function (data) { return { ok: true, data: data, error: null }; }).catch(function (error) { return { ok: false, data: null, error: error }; }));
+        }
         return Promise.all(jobs).then(function (results) {
           // Every boot/retry owns one generation. A late response from an
           // older generation must not change today's visible state or facts.
@@ -6637,6 +7193,27 @@
           var bootHasPlans = results[1].ok || results[10].ok;
           var bootMetricsReady = results[2].ok && results[3].ok;
           var bootRangeStatus = bootHasPlans && bootMetricsReady ? 'ready' : (bootHasPlans || results[2].ok || results[3].ok ? 'partial_error' : 'error');
+          var selectedRangeResult = persistedActiveDateKey
+            ? (persistedActiveMonth === month
+              ? { ok: results[3].ok, data: results[3].data }
+              : (activeMonthJobIndex >= 0 ? results[activeMonthJobIndex] : null))
+            : { ok: results[3].ok, data: results[3].data };
+          var selectedRangeReady = !!(selectedRangeResult && selectedRangeResult.ok
+            && selectedRangeResult.data
+            && !selectedRangeResult.data.partial_error);
+          var selectedDetail = selectedRangeReady
+            ? (selectedRangeResult.data.detail || selectedRangeResult.data)
+            : null;
+          var selectedFactsDateKey = persistedActiveDateKey || todayKey;
+          var selectedSessionResultForFacts = dateBoundSessionDateKey
+            ? (activeSessionJobIndex >= 0 ? results[activeSessionJobIndex] : results[11])
+            : { ok: true };
+          var selectedSessionRequestKnown = !!(selectedSessionResultForFacts && selectedSessionResultForFacts.ok);
+          var selectedStatusKnown = selectedRangeReady && !!selectedDetail && selectedSessionRequestKnown;
+          var selectedBackendStatus = selectedStatusKnown
+            ? v25BackendStatusForDay(selectedDetail, selectedFactsDateKey)
+            : null;
+          var selectedBackendDone = selectedStatusKnown && selectedBackendStatus === 'completed';
           if (bootOwnsRange) {
             v25Remote.monthStatus[month] = bootRangeStatus;
             if (bootRangeStatus === 'ready') {
@@ -6678,7 +7255,7 @@
           var todayStatusKnown = results[3].ok;
           var todayBackendStatus = todayStatusKnown ? v25BackendStatusForDay(results[3].data, todayKey) : null;
           var todayBackendDone = todayStatusKnown && todayBackendStatus === 'completed';
-          v25RemoteStatusVerified = todayStatusKnown;
+          v25RemoteStatusVerified = selectedStatusKnown;
           v25Remote.ready = true;
           v25Remote.today = results[0].data;
           v25Remote.calendar = results[1].ok ? results[1].data : null;
@@ -6697,20 +7274,126 @@
           if (results[6].ok) { v25Remote.templates = results[6].data.templates || []; v25ApplyTemplates(); }
           if (results[7].ok) { v25Remote.favorites = results[7].data.favorites || []; favorites = v25Remote.favorites.map(function (row) { return row.exercise_name; }); saveFavorites(); renderFavorites(); }
           if (results[8].ok) { apiSettings.model = results[8].data.model || ''; apiSettings.provider = results[8].data.provider || 'local-demo'; mode(); }
-          if (v25Remote.today && (v25Remote.today.isTrainingDay || v25Remote.today.is_training)) {
+          // When local state selected a historical/future date, the selected
+          // range owns the visible plan. Do not seed that page from
+          // /api/plans/today and then merely change its date label; that would
+          // mix today's plan with the selected date's session/progress.
+          var persistedActiveDay = persistedActiveDateKey && (
+            (v25Remote.planDays && v25Remote.planDays[persistedActiveDateKey])
+            || (v25Remote.calendarDays && v25Remote.calendarDays[persistedActiveDateKey])
+          );
+          var selectedActivePlan = persistedActiveDateKey && persistedActiveDay ? {
+            id: persistedActiveDay.id != null ? persistedActiveDay.id : persistedActiveDay.plan_id,
+            date: persistedActiveDay.date || persistedActiveDateKey,
+            title: persistedActiveDay.title,
+            theme: persistedActiveDay.theme || persistedActiveDay.focus,
+            focus: persistedActiveDay.focus || persistedActiveDay.theme,
+            notes: persistedActiveDay.notes,
+            isTrainingDay: persistedActiveDay.isTrainingDay != null ? persistedActiveDay.isTrainingDay : persistedActiveDay.is_training,
+            items: persistedActiveDay.items || []
+          } : null;
+          if (selectedActivePlan) {
+            v25RemotePlanId = selectedActivePlan.id;
+            v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
+            v25ApplyActiveSessionPlan(selectedActivePlan, persistedActiveDateKey);
+          } else if (persistedActiveDateKey) {
+            // A historical/future selection must not fall back to today's
+            // successful response when its own range failed or is empty. Keep
+            // the selected date in an explicit error/empty state until that
+            // date's range can be verified.
+            v25RemotePlanId = null;
+            v25RemotePlanPromise = null;
+            todayPlan = [];
+            todayIsRest = false;
+            v25TodayDisplayState = selectedRangeReady ? 'empty' : 'error';
+          } else if (v25Remote.today && (v25Remote.today.isTrainingDay || v25Remote.today.is_training)) {
             v25RemotePlanId = v25Remote.today.id; v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
             todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
             todayPlan.source = v25Remote.today.title; todayIsRest = false;
             v25TodayDisplayState = results[0].ok ? (todayPlan.length ? 'data' : 'empty') : 'error';
           } else { todayPlan = []; todayIsRest = true; v25TodayDisplayState = results[0].ok ? 'empty' : 'error'; }
-          var sessionErrorDetail = results[11].error && results[11].error.detail;
+          var dateSessionResult = activeSessionJobIndex >= 0 ? results[activeSessionJobIndex] : results[11];
+          var globalSessionResult = results[11];
+          var activeSessionResult = dateSessionResult;
+          var dateSessionPayload = dateSessionResult && dateSessionResult.ok && dateSessionResult.data
+            && Object.prototype.hasOwnProperty.call(dateSessionResult.data, 'session') ? dateSessionResult.data : null;
+          var globalSessionPayload = globalSessionResult && globalSessionResult.ok && globalSessionResult.data
+            && Object.prototype.hasOwnProperty.call(globalSessionResult.data, 'session') ? globalSessionResult.data : null;
+          // A global in-progress session is the one exception to date-bound
+          // selection: it is an active user action and must be restored even
+          // when the current date has no session. A global completed session
+          // from another date never supplies today's completed facts.
+          if (globalSessionPayload && globalSessionPayload.session
+            && globalSessionPayload.session.status === 'in_progress'
+            && (!persistedActiveDateKey || persistedActiveDateKey === todayKey)
+            && (!dateSessionPayload || !dateSessionPayload.session || dateSessionPayload.session.status === 'completed')) {
+            activeSessionResult = globalSessionResult;
+          }
+          if (activeSessionJobIndex >= 0 && !dateSessionResult.ok) {
+            showToast('活动训练日期的 session 读取失败，未显示本地完成事实', 'error');
+          }
+          var sessionErrorDetail = activeSessionResult.error && activeSessionResult.error.detail;
           var contextConflictDetail = sessionErrorDetail && sessionErrorDetail.code === 'SESSION_PLAN_CONTEXT_MISMATCH' ? sessionErrorDetail : null;
-          var historyConflictDetail = results[11].ok && results[11].data && results[11].data.history_conflict ? results[11].data.history_conflict : null;
-          var remoteSession = results[11].ok ? results[11].data.session : null;
-          var activeSession = remoteSession && remoteSession.plan_id === v25RemotePlanId ? remoteSession : null;
-          var foreignActiveSession = remoteSession
+          var historyConflictDetail = activeSessionResult.ok && activeSessionResult.data && activeSessionResult.data.history_conflict ? activeSessionResult.data.history_conflict : null;
+          var remoteSession = activeSessionResult.ok ? activeSessionResult.data.session : null;
+          var remoteSessionPlan = activeSessionResult.ok && activeSessionResult.data ? activeSessionResult.data.plan : null;
+          if (persistedActiveDateKey && !remoteSessionPlan) {
+            var cachedActiveDay = v25Remote.planDays && v25Remote.planDays[persistedActiveDateKey];
+            if (cachedActiveDay) {
+              remoteSessionPlan = {
+                id: cachedActiveDay.id,
+                date: cachedActiveDay.date,
+                title: cachedActiveDay.title,
+                isTrainingDay: cachedActiveDay.is_training,
+                items: cachedActiveDay.items || []
+              };
+            }
+          }
+          var bootCurrentPlanId = v25RemotePlanId;
+          var bootSessionContext = typeof v25ResolveBootSessionContext === 'function'
+            ? v25ResolveBootSessionContext(remoteSession, remoteSessionPlan, bootCurrentPlanId, persistedActiveDateKey)
+            : (function () {
+              var fallbackDateKey = remoteSessionPlan && (remoteSessionPlan.date || remoteSessionPlan.plan_date)
+                || (remoteSession && (remoteSession.date || remoteSession.plan_date));
+              var fallbackActive = !!(remoteSession && remoteSession.status === 'in_progress');
+              var fallbackSamePlan = !!(bootCurrentPlanId != null && remoteSession && String(remoteSession.plan_id) === String(bootCurrentPlanId));
+              var fallbackTerminal = !!(remoteSession && remoteSession.status === 'completed' && remoteSessionPlan && isValidDateKey(fallbackDateKey) && (fallbackSamePlan || (persistedActiveDateKey && fallbackDateKey === persistedActiveDateKey)));
+              var fallbackTarget = !!((fallbackActive || fallbackTerminal) && remoteSessionPlan && isValidDateKey(fallbackDateKey) && !fallbackSamePlan);
+              return {
+                activeSession: (fallbackActive || fallbackTerminal) && (fallbackSamePlan || fallbackTarget) ? remoteSession : null,
+                activePlan: fallbackTarget ? remoteSessionPlan : null,
+                activeDateKey: fallbackTarget ? fallbackDateKey : null,
+                targetActive: fallbackTarget,
+                foreignActive: fallbackActive && !fallbackSamePlan && !fallbackTarget
+              };
+            }());
+          var remoteSessionIsHistoricalActive = bootSessionContext.targetActive;
+          var activeSession = bootSessionContext.activeSession;
+          if (remoteSessionIsHistoricalActive && !contextConflictDetail && !historyConflictDetail) {
+            activeSession = remoteSession;
+            v25RemotePlanId = remoteSession.plan_id;
+            v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
+            v25ApplyActiveSessionPlan(bootSessionContext.activePlan, bootSessionContext.activeDateKey);
+          }
+          if (
+            persistedActiveDateKey
+            && remoteSessionPlan
+            && (remoteSessionPlan.date || remoteSessionPlan.plan_date) === persistedActiveDateKey
+            && !contextConflictDetail
+            && !historyConflictDetail
+            && !remoteSessionIsHistoricalActive
+          ) {
+            v25RemotePlanId = remoteSessionPlan.id;
+            v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
+            v25ApplyActiveSessionPlan(remoteSessionPlan, persistedActiveDateKey);
+          }
+          var globalForeignActiveSession = globalSessionPayload && globalSessionPayload.session
+            && globalSessionPayload.session.status === 'in_progress'
+            && (!activeSession || String(globalSessionPayload.session.id) !== String(activeSession.id));
+          var dateForeignActiveSession = remoteSession
             && remoteSession.status === 'in_progress'
-            && remoteSession.plan_id !== v25RemotePlanId;
+            && bootSessionContext.foreignActive ? remoteSession : null;
+          var foreignActiveSession = dateForeignActiveSession || (globalForeignActiveSession ? globalSessionPayload.session : null);
           if (contextConflictDetail) {
             v25RemoteSessionConflict = {
               kind: 'mismatch',
@@ -6729,7 +7412,7 @@
             };
             activeSession = null;
           } else {
-            v25RemoteSessionConflict = foreignActiveSession ? { kind: 'foreign_active', sessionId: remoteSession.id, planId: remoteSession.plan_id } : null;
+            v25RemoteSessionConflict = foreignActiveSession ? { kind: 'foreign_active', sessionId: foreignActiveSession.id, planId: foreignActiveSession.plan_id } : null;
           }
           if (activeSession && activeSession.status === 'in_progress' && activeSession.id) {
             v25RemoteSessionId = activeSession.id;
@@ -6740,10 +7423,15 @@
           }
           if (todaySessionKey) {
             var localSessionForReconcile = v25RemoteSessionConflict || !activeSession ? null : dailySessions[todaySessionKey];
-            var reconciledSession = v25ReconcileTodaySession(localSessionForReconcile, todayPlan, todayPlan.source || '', todayIsRest, todayStatusKnown, todayBackendDone, activeSession);
+            var dateFactsVerified = selectedStatusKnown;
+            var reconcileStatusKnown = remoteSessionIsHistoricalActive ? true : selectedStatusKnown;
+            var reconcileBackendDone = remoteSessionIsHistoricalActive ? false : selectedBackendDone;
+            var reconciledSession = v25ReconcileTodaySession(localSessionForReconcile, todayPlan, todayPlan.source || '', todayIsRest, reconcileStatusKnown, reconcileBackendDone, activeSession);
             dailySessions[todaySessionKey] = reconciledSession;
-            if (todaySessionKey === todayKey) {
-              // Only the backend completion log may establish todayDone.
+            if (activeSession || todaySessionKey === todayKey || remoteSessionIsHistoricalActive || dateFactsVerified) {
+              // Only backend facts may establish done; any session returned
+              // for the selected date owns the visible execution state by
+              // date, including a completed historical session.
               todayStarted = reconciledSession.started;
               todayStepIndex = reconciledSession.stepIndex;
               todaySetIndex = reconciledSession.setIndex || 0;
@@ -6767,7 +7455,7 @@
           } else {
             v25RemoteSessionConflictPrompted = false;
           }
-          if (!todayStatusKnown && v25LocalDoneAwaitingVerification) {
+          if (!selectedStatusKnown && v25LocalDoneAwaitingVerification) {
             showToast('后端暂时无法确认训练状态，未显示完成', 'error');
           }
           v25LocalDoneAwaitingVerification = false;
@@ -6786,8 +7474,9 @@
       // ── 日计划三级默认加载 ──
       function initTodayFromCalendar() {
         if (todayPlan.length) return; // 已有手动添加的计划，不覆盖
-        // 读取真实今天对应的计划（完整日期 key）；今天无计划时按休息/空态处理
-        var plan = getCalendarPlan(formatDateKey(getToday()));
+        // 读取当前活动训练日期对应的计划；首次启动默认仍是真实今天。
+        var activeDateKey = isValidDateKey(todaySessionKey) ? todaySessionKey : formatDateKey(getToday());
+        var plan = getCalendarPlan(activeDateKey);
         if (plan && plan.status !== 'rest') {
           // 级别①：有月计划训练日 → 灌入 todayPlan
           todayPlan = plan.items.map(function(item) {
@@ -7072,6 +7761,12 @@
         getVideoStatus: getVideoStatus,
         getCalendarPlan: getCalendarPlan,
         renderTodayPlan: renderTodayPlan,
+        // Canonical date mutations exposed only through the existing
+        // automation hook so readback failure/retry paths can be exercised
+        // with the complete page lifecycle.
+        postponeCanonical: v25PostponeCanonical,
+        importCanonical: v25ImportCanonical,
+        bootCanonical: bootV25Api,
         getTrainingPlans: function () { return trainingPlans; },
         getTodayPlan: function () { return todayPlan; },
         exerciseDetails: exerciseDetails,

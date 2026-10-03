@@ -8,6 +8,7 @@ let date=scenario==='cross-year'?[2027,0,1]:[2026,9,2];
 const key=`${date[0]}-${String(date[1]+1).padStart(2,'0')}-${String(date[2]).padStart(2,'0')}`;
 function body(url) {
  const month=new URL(url,'http://localhost').searchParams.get('month');
+ if(url.startsWith('/api/session/current?date=')) return {session:null};
  if(url==='/api/session/current?include_completed=true' && (scenario==='visibility' || scenario==='visibility-empty' || scenario==='same-month') && conflict) return {session:{id:3,plan_id:99,status:'in_progress'}};
  if(url==='/api/session/cancel') {conflict=false;return {status:'cancelled'};}
  if(url.startsWith('/api/plans/month?')) {

@@ -81,11 +81,12 @@ function payloadFor(pathname, mode) {
   if (pathname === '/api/ai/provider') return { provider: 'local-demo', model: '' };
   if (pathname === '/api/ai/models') return { models: [] };
   if (pathname.startsWith('/api/plans/month?month=')) return { days: [] };
+  if (pathname.startsWith('/api/session/current?date=')) return { session: null };
   if (pathname === '/api/session/current?include_completed=true') return { session: null };
   return {};
 }
 
-function createPage({ mode = 'data', delayToday = false, seedOldState = true, date = [2026, 9, 2], fetchOverride = null } = {}) {
+function createPage({ mode = 'data', delayToday = false, seedOldState = true, date = [2026, 9, 2], fetchOverride = null, trainingState = null } = {}) {
   const control = { mode, delayToday, pendingToday: [], calls: [] };
   const dom = new JSDOM(source, {
     url: 'http://127.0.0.1:3000/',
@@ -121,7 +122,8 @@ function createPage({ mode = 'data', delayToday = false, seedOldState = true, da
         return Promise.resolve(response(payloadFor(pathname, control.mode)));
       };
       window.localStorage.setItem('qd-training-state', JSON.stringify({ legacy: OLD_PLAN }));
-      if (seedOldState) window.localStorage.setItem('qd-training-state-v1', JSON.stringify(oldTrainingEnvelope()));
+      if (trainingState) window.localStorage.setItem('qd-training-state-v1', JSON.stringify(trainingState));
+      else if (seedOldState) window.localStorage.setItem('qd-training-state-v1', JSON.stringify(oldTrainingEnvelope()));
       window.confirm = () => true;
       window.prompt = () => null;
       window.alert = () => {};

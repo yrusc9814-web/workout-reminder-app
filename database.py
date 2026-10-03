@@ -147,6 +147,9 @@ class WorkoutSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     plan_id = Column(Integer, ForeignKey("workout_plans.id"), nullable=False, index=True)
     status = Column(String(20), nullable=False, default="in_progress", index=True)
+    # Frozen action snapshot for context validation after a plan is edited.
+    # NULL preserves legacy/imported sessions created before VAN-17.
+    plan_action_fingerprint = Column(String(64), nullable=True, index=True)
     # Legacy/imported sessions may have unknown historical start time.
     # Normal API-created sessions explicitly provide a real timestamp.
     started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
@@ -219,6 +222,9 @@ class WorkoutLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     plan_id = Column(Integer, ForeignKey("workout_plans.id"), nullable=False, index=True)
     session_id = Column(Integer, ForeignKey("workout_sessions.id"), nullable=True, index=True)
+    # Snapshot fingerprint for legacy completion routes that have no session.
+    # NULL preserves rows imported from pre-VAN-17 databases.
+    plan_action_fingerprint = Column(String(64), nullable=True, index=True)
     log_date = Column(Date, nullable=False, default=date.today)
     action = Column(String(20), nullable=False)
     status = Column(String(20), nullable=False)
@@ -400,11 +406,13 @@ def _rebuild_workout_sessions_with_nullable_started_at():
         for index_name in index_names:
             cursor.execute(f' DROP INDEX IF EXISTS "{index_name.replace(chr(34), chr(34) * 2)}"')
         before_count = cursor.execute("SELECT COUNT(*) FROM workout_sessions").fetchone()[0]
+        fingerprint_select = "plan_action_fingerprint" if "plan_action_fingerprint" in columns else "NULL"
         cursor.execute("""
             CREATE TABLE workout_sessions_v25_new (
                 id INTEGER NOT NULL PRIMARY KEY,
                 plan_id INTEGER NOT NULL,
                 status VARCHAR(20) NOT NULL,
+                plan_action_fingerprint VARCHAR(64) NULL,
                 started_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
                 completed_at DATETIME NULL,
                 notes TEXT NULL,
@@ -417,11 +425,11 @@ def _rebuild_workout_sessions_with_nullable_started_at():
                 FOREIGN KEY(plan_id) REFERENCES workout_plans(id)
             )
         """)
-        cursor.execute("""
+        cursor.execute(f"""
             INSERT INTO workout_sessions_v25_new
-                (id, plan_id, status, started_at, completed_at, notes, rating,
+                (id, plan_id, status, plan_action_fingerprint, started_at, completed_at, notes, rating,
                  ai_feedback, created_at, updated_at)
-            SELECT id, plan_id, status, started_at, completed_at, notes, rating,
+            SELECT id, plan_id, status, {fingerprint_select}, started_at, completed_at, notes, rating,
                    ai_feedback, created_at, updated_at
             FROM workout_sessions
         """)
@@ -486,12 +494,15 @@ def _rebuild_workout_logs_with_session_scoped_uniqueness():
         raw.isolation_level = None
         cursor.execute("PRAGMA foreign_keys=OFF")
         cursor.execute("BEGIN")
+        existing_columns = {row[1] for row in cursor.execute("PRAGMA table_info(workout_logs)").fetchall()}
+        fingerprint_select = "plan_action_fingerprint" if "plan_action_fingerprint" in existing_columns else "NULL"
         before_count = cursor.execute("SELECT COUNT(*) FROM workout_logs").fetchone()[0]
         cursor.execute("""
             CREATE TABLE workout_logs_v25_new (
                 id INTEGER NOT NULL PRIMARY KEY,
                 plan_id INTEGER NOT NULL,
                 session_id INTEGER NULL,
+                plan_action_fingerprint VARCHAR(64) NULL,
                 log_date DATE NOT NULL,
                 action VARCHAR(20) NOT NULL,
                 status VARCHAR(20) NOT NULL,
@@ -507,10 +518,10 @@ def _rebuild_workout_logs_with_session_scoped_uniqueness():
                 FOREIGN KEY(session_id) REFERENCES workout_sessions(id)
             )
         """)
-        cursor.execute("""
+        cursor.execute(f"""
             INSERT INTO workout_logs_v25_new
-                (id, plan_id, session_id, log_date, action, status, notes, created_at)
-            SELECT id, plan_id, session_id, log_date, action, status, notes, created_at
+                (id, plan_id, session_id, plan_action_fingerprint, log_date, action, status, notes, created_at)
+            SELECT id, plan_id, session_id, {fingerprint_select}, log_date, action, status, notes, created_at
             FROM workout_logs
         """)
         after_count = cursor.execute("SELECT COUNT(*) FROM workout_logs_v25_new").fetchone()[0]
@@ -543,6 +554,10 @@ def _rebuild_workout_logs_with_session_scoped_uniqueness():
 def ensure_schema_columns():
     _rebuild_workout_sessions_with_nullable_started_at()
     inspector = inspect(engine)
+    ws_columns = {column["name"] for column in inspector.get_columns("workout_sessions")}
+    if "plan_action_fingerprint" not in ws_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN plan_action_fingerprint VARCHAR(64)"))
     # workout_exercises table
     we_columns = {column["name"] for column in inspector.get_columns("workout_exercises")}
     if "video_url" not in we_columns:
@@ -567,6 +582,13 @@ def ensure_schema_columns():
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE workout_logs ADD COLUMN session_id INTEGER REFERENCES workout_sessions(id)"))
     _rebuild_workout_logs_with_session_scoped_uniqueness()
+    # Legacy compatibility completions store the action snapshot they saw;
+    # rows imported from older schemas remain NULL and are preserved as
+    # historical facts.
+    wl_columns = {column["name"] for column in inspect(engine).get_columns("workout_logs")}
+    if "plan_action_fingerprint" not in wl_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE workout_logs ADD COLUMN plan_action_fingerprint VARCHAR(64)"))
     # Keep standalone logs idempotent while allowing separate session-backed
     # facts for the same plan/date after a repaired action snapshot.
     with engine.begin() as connection:

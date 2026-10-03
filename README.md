@@ -143,6 +143,16 @@ python seed.py
 
 - `GET /api/stats`
 - `GET /api/stats/month?month=2026-05`
+- `GET /api/stats/month/detail?month=2026-05`
+- `GET /api/stats/week/detail?date=2026-05-11`
+
+统计字段口径保持一致：`completed` 是去重后的完成事实总数（每个有
+`session_id` 的完成会话计一次；没有 `session_id` 的历史兼容日志按行保留），
+`completed_sessions` 只统计有 `session_id` 的已完成会话，`completed_days` 是当前
+计划动作上下文仍匹配的已完成训练日期数，`completion_rate` 是
+`completed_days / training_days * 100`。重复训练会增加完成事实和会话数，但同一天
+只增加一个 `completed_days`。历史或错位动作快照仍保留在事实和时长统计中，不会把
+当前替换后的计划日期标记为已完成。
 
 ### 月历
 
@@ -180,6 +190,18 @@ python seed.py
   "notes": "今天状态不错"
 }
 ```
+
+### 训练会话
+
+- `POST /api/session/start`：按 `plan_id` 创建或恢复该计划的进行中 session；计划日期由服务端的 `WorkoutPlan.plan_date` 决定。
+- `POST /api/session/update`：保存一个动作的组数、时长和状态。
+- `POST /api/session/complete`：只有所有动作已完成或跳过后才提交完成事实；同一 session 重放返回幂等结果。
+- `GET /api/session/current?plan_id=...&include_completed=true`：按计划恢复进行中或最近完成的 session。
+- `GET /api/session/current?date=YYYY-MM-DD&include_completed=true`：按目标计划日期恢复进行中或最近完成的 session；该日期没有计划时返回 `session: null`。如果同时提供 `plan_id`，当前 API 以 `plan_id` 为准。
+
+每次完成 session 都会保留独立的 `session_id` 和计划日期。历史兼容日志没有
+`session_id`，但仍作为独立完成事实保留；动作快照替换后不会把旧 session 或已带快照
+指纹的旧日志映射为当前计划的完成日期。页面保存的活动日期只作为恢复选择线索，完成状态、组数和时长必须以后端返回的计划与 session 事实为准。
 
 ### 提醒 mock 接口
 
@@ -338,3 +360,10 @@ PY
 4. 检查首页是否正常渲染
 5. 调用健康检查和核心接口
 6. 执行测试套件
+
+## VAN-17 训练事实语义
+
+- 页面恢复时，以选中日期对应的计划和 session 为上下文；活动 session 优先于该日期已有的历史 completed，组数和实际时长从服务端记录恢复。
+- 每个异步训练请求冻结日期、计划、session 和上下文 generation。切换日期或替换同日计划后，迟到响应仍可刷新原日期的月/周缓存，但不能写入当前页面或新 session。
+- session 更新使用单调事务条件，旧请求不能覆盖较新的组数和时长；complete/cancel 的终态转换也使用事务竞争保护。
+- 非重复数据库写入失败会回滚并保留可重试状态；只有同一 session 的唯一冲突才按幂等重放处理。跳过动作若已有实际组数或时长会纳入统计，完全未执行的零组跳过不会制造时长事实。

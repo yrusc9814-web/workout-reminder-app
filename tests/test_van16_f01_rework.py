@@ -125,8 +125,9 @@ def test_f01_extracted_boot_generation_supplement():
             if (pathname === '/api/favorites') return { favorites: [] };
             if (pathname === '/api/ai/provider') return { provider: 'local-demo', model: '' };
             if (pathname === '/api/ai/models') return { models: [] };
-            if (pathname.indexOf('/api/plans/month?month=') === 0) return { days: [] };
-            if (pathname === '/api/session/current?include_completed=true') return { session: null };
+                if (pathname.indexOf('/api/plans/month?month=') === 0) return { days: [] };
+                if (pathname.indexOf('/api/session/current?date=') === 0) return { session: null };
+                if (pathname === '/api/session/current?include_completed=true') return { session: null };
             throw new Error(`unexpected API path: ${pathname}`);
           }
           function fetchImpl(pathname) {

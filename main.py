@@ -1,5 +1,6 @@
 import re
 from calendar import monthrange
+import hashlib
 import json
 import os
 from contextlib import asynccontextmanager
@@ -15,7 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import and_, or_, text
 
 from database import (
     Base,
@@ -369,6 +370,9 @@ def log_item(row: WorkoutLog) -> dict:
     return {
         "id": row.id,
         "plan_id": row.plan_id,
+        "session_id": row.session_id,
+        "plan_action_fingerprint": row.plan_action_fingerprint,
+        "log_date": row.log_date.isoformat() if row.log_date else None,
         "action": row.action,
         "status": row.status,
         "notes": row.notes,
@@ -377,19 +381,80 @@ def log_item(row: WorkoutLog) -> dict:
 
 
 def write_log(db: Session, plan_id: int, state: str, notes: Optional[str]) -> dict:
+    from sqlalchemy.exc import IntegrityError
+
     plan = db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="未找到训练计划")
 
+    # These legacy routes do not carry a session ID.  A replay after the
+    # session endpoint has already committed must return that same fact while
+    # the action snapshot is still current; after an action replacement it is
+    # unsafe to claim that the old session completed the new plan.
+    existing_facts = (
+        db.query(WorkoutLog)
+        .filter(
+            WorkoutLog.plan_id == plan_id,
+            WorkoutLog.log_date == plan.plan_date,
+            WorkoutLog.action == state,
+        )
+        .order_by(WorkoutLog.id.asc())
+        .all()
+    )
+    if existing_facts:
+        if state == "completed":
+            valid = _context_valid_logs(db, existing_facts)
+            if valid:
+                return log_item(valid[0])
+            if any(row.session_id is not None for row in existing_facts):
+                raise HTTPException(
+                    status_code=409,
+                    detail="已有完成事实属于旧训练动作快照，当前计划已更换；请开始新的训练会话",
+                )
+        standalone = next((row for row in existing_facts if row.session_id is None), None)
+        if standalone is not None:
+            fingerprint = _plan_action_fingerprint(plan)
+            if standalone.plan_action_fingerprint and standalone.plan_action_fingerprint != fingerprint:
+                raise HTTPException(
+                    status_code=409,
+                    detail="旧完成事实属于旧训练动作快照，当前计划已更换；请开始新的训练会话",
+                )
+            return log_item(standalone)
+
     row = WorkoutLog(
         plan_id=plan_id,
+        plan_action_fingerprint=_plan_action_fingerprint(plan),
         log_date=plan.plan_date,
         action=state,
         status=state,
         notes=notes,
     )
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing_facts = (
+            db.query(WorkoutLog)
+            .filter(
+                WorkoutLog.plan_id == plan_id,
+                WorkoutLog.log_date == plan.plan_date,
+                WorkoutLog.action == state,
+            )
+            .order_by(WorkoutLog.id.asc())
+            .all()
+        )
+        if not existing_facts:
+            raise
+        if state == "completed":
+            valid = _context_valid_logs(db, existing_facts)
+            if valid:
+                return log_item(valid[0])
+            raise HTTPException(status_code=409, detail="完成事实属于旧训练动作快照，当前计划已更换")
+        standalone = next((row for row in existing_facts if row.session_id is None), None)
+        if standalone is None:
+            raise
+        return log_item(standalone)
     db.refresh(row)
     return log_item(row)
 
@@ -579,21 +644,91 @@ def catalog_v24_commit(payload: dict | None = None, db: Session = Depends(get_db
         raise
 
 
-def _duration_metrics(db: Session, start: date | None = None, end: date | None = None) -> dict:
-    query = db.query(SessionRecord).filter(SessionRecord.status == "completed")
+def _completion_fact_logs(
+    db: Session,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[WorkoutLog]:
+    """Return one row per completion fact, with a stable date attribution.
+
+    Session-backed logs are deduplicated by session ID.  A legacy log without
+    a session ID is itself the historical fact, so each such row is retained.
+    Deduplicating before applying a date range prevents a duplicated session
+    log from being counted in two months.
+    """
+    rows = (
+        db.query(WorkoutLog)
+        .filter(WorkoutLog.status == "completed")
+        .order_by(WorkoutLog.id.asc())
+        .all()
+    )
+    facts: list[WorkoutLog] = []
+    seen_session_ids: set[int] = set()
+    for row in rows:
+        if row.session_id is not None:
+            if row.session_id in seen_session_ids:
+                continue
+            seen_session_ids.add(row.session_id)
+        facts.append(row)
     if start is not None and end is not None:
-        query = query.join(WorkoutSession, SessionRecord.session_id == WorkoutSession.id).join(
-            WorkoutLog, WorkoutLog.session_id == WorkoutSession.id
-        ).filter(
-            WorkoutLog.log_date >= start,
-            WorkoutLog.log_date <= end,
-            WorkoutLog.status == "completed",
-        )
+        facts = [row for row in facts if start <= row.log_date <= end]
+    return facts
+
+
+def _completed_training_days(db: Session, logs: list[WorkoutLog]) -> int:
+    """Count context-valid training plan dates, independent of repeats."""
+    if not logs:
+        return 0
+    plans = (
+        db.query(WorkoutPlan)
+        .filter(WorkoutPlan.is_training_day == True)
+        .filter(WorkoutPlan.plan_date.in_({row.log_date for row in logs}))
+        .all()
+    )
+    training_dates = {plan.plan_date for plan in plans}
+    return len({row.log_date for row in logs if row.log_date in training_dates})
+
+
+def _completed_session_ids(db: Session, logs: list[WorkoutLog]) -> set[int]:
+    """Return only terminal session IDs behind completion facts."""
+    session_ids = {row.session_id for row in logs if row.session_id is not None}
+    if not session_ids:
+        return set()
+    return {
+        session.id
+        for session in db.query(WorkoutSession)
+        .filter(WorkoutSession.id.in_(session_ids), WorkoutSession.status == "completed")
+        .all()
+    }
+
+
+def _duration_metrics(db: Session, start: date | None = None, end: date | None = None) -> dict:
+    # Select completion facts first so duplicate logs cannot multiply one
+    # session's recorded seconds.  A context mismatch remains historical
+    # execution truth and therefore still contributes to duration.
+    completed_session_ids = _completed_session_ids(db, _completion_fact_logs(db, start, end))
+    query = db.query(SessionRecord).filter(
+        SessionRecord.status.in_(("completed", "skipped")),
+        SessionRecord.session_id.in_(completed_session_ids) if completed_session_ids else False,
+        # A skipped action with no confirmed sets and no positive elapsed time
+        # is a deliberate no-op. It must not create a fake known-zero or
+        # unknown-duration row in statistics. Positive duration alone remains
+        # a real execution fact even when sets_completed is zero.
+        or_(
+            SessionRecord.status == "completed",
+            and_(
+                SessionRecord.status == "skipped",
+                or_(
+                    SessionRecord.sets_completed > 0,
+                    SessionRecord.duration_seconds > 0,
+                ),
+            ),
+        ),
+    )
     rows = query.all()
-    # Global duration is historical execution truth.  A later plan snapshot
-    # mismatch must not erase the completed session's recorded seconds; the
-    # period detail endpoint separately controls whether that fact marks the
-    # current plan day as completed.
+    # A later plan snapshot mismatch must not erase the completed session's
+    # recorded seconds; the period detail endpoint separately controls
+    # whether that fact marks the current plan day as completed.
     durations = [row.duration_seconds for row in rows]
     known = [value for value in durations if value is not None]
     return {
@@ -611,17 +746,8 @@ def _action_metrics(db: Session, start: date, end: date) -> list[dict]:
     execution facts and are only counted after their completed session has a
     completed log, preserving the existing session/log date contract.
     """
-    logs = (
-        db.query(WorkoutLog)
-        .filter(
-            WorkoutLog.log_date >= start,
-            WorkoutLog.log_date <= end,
-            WorkoutLog.status == "completed",
-            WorkoutLog.session_id.isnot(None),
-        )
-        .all()
-    )
-    session_ids = {row.session_id for row in logs if row.session_id is not None}
+    logs = [row for row in _completion_fact_logs(db, start, end) if row.session_id is not None]
+    session_ids = _completed_session_ids(db, logs)
     if not session_ids:
         return []
     sessions = db.query(WorkoutSession).filter(WorkoutSession.id.in_(session_ids)).all()
@@ -659,7 +785,11 @@ def _action_metrics(db: Session, start: date, end: date) -> list[dict]:
 def stats(db: Session = Depends(get_db)) -> dict:
     total = db.query(WorkoutPlan).count()
     active = db.query(WorkoutPlan).filter(WorkoutPlan.is_training_day == True).count()
-    completed = db.query(WorkoutLog).filter(WorkoutLog.status == "completed").count()
+    completed_logs = _completion_fact_logs(db)
+    valid_completed_logs = _context_valid_logs(db, completed_logs)
+    completed = len(completed_logs)
+    completed_sessions = len(_completed_session_ids(db, completed_logs))
+    completed_days = _completed_training_days(db, valid_completed_logs)
     skipped = db.query(WorkoutLog).filter(WorkoutLog.status == "skipped").count()
     postponed = db.query(WorkoutLog).filter(WorkoutLog.status == "postponed").count()
     return {
@@ -667,6 +797,9 @@ def stats(db: Session = Depends(get_db)) -> dict:
         "training_days": active,
         "rest_days": total - active,
         "completed": completed,
+        "completed_sessions": completed_sessions,
+        "completed_days": completed_days,
+        "completion_rate": _completion_rate(completed_days, active),
         "skipped": skipped,
         "postponed": postponed,
         **_duration_metrics(db),
@@ -689,21 +822,11 @@ def stats_month(month: str = Query(...), db: Session = Depends(get_db)) -> dict:
     total = plans_query.count()
     training_days = plans_query.filter(WorkoutPlan.is_training_day == True).count()
     logs = logs_query.all()
-    all_completed_logs = [row for row in logs if row.status == "completed"]
-    completed_logs = _context_valid_logs(
-        db,
-        all_completed_logs,
-    )
-    # The aggregate count is a historical log count.  Context-valid logs are
-    # used only for completion_rate so a prior A session cannot mark the
-    # current B plan day as completed.
+    all_completed_logs = _completion_fact_logs(db, start, end)
+    completed_logs = _context_valid_logs(db, all_completed_logs)
     completed = len(all_completed_logs)
-    completed_training_days = (
-        db.query(WorkoutPlan)
-        .filter(WorkoutPlan.is_training_day == True)
-        .filter(WorkoutPlan.id.in_({row.plan_id for row in completed_logs}))
-        .count()
-    )
+    completed_sessions = len(_completed_session_ids(db, all_completed_logs))
+    completed_training_days = _completed_training_days(db, completed_logs)
     skipped = logs_query.filter(WorkoutLog.status == "skipped").count()
     postponed = logs_query.filter(WorkoutLog.status == "postponed").count()
     return {
@@ -712,6 +835,8 @@ def stats_month(month: str = Query(...), db: Session = Depends(get_db)) -> dict:
         "training_days": training_days,
         "rest_days": total - training_days,
         "completed": completed,
+        "completed_sessions": completed_sessions,
+        "completed_days": completed_training_days,
         "skipped": skipped,
         "postponed": postponed,
         "completion_rate": _completion_rate(completed_training_days, training_days),
@@ -733,19 +858,16 @@ def _stats_detail(db: Session, start: date, end: date, period: str) -> dict:
         WorkoutLog.log_date >= start,
         WorkoutLog.log_date <= end,
     ).all()
-    valid_completed_log_ids = {
-        row.id
-        for row in _context_valid_logs(db, [log for log in logs if log.status == "completed"])
-    }
-    completed_dates = {
-        log.log_date.isoformat()
-        for log in logs
-        if log.status == "completed" and log.id in valid_completed_log_ids
-    }
+    all_completed_logs = _completion_fact_logs(db, start, end)
+    valid_completed_logs = _context_valid_logs(db, all_completed_logs)
+    valid_completed_log_ids = {row.id for row in valid_completed_logs}
+    completed_dates = {log.log_date.isoformat() for log in valid_completed_logs}
     training_days = sum(bool(plan.is_training_day) for plan in plans)
-    completed = len({day for day in completed_dates if any(
+    completed_days = len({day for day in completed_dates if any(
         plan.plan_date.isoformat() == day and plan.is_training_day for plan in plans
     )})
+    completed = len(all_completed_logs)
+    completed_sessions = len(_completed_session_ids(db, all_completed_logs))
     days = []
     current = start
     while current <= end:
@@ -759,7 +881,7 @@ def _stats_detail(db: Session, start: date, end: date, period: str) -> dict:
             "status": "completed" if any(
                 row.status == "completed" and row.id in valid_completed_log_ids
                 for row in day_logs
-            ) else ("planned" if plan else "rest"),
+            ) else ("planned" if plan and plan.is_training_day else "rest"),
             "duration": _duration_metrics_for_range(db, current, current),
         })
         current += timedelta(days=1)
@@ -769,7 +891,9 @@ def _stats_detail(db: Session, start: date, end: date, period: str) -> dict:
         "end_date": end.isoformat(),
         "training_days": training_days,
         "completed": completed,
-        "completion_rate": _completion_rate(completed, training_days),
+        "completed_sessions": completed_sessions,
+        "completed_days": completed_days,
+        "completion_rate": _completion_rate(completed_days, training_days),
         "action_stats": _action_metrics(db, start, end),
         "days": days,
     }
@@ -1219,22 +1343,52 @@ def training_complete(payload: TrainingCompletePayload, db: Session = Depends(ge
     # No active session — create standalone log with DB-level dedup
     from sqlalchemy.exc import IntegrityError
     log_status = "completed" if payload.status == "done" else "skipped"
-    existing = db.query(WorkoutLog).filter(
+    existing_facts = db.query(WorkoutLog).filter(
+        WorkoutLog.plan_id == plan_id,
         WorkoutLog.log_date == plan_date,
         WorkoutLog.action == log_status,
-    ).first()
-    if existing:
-        return {"status": "already_recorded", "plan_id": plan_id, "log_id": existing.id, "completed": payload.completed, "skipped": payload.skipped}
+    ).order_by(WorkoutLog.id.asc()).all()
+    if existing_facts:
+        if log_status == "completed":
+            valid = _context_valid_logs(db, existing_facts)
+            if valid:
+                return {"status": "already_recorded", "plan_id": plan_id, "log_id": valid[0].id, "completed": payload.completed, "skipped": payload.skipped}
+            if any(row.session_id is not None for row in existing_facts):
+                raise HTTPException(status_code=409, detail="已有完成事实属于旧训练动作快照，当前计划已更换；请开始新的训练会话")
+        standalone = next((row for row in existing_facts if row.session_id is None), None)
+        if standalone is not None:
+            fingerprint = _plan_action_fingerprint(plan) if plan else None
+            if standalone.plan_action_fingerprint and standalone.plan_action_fingerprint != fingerprint:
+                raise HTTPException(status_code=409, detail="旧完成事实属于旧训练动作快照，当前计划已更换；请开始新的训练会话")
+            return {"status": "already_recorded", "plan_id": plan_id, "log_id": standalone.id, "completed": payload.completed, "skipped": payload.skipped}
 
-    log = WorkoutLog(plan_id=plan_id, log_date=plan_date, action=log_status, status=log_status, notes=payload.notes or f"训练完成，完成{len(payload.completed)}个动作")
+    log = WorkoutLog(
+        plan_id=plan_id,
+        plan_action_fingerprint=_plan_action_fingerprint(plan) if plan else None,
+        log_date=plan_date,
+        action=log_status,
+        status=log_status,
+        notes=payload.notes or f"训练完成，完成{len(payload.completed)}个动作",
+    )
     try:
         db.add(log)
         db.commit()
         db.refresh(log)
     except IntegrityError:
         db.rollback()
-        existing2 = db.query(WorkoutLog).filter(WorkoutLog.log_date == plan_date, WorkoutLog.action == log_status).first()
-        return {"status": "already_recorded", "plan_id": plan_id, "log_id": existing2.id if existing2 else None, "completed": payload.completed, "skipped": payload.skipped}
+        existing2 = db.query(WorkoutLog).filter(
+            WorkoutLog.plan_id == plan_id,
+            WorkoutLog.log_date == plan_date,
+            WorkoutLog.action == log_status,
+        ).order_by(WorkoutLog.id.asc()).all()
+        existing2_valid = _context_valid_logs(db, existing2) if log_status == "completed" else existing2
+        existing2_row = existing2_valid[0] if existing2_valid else (existing2[0] if existing2 else None)
+        if existing2_row is None:
+            # An unrelated trigger/check/FK failure is not an idempotent
+            # replay. Preserve the rollback and surface the real failure so a
+            # later retry can write the missing fact.
+            raise
+        return {"status": "already_recorded", "plan_id": plan_id, "log_id": existing2_row.id if existing2_row else None, "completed": payload.completed, "skipped": payload.skipped}
 
     return {"status": "recorded", "plan_id": plan_id, "log_id": log.id, "completed": payload.completed, "skipped": payload.skipped}
 
@@ -1304,6 +1458,15 @@ def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(
         template_id=desired_template,
         items=desired_items,
     )
+
+    if (
+        payload.items is not None
+        or payload.exercise_ids is not None
+        or payload.template_id is not None
+        or "template_id" in payload_fields
+        or payload.is_training_day is False
+    ):
+        _freeze_legacy_completion_facts(db, plan)
 
     if payload.title is not None:
         plan.title = payload.title
@@ -1671,6 +1834,19 @@ def _item_signature(item) -> tuple:
     )
 
 
+def _plan_action_fingerprint(plan: WorkoutPlan) -> str:
+    """Hash only the plan action snapshot, excluding editable metadata."""
+    payload = {
+        "is_training_day": bool(plan.is_training_day),
+        "template_id": plan.template_id,
+        "items": [_item_signature(item) for item in sorted(
+            plan.exercises or [], key=lambda row: row.sort_order or 0
+        )],
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _active_session_for_plan(db: Session, plan_id: int) -> WorkoutSession | None:
     return (
         db.query(WorkoutSession)
@@ -1697,6 +1873,23 @@ def _session_context_mismatch(session: WorkoutSession) -> dict | None:
         key=lambda row: row.sort_order or 0,
     )
     records = list(session.records or [])
+    if (
+        session.plan_action_fingerprint is not None
+        and session.plan is not None
+        and session.plan_action_fingerprint != _plan_action_fingerprint(session.plan)
+        # Keep the more actionable empty-snapshot diagnostic for an active
+        # session whose action rows disappeared. Terminal sessions still use
+        # the fingerprint mismatch so a completed training cannot hydrate a
+        # newly converted rest plan.
+        and not (session.status == "in_progress" and not plan_items and records)
+    ):
+        return {
+            "reason": "训练会话的计划动作快照指纹与当前计划不一致",
+            "plan_id": session.plan_id,
+            "session_id": session.id,
+            "plan_exercise_ids": [item.exercise_id for item in plan_items],
+            "record_exercise_ids": [record.exercise_id for record in records],
+        }
     # Historical/imported terminal sessions can legitimately retain execution
     # records after their plan action rows were not imported.  An active
     # session in that state is different: it cannot be resumed safely because
@@ -1737,7 +1930,15 @@ def _session_context_mismatch(session: WorkoutSession) -> dict | None:
 
 
 def _context_valid_logs(db: Session, logs: list[WorkoutLog]) -> list[WorkoutLog]:
-    """Exclude completed logs whose session belongs to another plan snapshot."""
+    """Return completion facts that may mark the current plan day complete.
+
+    Session-backed facts must still match the exact action snapshot.  Legacy
+    standalone logs carry an action fingerprint when written by the current
+    compatibility routes.  Metadata-only edits leave that fingerprint intact;
+    replacing actions makes it fail.  Rows imported from before the
+    fingerprint migration remain valid historical facts because their old
+    snapshot is unknowable.
+    """
     session_ids = {row.session_id for row in logs if row.session_id is not None}
     sessions = {}
     if session_ids:
@@ -1745,13 +1946,36 @@ def _context_valid_logs(db: Session, logs: list[WorkoutLog]) -> list[WorkoutLog]
             session.id: session
             for session in db.query(WorkoutSession).filter(WorkoutSession.id.in_(session_ids)).all()
         }
+    plan_ids = {row.plan_id for row in logs if row.plan_id is not None}
+    plans = {}
+    if plan_ids:
+        plans = {
+            plan.id: plan
+            for plan in db.query(WorkoutPlan).filter(WorkoutPlan.id.in_(plan_ids)).all()
+        }
+
     valid = []
     for row in logs:
         if row.session_id is None:
+            plan = plans.get(row.plan_id)
+            if plan is None or plan.plan_date != row.log_date:
+                continue
+            if (
+                row.plan_action_fingerprint is not None
+                and row.plan_action_fingerprint != _plan_action_fingerprint(plan)
+            ):
+                continue
             valid.append(row)
             continue
         session = sessions.get(row.session_id)
-        if session is not None and _session_context_mismatch(session) is None:
+        if (
+            session is not None
+            and session.plan_id == row.plan_id
+            and session.plan is not None
+            and session.plan.plan_date == row.log_date
+            and session.status == "completed"
+            and _session_context_mismatch(session) is None
+        ):
             valid.append(row)
     return valid
 
@@ -1848,8 +2072,58 @@ def _resolve_plan_item_payloads(db: Session, items: list[PlanItemPayload]) -> li
     return normalized
 
 
+def _freeze_legacy_completion_facts(db: Session, plan: WorkoutPlan) -> None:
+    """Attach the outgoing action snapshot to pre-fingerprint logs.
+
+    This runs in the same transaction immediately before an action snapshot is
+    replaced. Metadata-only edits never call it, so they keep old completion
+    facts valid. Once actions change, the stored outgoing fingerprint no
+    longer matches the new plan and the fact cannot complete the replacement.
+    Pre-fingerprint sessions are frozen only when their existing exercise
+    context is still aligned; an already-mismatched old session is left
+    unendorsed and remains blocked by the structural context checks.
+    """
+    if plan.id is None:
+        return
+    fingerprint = _plan_action_fingerprint(plan)
+    (
+        db.query(WorkoutLog)
+        .filter(
+            WorkoutLog.plan_id == plan.id,
+            WorkoutLog.session_id.is_(None),
+            WorkoutLog.plan_action_fingerprint.is_(None),
+        )
+        .update({WorkoutLog.plan_action_fingerprint: fingerprint}, synchronize_session=False)
+    )
+    plan_items = sorted(plan.exercises or [], key=lambda row: row.sort_order or 0)
+    legacy_sessions = (
+        db.query(WorkoutSession)
+        .filter(
+            WorkoutSession.plan_id == plan.id,
+            WorkoutSession.plan_action_fingerprint.is_(None),
+        )
+        .all()
+    )
+    for session in legacy_sessions:
+        records = list(session.records or [])
+        if not records or len(plan_items) != len(records):
+            continue
+        if _session_context_mismatch(session) is not None:
+            continue
+        session.plan_action_fingerprint = fingerprint
+        (
+            db.query(WorkoutLog)
+            .filter(
+                WorkoutLog.session_id == session.id,
+                WorkoutLog.plan_action_fingerprint.is_(None),
+            )
+            .update({WorkoutLog.plan_action_fingerprint: fingerprint}, synchronize_session=False)
+        )
+
+
 def _replace_plan_exercises(db: Session, plan: WorkoutPlan, items: list[dict]) -> None:
     """Replace the full action snapshot while respecting the sort-order key."""
+    _freeze_legacy_completion_facts(db, plan)
     for existing in list(plan.exercises):
         db.delete(existing)
     db.flush()
@@ -1901,6 +2175,11 @@ def _upsert_plan_snapshot(
             template_id=payload.template_id,
             items=normalized_items if payload.is_training_day else [],
         )
+        # Freeze legacy facts while the outgoing action/template snapshot is
+        # still intact.  The fingerprint includes training-day/template
+        # context, so doing this after mutating those fields would bind an old
+        # NULL-fingerprint fact to the replacement snapshot.
+        _freeze_legacy_completion_facts(db, plan)
         if payload.title is not None:
             plan.title = payload.title
         if payload.focus is not None:
@@ -1967,6 +2246,8 @@ def session_to_v31_dict(session: WorkoutSession) -> dict:
     return {
         "id": session.id,
         "plan_id": session.plan_id,
+        "date": session.plan.plan_date.isoformat() if session.plan else None,
+        "plan_date": session.plan.plan_date.isoformat() if session.plan else None,
         "status": session.status,
         "started_at": session.started_at.isoformat() if session.started_at else None,
         "completed_at": session.completed_at.isoformat() if session.completed_at else None,
@@ -2086,20 +2367,45 @@ def _complete_session_unified(db: Session, session: WorkoutSession, payload_note
     if incomplete_sets:
         raise HTTPException(status_code=422, detail="仍有未完成的训练组，无法完成训练")
 
-    session.status = "completed"
-    session.completed_at = datetime.now(timezone.utc)
+    # Claim the terminal transition atomically. A cancel request that commits
+    # first must win; a stale complete request then reloads the cancelled
+    # session and returns the existing terminal error instead of resurrecting
+    # it and creating a completion log.
+    terminal_updates = {
+        "status": "completed",
+        "completed_at": datetime.now(timezone.utc),
+    }
     if payload_notes is not None:
-        session.notes = payload_notes
+        terminal_updates["notes"] = payload_notes
     if payload_rating is not None:
-        session.rating = payload_rating
+        terminal_updates["rating"] = payload_rating
+    claimed = db.query(WorkoutSession).filter(
+        WorkoutSession.id == session.id,
+        WorkoutSession.status == "in_progress",
+    ).update(terminal_updates, synchronize_session=False)
+    if claimed != 1:
+        db.rollback()
+        current_session = _require_session(db, session.id)
+        if current_session.status == "completed":
+            return {
+                "status": "already_completed",
+                "session": session_to_v31_dict(current_session),
+                "summary": _session_completion_summary(current_session),
+            }
+        raise HTTPException(status_code=422, detail=f"已{current_session.status}的训练会话无法完成")
+    db.refresh(session)
 
     summary = _session_completion_summary(session)
 
-    # Try to create WorkoutLog with session_id tracking; unique constraint prevents duplicates
+    # Try to create WorkoutLog with session_id tracking; the unique constraint
+    # prevents duplicate completion facts. Only an actual duplicate is
+    # idempotent. A different IntegrityError must roll the whole transaction
+    # back and leave the session retryable.
     try:
         log = WorkoutLog(
             plan_id=session.plan_id,
             session_id=session.id,
+            plan_action_fingerprint=session.plan_action_fingerprint or _plan_action_fingerprint(session.plan),
             log_date=session.plan.plan_date,
             action="completed",
             status="completed",
@@ -2109,7 +2415,20 @@ def _complete_session_unified(db: Session, session: WorkoutSession, payload_note
         db.commit()
     except IntegrityError:
         db.rollback()
-        # Re-apply session terminal state after rollback, without re-creating log
+        existing_log = db.query(WorkoutLog).filter(
+            WorkoutLog.plan_id == session.plan_id,
+            WorkoutLog.action == "completed",
+            WorkoutLog.log_date == session.plan.plan_date,
+            WorkoutLog.session_id == session.id,
+        ).first()
+        if existing_log is None:
+            # Do not turn a trigger/FK/check/locking failure into a false
+            # success. The caller can retry after the actual database issue
+            # is fixed, and the session remains in_progress after rollback.
+            raise
+
+        # Re-apply session terminal state after a genuine duplicate race,
+        # without re-creating the already committed log.
         session = _require_session(db, session.id)
         if session.status != "completed":
             session.status = "completed"
@@ -2120,11 +2439,6 @@ def _complete_session_unified(db: Session, session: WorkoutSession, payload_note
                 session.rating = payload_rating
             db.commit()
         db.refresh(session)
-        existing_log = db.query(WorkoutLog).filter(
-            WorkoutLog.plan_id == session.plan_id,
-            WorkoutLog.action == "completed",
-            WorkoutLog.log_date == session.plan.plan_date,
-        ).first()
         return {
             "status": "already_completed",
             "session": session_to_v31_dict(session),
@@ -2312,6 +2626,7 @@ def generate_plan(payload: PlanGenerateRequest, db: Session = Depends(get_db)) -
         db.add(plan)
         db.flush()
     else:
+        _freeze_legacy_completion_facts(db, plan)
         plan.title = payload.title or plan.title
         plan.is_training_day = payload.is_training_day
         plan.focus = payload.theme or plan.focus
@@ -2363,6 +2678,7 @@ def start_session(payload: SessionStartRequest, db: Session = Depends(get_db)) -
         session = WorkoutSession(
             plan_id=plan.id,
             status="in_progress",
+            plan_action_fingerprint=_plan_action_fingerprint(plan),
             started_at=datetime.now(timezone.utc),
         )
         db.add(session)
@@ -2420,12 +2736,14 @@ def update_session(payload: SessionUpdateRequest, db: Session = Depends(get_db))
     if existing_record is None:
         raise HTTPException(status_code=422, detail=f"动作 {payload.exercise_id} 不在此训练会话中")
 
-    # A lost response may cause the browser to replay the same update.  Equal
-    # progress is idempotent; regressing a record is rejected so retries cannot
-    # erase facts already committed by the server.
-    was_terminal = existing_record.status in {"completed", "skipped"}
-    if was_terminal and db_status != existing_record.status:
-        raise HTTPException(status_code=422, detail=f"动作记录已{existing_record.status}，无法回退状态")
+    # A lost response may cause the browser to replay the same update. Equal
+    # progress is idempotent; the final UPDATE below repeats the monotonic
+    # checks in SQL so a request that was validated before a newer request
+    # committed cannot write an older fact over it.
+    existing_status = existing_record.status
+    was_terminal = existing_status in {"completed", "skipped"}
+    if was_terminal and db_status != existing_status:
+        raise HTTPException(status_code=422, detail=f"动作记录已{existing_status}，无法回退状态")
 
     target_sets = _session_record_target_sets(session, existing_record)
     current_sets = int(existing_record.sets_completed or 0)
@@ -2462,19 +2780,65 @@ def update_session(payload: SessionUpdateRequest, db: Session = Depends(get_db))
         ):
             raise HTTPException(status_code=422, detail="实际执行时长不能回退")
 
-    existing_record.status = db_status
+    updates = {"status": db_status}
     if requested_sets is not None:
-        existing_record.sets_completed = requested_sets
+        updates["sets_completed"] = requested_sets
     if payload.reps_completed is not None:
-        existing_record.reps_completed = payload.reps_completed
+        updates["reps_completed"] = payload.reps_completed
     if payload.duration_seconds is not None:
-        existing_record.duration_seconds = payload.duration_seconds
+        updates["duration_seconds"] = payload.duration_seconds
     if payload.notes is not None:
-        existing_record.notes = payload.notes
+        updates["notes"] = payload.notes
     if db_status in {"completed", "skipped"} and (
         not was_terminal or existing_record.completed_at is None
     ):
-        existing_record.completed_at = datetime.now(timezone.utc)
+        updates["completed_at"] = datetime.now(timezone.utc)
+
+    # Keep the original status and every numeric fact in the WHERE clause.
+    # This is an optimistic compare-and-set: concurrent requests may still
+    # arrive in either order, but a request can only move progress forward from
+    # the version it observed.  In particular, a delayed 1-set/10-second
+    # update cannot overwrite a committed 2-set/20-second update.
+    guards = [
+        SessionRecord.id == existing_record.id,
+        SessionRecord.status == existing_status,
+        # The parent session can reach cancelled/completed between the initial
+        # read above and this UPDATE. Never let a stale action request mutate a
+        # terminal session's records.
+        SessionRecord.session.has(WorkoutSession.status == "in_progress"),
+    ]
+    if requested_sets is not None:
+        guards.append(or_(
+            SessionRecord.sets_completed.is_(None),
+            SessionRecord.sets_completed <= requested_sets,
+        ))
+    if payload.duration_seconds is not None:
+        guards.append(or_(
+            SessionRecord.duration_seconds.is_(None),
+            SessionRecord.duration_seconds <= payload.duration_seconds,
+        ))
+    changed = db.query(SessionRecord).filter(*guards).update(
+        updates,
+        synchronize_session=False,
+    )
+    if changed != 1:
+        # A newer request won the race. Preserve that newer fact and return it
+        # as the idempotent result when it has the same status; a terminal
+        # status change still uses the existing regression error contract.
+        db.rollback()
+        current = db.query(SessionRecord).filter(SessionRecord.id == existing_record.id).first()
+        if current is None:
+            raise HTTPException(status_code=404, detail="动作记录不存在")
+        current_session = db.query(WorkoutSession).filter(WorkoutSession.id == current.session_id).first()
+        if current_session is None or current_session.status != "in_progress":
+            raise HTTPException(
+                status_code=422,
+                detail=f"训练会话状态为 {current_session.status if current_session else 'unknown'}，无法更新动作记录",
+            )
+        if current.status != db_status and current.status in {"completed", "skipped"}:
+            raise HTTPException(status_code=422, detail=f"动作记录已{current.status}，无法回退状态")
+        return {"status": "updated", "record": session_record_to_v31_dict(current)}
+
     db.commit()
     db.refresh(existing_record)
     return {"status": "updated", "record": session_record_to_v31_dict(existing_record)}
@@ -2494,10 +2858,25 @@ def cancel_session(payload: SessionCompleteRequest, db: Session = Depends(get_db
     if session.status == "completed":
         raise HTTPException(status_code=422, detail="已完成的训练会话无法取消")
     mismatch = _session_context_mismatch(session)
-    session.status = "cancelled"
-    session.completed_at = datetime.now(timezone.utc)
+    cancel_updates = {
+        "status": "cancelled",
+        "completed_at": datetime.now(timezone.utc),
+    }
     if payload.notes is not None:
-        session.notes = payload.notes
+        cancel_updates["notes"] = payload.notes
+    changed = db.query(WorkoutSession).filter(
+        WorkoutSession.id == session.id,
+        WorkoutSession.status == "in_progress",
+    ).update(cancel_updates, synchronize_session=False)
+    if changed != 1:
+        db.rollback()
+        current = _require_session(db, session.id)
+        if current.status == "cancelled":
+            return {"status": "already_cancelled", "session": session_to_v31_dict(current)}
+        if current.status == "completed":
+            raise HTTPException(status_code=422, detail="已完成的训练会话无法取消")
+        raise HTTPException(status_code=409, detail="训练会话状态已改变，请重新读取后再操作")
+    db.refresh(session)
     db.commit()
     db.refresh(session)
     response = {"status": "cancelled", "session": session_to_v31_dict(session)}
@@ -2514,6 +2893,7 @@ def cancel_session(payload: SessionCompleteRequest, db: Session = Depends(get_db
 def current_session(
     plan_id: int | None = Query(None),
     include_completed: bool = Query(False),
+    date_value: str | None = Query(None, alias="date"),
     db: Session = Depends(get_db),
 ) -> dict:
     """Return an active session, optionally falling back to latest completed facts.
@@ -2523,6 +2903,12 @@ def current_session(
     active session has disappeared, without changing existing callers.
     """
     query = db.query(WorkoutSession).filter(WorkoutSession.status == "in_progress")
+    if date_value is not None and plan_id is None:
+        target_date = date_from_iso(date_value)
+        dated_plan = db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == target_date).first()
+        if dated_plan is None:
+            return {"session": None, "message": "没有活跃的训练会话"}
+        plan_id = dated_plan.id
     if plan_id is not None:
         plan = _require_plan(db, plan_id)
         query = query.filter(WorkoutSession.plan_id == plan.id)
