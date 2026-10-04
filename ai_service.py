@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import re
+import socket
 import tempfile
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
@@ -29,6 +30,56 @@ _PROVIDER_ENV = (
     ("deepseek", ("DEEPSEEK_API_KEY",), ("DEEPSEEK_BASE_URL",), ("DEEPSEEK_MODEL",)),
     ("wuapi", ("WUAPI_API_KEY",), ("WUAPI_BASE_URL",), ("WUAPI_MODEL",)),
 )
+
+
+class ProviderModelsError(RuntimeError):
+    """A safe, user-facing error from temporary model discovery."""
+
+    def __init__(self, message: str, status_code: int = 502):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def normalize_provider_id(provider: str) -> str:
+    provider = (provider or "").strip().lower()
+    if not re.match(r"^[a-z0-9][a-z0-9_-]{0,40}$", provider):
+        raise ValueError("provider 标识不合法")
+    return provider
+
+
+def normalize_api_key(api_key: str) -> str:
+    value = (api_key or "").strip()
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError("api_key 格式不合法")
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError as exc:
+        raise ValueError("api_key 格式不合法") from exc
+    return value
+
+
+def normalize_base_url(base_url: str) -> str:
+    """Validate a provider base URL before it can be used for a request."""
+    value = (base_url or "").strip()
+    if not value:
+        raise ValueError("base_url 不能为空")
+    if any(char.isspace() for char in value):
+        raise ValueError("base_url 格式不合法")
+    parsed = urlparse(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("base_url 必须是完整的 HTTP 或 HTTPS 地址")
+    if parsed.username or parsed.password:
+        raise ValueError("base_url 不得包含用户信息")
+    if parsed.query or parsed.fragment:
+        raise ValueError("base_url 不得包含 query 或 fragment")
+    try:
+        if parsed.port is not None and not (1 <= parsed.port <= 65535):
+            raise ValueError("base_url 端口不合法")
+        if not parsed.hostname:
+            raise ValueError("base_url 主机不合法")
+    except ValueError as exc:
+        raise ValueError("base_url 主机或端口不合法") from exc
+    return value.rstrip("/")
 
 
 def _key_store_path() -> str:
@@ -159,22 +210,101 @@ def active_provider_config() -> dict:
 
 
 def save_provider_config(provider: str, api_key: str, base_url: str, model: str) -> dict:
-    provider = (provider or "").strip().lower()
+    provider = normalize_provider_id(provider)
+    api_key = normalize_api_key(api_key)
     if provider == "local-demo":
         stored = _load_key_store()
         stored["active_provider"] = "local-demo"
         _save_key_store(stored)
         return active_provider_config()
-    if not re.match(r"^[a-z0-9][a-z0-9_-]{0,40}$", provider):
-        raise ValueError("provider 标识不合法")
-    if not api_key.strip() or not base_url.strip() or not model.strip():
+    if not api_key or not base_url.strip() or not model.strip():
         raise ValueError("api_key、base_url、model 均不能为空")
+    base_url = normalize_base_url(base_url)
     stored = _load_key_store()
     providers = stored.setdefault("providers", {})
-    providers[provider] = {"api_key": api_key.strip(), "base_url": base_url.strip().rstrip("/"), "model": model.strip()}
+    providers[provider] = {"api_key": api_key, "base_url": base_url, "model": model.strip()}
     stored["active_provider"] = provider
     _save_key_store(stored)
     return active_provider_config()
+
+
+def discover_provider_models(provider: str, api_key: str, base_url: str, timeout: int = 12) -> dict:
+    """Read a provider's model list without reading or mutating persisted config."""
+    provider = normalize_provider_id(provider)
+    if provider == "local-demo":
+        return {
+            "provider": provider,
+            "source": "draft",
+            "models": [],
+            "active_model": None,
+            "status": "empty",
+        }
+
+    api_key = normalize_api_key(api_key)
+    if not api_key:
+        raise ValueError("api_key 不能为空")
+    base_url = normalize_base_url(base_url)
+    models_url = f"{base_url}/models"
+    request = Request(
+        models_url,
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status_code = getattr(response, "status", 200)
+            if status_code < 200 or status_code >= 300:
+                raise ProviderModelsError(f"模型接口请求失败（HTTP {status_code}）。")
+            raw_body = response.read()
+    except HTTPError as exc:
+        if exc.code == 401:
+            raise ProviderModelsError("API Key 无效或未授权。", status_code=401) from exc
+        if exc.code == 403:
+            raise ProviderModelsError("API Key 没有读取模型的权限。", status_code=403) from exc
+        raise ProviderModelsError(f"模型接口请求失败（HTTP {exc.code}）。") from exc
+    except (socket.timeout, TimeoutError) as exc:
+        raise ProviderModelsError("模型接口请求超时。", status_code=504) from exc
+    except URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, (socket.timeout, TimeoutError)) or "timed out" in str(reason).lower():
+            raise ProviderModelsError("模型接口请求超时。", status_code=504) from exc
+        raise ProviderModelsError("模型接口连接失败。", status_code=502) from exc
+    except OSError as exc:
+        if isinstance(exc, (socket.timeout, TimeoutError)) or "timed out" in str(exc).lower():
+            raise ProviderModelsError("模型接口请求超时。", status_code=504) from exc
+        raise ProviderModelsError("模型接口连接失败。", status_code=502) from exc
+    except Exception as exc:
+        # urllib/http.client can raise response framing errors such as
+        # IncompleteRead. Never expose their text because it may contain
+        # provider response data or request header material.
+        raise ProviderModelsError("模型接口连接失败。", status_code=502) from exc
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8", "replace"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProviderModelsError("模型接口返回非法 JSON。") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise ProviderModelsError("模型接口返回结构异常。")
+
+    models = []
+    seen = set()
+    for item in payload["data"]:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"].strip():
+            raise ProviderModelsError("模型接口返回结构异常。")
+        model_id = item["id"].strip()
+        if model_id not in seen:
+            seen.add(model_id)
+            models.append(model_id)
+    return {
+        "provider": provider,
+        "source": "draft",
+        "models": models,
+        "active_model": None,
+        "status": "ok" if models else "empty",
+    }
 
 
 def provider_models() -> dict:
@@ -568,4 +698,3 @@ def draft_response(draft: dict, ai_enabled: bool = True) -> dict:
         },
         "warnings": [],
     }
-

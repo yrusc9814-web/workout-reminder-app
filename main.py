@@ -11,8 +11,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
-from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request as FastAPIRequest
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -64,6 +66,13 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 V25_PREVIEW_SOURCE = STATIC_DIR / "index.html"
 V25_ASSETS_DIR = STATIC_DIR / "assets"
 app.mount("/v25-preview/assets", StaticFiles(directory=V25_ASSETS_DIR), name="v25-preview-assets")
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_ai_models_validation(request: FastAPIRequest, exc: RequestValidationError):
+    if request.method == "POST" and request.url.path == "/api/ai/models":
+        return JSONResponse(status_code=422, content={"detail": "AI provider 临时连接信息格式不合法。"})
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.get("/v25-preview/", include_in_schema=False)
@@ -1731,6 +1740,12 @@ class AIProviderRequest(BaseModel):
     model: str = ""
 
 
+class AIProviderModelsRequest(BaseModel):
+    provider: str
+    api_key: str = ""
+    base_url: str = ""
+
+
 def date_from_iso(value: str) -> date:
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
@@ -3061,6 +3076,33 @@ def ai_models() -> dict:
         raise HTTPException(status_code=503, detail=f"AI provider 配置不可用：{exc}") from exc
 
 
+@app.post("/api/ai/models")
+def discover_ai_models(payload: AIProviderModelsRequest) -> dict:
+    """Discover models from the current form without persisting the draft."""
+    try:
+        provider = ai_service.normalize_provider_id(payload.provider)
+        base_url = "" if provider == "local-demo" else ai_service.normalize_base_url(payload.base_url)
+        api_key = payload.api_key.strip()
+        if not api_key and provider != "local-demo":
+            # Reuse a stored credential only when the user explicitly kept the
+            # same provider and exact normalized base URL. A new provider or
+            # endpoint must receive a newly entered key.
+            current = ai_service.active_provider_config()
+            current_provider = str(current.get("provider") or "")
+            current_base_url = str(current.get("base_url") or "").rstrip("/")
+            if current_provider == provider and current_base_url == base_url and current.get("api_key"):
+                api_key = str(current["api_key"])
+            else:
+                raise ValueError("请填写 API Key。")
+        return ai_service.discover_provider_models(provider, api_key, base_url)
+    except ai_service.ProviderModelsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="AI provider 配置不可用。") from exc
+
+
 @app.get("/api/ai/provider")
 def ai_provider() -> dict:
     try:
@@ -3082,7 +3124,7 @@ def update_ai_provider(payload: AIProviderRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (OSError, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail=f"AI provider 保存失败：{exc}") from exc
+        raise HTTPException(status_code=503, detail="AI provider 保存失败。") from exc
 
 
 @app.post("/api/ai/chat")
