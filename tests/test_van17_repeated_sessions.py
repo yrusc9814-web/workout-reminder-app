@@ -623,6 +623,9 @@ def test_frontend_start_plan_keeps_remote_date_and_saves_local_plan_to_target_da
           resetStartBtn: () => {}, saveTrainingState: () => {}, renderTodayPlan: () => {}, showView: () => {}, showToast: () => {},
         };
         vm.createContext(context);
+        const resolverStart = source.indexOf('function v25ResolvePlanItems');
+        const resolverEnd = source.indexOf('function v25Has', resolverStart);
+        vm.runInContext(source.slice(resolverStart, resolverEnd), context);
         vm.runInContext(source.slice(start, end), context);
         (async () => {
           context.startPlan({ id: 42, remote: true, title: '历史计划', time: 10, items: [{ id: 9, exercise_id: 7, name: '动作 A', sets: 2, reps: 8, spec: '2 组 · 8 次' }] }, '2030-01-05');

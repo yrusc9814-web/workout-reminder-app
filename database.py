@@ -98,6 +98,7 @@ class Exercise(Base):
     __tablename__ = "exercises"
 
     id = Column(Integer, primary_key=True, index=True)
+    catalog_key = Column(String(80), nullable=True, unique=True)
     name = Column(String(140), nullable=False, index=True)
     category = Column(String(80), nullable=False, default="")
     body_parts = Column(String(240), nullable=False, default="")
@@ -571,6 +572,11 @@ def ensure_schema_columns():
     if "benefit" not in ex_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE exercises ADD COLUMN benefit TEXT"))
+    if "catalog_key" not in ex_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE exercises ADD COLUMN catalog_key VARCHAR(80)"))
+    with engine.begin() as connection:
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_exercises_catalog_key ON exercises(catalog_key)"))
     # workout_plans — template_id FK
     wp_columns = {column["name"] for column in inspector.get_columns("workout_plans")}
     if "template_id" not in wp_columns:
@@ -777,6 +783,18 @@ def migrate_database():
     db = SessionLocal()
     try:
         executed = False
+        # Adopt legacy catalog identities once. Never rebind deleted identities
+        # to a later same-name custom row on restart, or guess ambiguous names.
+        marker_key = "van18_catalog_identity_v1"
+        if db.query(Setting).filter(Setting.key == marker_key).first() is None:
+            from v25_catalog import V24_BUILTIN_CATALOG
+            for item in V24_BUILTIN_CATALOG:
+                owner = db.query(Exercise).filter(Exercise.catalog_key == item["catalog_key"]).first()
+                rows = db.query(Exercise).filter(Exercise.name == item["name"]).all()
+                if owner is None and len(rows) == 1 and rows[0].catalog_key is None:
+                    rows[0].catalog_key = item["catalog_key"]
+            db.add(Setting(key=marker_key, value="adopted"))
+            db.flush()
 
         # 1. Backfill WorkoutExercise.exercise_id from Exercise library by unique name only
         name_groups = defaultdict(list)

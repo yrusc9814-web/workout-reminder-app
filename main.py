@@ -1066,6 +1066,7 @@ class ExercisePayload(BaseModel):
 def exercise_to_dict(ex: Exercise) -> dict:
     return {
         "id": ex.id,
+        "catalog_key": ex.catalog_key,
         "name": ex.name,
         "category": ex.category,
         "body_parts": ex.body_parts,

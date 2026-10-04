@@ -3712,19 +3712,19 @@
           title: '猫牛式 + 臀桥 + 靠墙静蹲',
           badge: '约 10 分钟 · 低强度',
           why: '适合久坐后快速激活，3 个动作覆盖核心/下肢，无需器械，坐办公室就能练',
-          exs: [['1','猫牛式','3组×10次 · 3分钟'],['2','臀桥','3组×12次 · 4分钟'],['3','靠墙静蹲','3组×30秒 · 3分钟']]
+          exs: [['1','猫牛式','3组×10次 · 3分钟','cat-cow'],['2','臀桥','3组×12次 · 4分钟','glute-bridge'],['3','靠墙静蹲','3组×30秒 · 3分钟','wall-sit']]
         },
         20: {
           title: '骨盆后倾 + 死虫式 + 臀桥 + Bird Dog',
           badge: '约 20 分钟 · 低强度',
-          why: '完整核心+下肢训练，4 个动作均衡覆盖，强化腰背稳定与臀肌激活',
-          exs: [['1','骨盆后倾','3组×10秒 · 2分钟'],['2','死虫式','3组×10次 · 5分钟'],['3','臀桥','3组×12次 · 4分钟'],['4','Bird Dog','3组×8次 · 4分钟'],['5','猫牛式','3组×10次 · 3分钟']]
+          why: '完整核心+下肢训练，5 个动作均衡覆盖，强化腰背稳定与臀肌激活',
+          exs: [['1','骨盆后倾','3组×10秒 · 2分钟','posterior-pelvic-tilt'],['2','死虫式','3组×10次 · 5分钟','dead-bug'],['3','臀桥','3组×12次 · 4分钟','glute-bridge'],['4','Bird Dog','3组×8次 · 4分钟','bird-dog'],['5','猫牛式','3组×10次 · 3分钟','cat-cow']]
         },
         30: {
           title: '核心控制 + 上肢力量综合',
           badge: '约 30 分钟 · 中低强度',
           why: '充分训练，核心稳定性+上肢推力结合，可拆分为两部分完成',
-          exs: [['1','骨盆后倾','3组×10秒 · 2分钟'],['2','死虫式','3组×10次 · 5分钟'],['3','臀桥','3组×12次 · 4分钟'],['4','Bird Dog','3组×8次 · 4分钟'],['5','俯卧撑','3组×10次 · 6分钟'],['6','靠墙静蹲','3组×30秒 · 4分钟'],['7','猫牛式','3组×10次 · 3分钟']]
+          exs: [['1','骨盆后倾','3组×10秒 · 2分钟','posterior-pelvic-tilt'],['2','死虫式','3组×10次 · 5分钟','dead-bug'],['3','臀桥','3组×12次 · 4分钟','glute-bridge'],['4','Bird Dog','3组×8次 · 4分钟','bird-dog'],['5','俯卧撑','3组×10次 · 6分钟','push-up'],['6','靠墙静蹲','3组×30秒 · 4分钟','wall-sit'],['7','猫牛式','3组×10次 · 3分钟','cat-cow']]
         }
       };
       // 当前推荐区选中的时间（跟随 10/20/30 按钮联动，「直接开始」据此取方案）
@@ -3741,6 +3741,7 @@
           intensity: intensity,
           scene: 'AI 推荐',
           reason: data.why,
+          exerciseKeys: data.exs.map(function(ex) { return ex[3]; }),
           items: data.exs.map(function(ex) { return ex[1] + ' · ' + ex[2].split(' · ')[0]; })
         };
       }
@@ -3852,9 +3853,9 @@
       // 内置基础训练方案：由代码提供，不随用户状态持久化。
       // 运行时 trainingPlans = BASE_TRAINING_PLANS + customTrainingPlans（见 mergeTrainingPlans）。
       var BASE_TRAINING_PLANS = {
-        quick10:{id:'quick10',title:'久坐激活',time:10,intensity:'低强度',scene:'久坐放松',reason:'你近期核心训练较少，且当前只有 10 分钟；这套方案无需器械。',items:['猫牛式 · 3×10','臀桥 · 3×12','靠墙静蹲 · 3×30 秒']},
-        back15:{id:'back15',title:'腰背舒缓',time:15,intensity:'低强度',scene:'腰背放松',reason:'适合久坐后的腰背紧张，避免高冲击和大重量负重。',items:['骨盆后倾 · 3×8','猫牛式 · 3×10','死虫式 · 3×10','Bird Dog · 3×8']},
-        upper20:{id:'upper20',title:'上肢力量',time:20,intensity:'中强度',scene:'居家力量',reason:'前一次训练已覆盖下肢，本次优先上肢，避免连续刺激同一部位。',items:['俯卧撑 · 3×10','靠墙天使 · 3×12','Bird Dog · 3×8']}
+        quick10:{id:'quick10',exerciseKeys:['cat-cow', 'glute-bridge', 'wall-sit'],title:'久坐激活',time:10,intensity:'低强度',scene:'久坐放松',reason:'你近期核心训练较少，且当前只有 10 分钟；这套方案无需器械。',items:['猫牛式 · 3×10','臀桥 · 3×12','靠墙静蹲 · 3×30 秒']},
+        back15:{id:'back15',exerciseKeys:['posterior-pelvic-tilt', 'cat-cow', 'dead-bug', 'bird-dog'],title:'腰背舒缓',time:15,intensity:'低强度',scene:'腰背放松',reason:'适合久坐后的腰背紧张，避免高冲击和大重量负重。',items:['骨盆后倾 · 3×8','猫牛式 · 3×10','死虫式 · 3×10','Bird Dog · 3×8']},
+        upper20:{id:'upper20',exerciseKeys:['push-up', 'wall-angel', 'bird-dog'],title:'上肢力量',time:20,intensity:'中强度',scene:'居家力量',reason:'前一次训练已覆盖下肢，本次优先上肢，避免连续刺激同一部位。',items:['俯卧撑 · 3×10','靠墙天使 · 3×12','Bird Dog · 3×8']}
       };
       // 运行时合并视图：由 mergeTrainingPlans() 生成（内置 + 用户/AI 新增）。
       var trainingPlans = {};
@@ -4327,8 +4328,8 @@
           return;
         }
         var suggestions = {
-          pain:[trainingPlans.upper20,{id:'core15',title:'仰卧核心稳定',time:15,intensity:'低强度',scene:'避开下肢负重',items:['骨盆后倾 · 3×8','死虫式 · 3×10','Bird Dog · 3×8']},{id:'rest',title:'改为恢复日',time:0,intensity:'轻量恢复',scene:'优先恢复',items:['5 分钟轻量舒展或散步']}],
-          time:[trainingPlans.quick10,{id:'shortCore',title:'核心简化版',time:10,intensity:'低强度',scene:'时间有限',items:['骨盆后倾 · 3×8','死虫式 · 2×8','猫牛式 · 2×8']}],
+          pain:[trainingPlans.upper20,{id:'core15',exerciseKeys:['posterior-pelvic-tilt', 'dead-bug', 'bird-dog'],title:'仰卧核心稳定',time:15,intensity:'低强度',scene:'避开下肢负重',items:['骨盆后倾 · 3×8','死虫式 · 3×10','Bird Dog · 3×8']},{id:'rest',title:'改为恢复日',time:0,intensity:'轻量恢复',scene:'优先恢复',items:['5 分钟轻量舒展或散步']}],
+          time:[trainingPlans.quick10,{id:'shortCore',exerciseKeys:['posterior-pelvic-tilt', 'dead-bug', 'cat-cow'],title:'核心简化版',time:10,intensity:'低强度',scene:'时间有限',items:['骨盆后倾 · 3×8','死虫式 · 2×8','猫牛式 · 2×8']}],
           equipment:[trainingPlans.quick10,trainingPlans.back15],
           body:[trainingPlans.upper20,trainingPlans.back15]
         }[reason];
@@ -4340,13 +4341,13 @@
       }
       function replaceDayPlan(day, plan) {
         var dateKey = displayedDateKey(day);
-        var nextPlan = {title:plan.title,status:'planned',label:'已调整',time:plan.time,intensity:plan.intensity,body:plan.scene,scene:plan.scene,notes:plan.reason || '',items:plan.items.slice()};
+        var nextPlan = {title:plan.title,status:'planned',label:'已调整',time:plan.time,intensity:plan.intensity,body:plan.scene,scene:plan.scene,notes:plan.reason || '',items:plan.items.slice(),exerciseKeys:plan.exerciseKeys,itemRecords:plan.itemRecords};
         if (!v25Remote.ready) {
           showToast('后端未连接，计划未保存', 'error');
           return;
         }
         if (v25Remote.ready) {
-          v25SaveCanonicalPlan(dateKey, nextPlan.items, nextPlan).then(function () {
+          v25SaveCanonicalPlan(dateKey, nextPlan.itemRecords || nextPlan.items, nextPlan).then(function () {
             showToast('计划已替换并同步', 'success');
             renderCalendarCell(day);
             renderDayModal(day);
@@ -4660,7 +4661,9 @@
           showToast(v25RemoteSessionConflict.kind === 'mismatch' ? '当前训练会话与计划不一致，请先保留记录并取消会话' : '已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划', 'error');
           return;
         }
-        var sourceItems = Array.isArray(plan.itemRecords) && plan.itemRecords.length ? plan.itemRecords : (plan.items || []);
+        var sourceItems;
+        try { sourceItems = v25ResolvePlanItems(plan); }
+        catch (error) { showToast(error.message, 'error'); return; }
         var nextItems = sourceItems.map(function(item) {
           var record = v25ParseUiItem(item);
           var remote = record.exercise_id != null ? { id: record.exercise_id } : v25RemoteExerciseByName(record.name);
@@ -4676,7 +4679,7 @@
             spec: record.spec || '按方案完成',
             time: record.duration_seconds ? Math.max(1, Math.round(record.duration_seconds / 60)) : Math.max(2, Math.round((plan.time || 5) / Math.max(sourceItems.length, 1)))
           };
-        }).filter(function(item) { return item.name; });
+        });
         if (!nextItems.length) {
           showToast('当前日期没有可开始的训练动作', 'error');
           return;
@@ -5541,8 +5544,8 @@
             return;
           }
           if (v25Remote.ready) {
-            var schedulePlan = { title:plan.title, status:'planned', label:'已安排', time:plan.time, intensity:plan.intensity, scene:plan.scene || '训练', focus:plan.scene || '训练', notes:plan.reason || '', items:plan.items.slice() };
-            v25SaveCanonicalPlan(scheduleDateKey, plan.items.slice(), schedulePlan).then(function () {
+            var schedulePlan = { title:plan.title, status:'planned', label:'已安排', time:plan.time, intensity:plan.intensity, scene:plan.scene || '训练', focus:plan.scene || '训练', notes:plan.reason || '', items:plan.items.slice(), exerciseKeys:plan.exerciseKeys, itemRecords:plan.itemRecords };
+            v25SaveCanonicalPlan(scheduleDateKey, plan.itemRecords || plan.items.slice(), schedulePlan).then(function () {
               showToast('计划已安排并同步', 'success');
               closeModal();
             }).catch(function (error) { showToast(error.message || '安排计划失败', 'error'); });
@@ -5937,6 +5940,27 @@
       function v25RemoteExerciseByName(name) {
         return v25Remote.exercises.find(function (row) { return row.name === name; }) || null;
       }
+      // Built-ins resolve through identities stored on the real Exercise catalog.
+      // Validate every slot before any write; display labels never select an ID.
+      function v25ResolvePlanItems(plan, override) {
+        var source = override !== undefined ? override : ((plan && plan.itemRecords) || (plan && plan.items) || []);
+        var keys = plan && plan.exerciseKeys;
+        if (keys && keys.length !== source.length) throw new Error('方案动作数量与稳定标识数量不一致，计划未保存');
+        return source.map(function (item, index) {
+          if (keys) {
+            var matches = v25Remote.exercises.filter(function (row) { return row.catalog_key === keys[index]; });
+            if (!keys[index] || matches.length !== 1) throw new Error('方案第 ' + (index + 1) + ' 个动作无法解析（' + keys[index] + '）：请检查动作目录，计划未保存');
+            var input = typeof item === 'string' ? { name: item } : Object.assign({}, item);
+            input.exercise_id = matches[0].id;
+            var record = v25ParseUiItem(input);
+            if (!record.name) throw new Error('方案第 ' + (index + 1) + ' 个动作缺少名称，计划未保存');
+            return record;
+          }
+          var record = v25ParseUiItem(item);
+          if (!record.name) throw new Error('方案第 ' + (index + 1) + ' 个动作缺少名称，计划未保存');
+          return record;
+        });
+      }
       function v25Has(item, key) { return !!item && Object.prototype.hasOwnProperty.call(item, key); }
       function v25SpecForItem(item) {
         if (!item) return '';
@@ -6004,7 +6028,7 @@
       function v25PlanPayload(dateKey, plan, itemsOverride) {
         var isRest = !plan || plan.status === 'rest' || plan.is_training === false || plan.isTrainingDay === false;
         var sourceItems = itemsOverride !== undefined ? itemsOverride : ((plan && plan.itemRecords) || (plan && plan.items) || []);
-        var items = isRest ? [] : sourceItems.map(v25ParseUiItem).filter(function (item) { return item.name; });
+        var items = isRest ? [] : v25ResolvePlanItems(plan, sourceItems);
         return {
           date: dateKey,
           title: (plan && plan.title) || (isRest ? '恢复日' : '训练计划'),
@@ -6258,7 +6282,9 @@
       }
       function v25SaveCanonicalPlan(dateKey, itemsOverride, planOverride) {
         if (!v25Remote.ready) return Promise.reject(new Error('后端未连接，计划编辑未保存'));
-        var payload = v25CanonicalPlan(dateKey, itemsOverride, planOverride);
+        var payload;
+        try { payload = v25CanonicalPlan(dateKey, itemsOverride, planOverride); }
+        catch (error) { return Promise.reject(error); }
         if (payload.is_training_day && !payload.items.length) return Promise.reject(new Error('训练日必须至少包含一个动作'));
         var activeDateBeforeSave = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
         var generationBeforeSave = typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0;
@@ -6703,7 +6729,7 @@
         var remotePlans = {};
         v25Remote.templates.forEach(function (template) {
           var items = (template.exercises || []).map(function (ex) { return ex.name + ' · ' + (ex.default_reps || (ex.duration_seconds ? Math.round(ex.duration_seconds / 60) + ' 分钟' : '按动作说明')); });
-          remotePlans['remote_' + template.id] = { id: 'remote_' + template.id, title: template.name, time: template.estimated_minutes || 30, intensity: template.difficulty || '低强度', scene: '后端模板', reason: template.description || '来自模板 API', items: items };
+          remotePlans['remote_' + template.id] = { id: 'remote_' + template.id, title: template.name, time: template.estimated_minutes || 30, intensity: template.difficulty || '低强度', scene: '后端模板', reason: template.description || '来自模板 API', items: items, itemRecords: (template.exercises || []).map(function (ex, index) { return { exercise_id: ex.id, name: items[index] }; }) };
         });
         mergeTrainingPlans();
         Object.keys(remotePlans).forEach(function (id) { trainingPlans[id] = remotePlans[id]; });
@@ -6738,8 +6764,11 @@
         if (!plan) return Promise.reject(new Error('缺少训练计划，无法同步'));
         if (typeof v25RemoteSessionConflict !== 'undefined' && v25RemoteSessionConflict && v25RemoteSessionConflict.kind !== 'completed_mismatch') return Promise.reject(new Error(v25RemoteSessionConflict.kind === 'mismatch' ? '当前训练会话与计划不一致，请先保留记录并取消会话' : '已有其他计划的训练正在进行，请先完成或取消当前训练后再切换计划'));
         if (plan.remote && typeof plan.id === 'number') { v25RemotePlanId = plan.id; return Promise.resolve(plan.id); }
-        var names = (plan.items || []).map(function (x) { return String(x).split(' · ')[0]; });
-        var ids = names.map(function (name) { var ex = v25Remote.exercises.find(function (row) { return row.name === name; }); return ex && ex.id; }).filter(function (id) { return id != null; });
+        var records;
+        try { records = v25ResolvePlanItems(plan); }
+        catch (error) { return Promise.reject(error); }
+        var ids = records.map(function (record) { return record.exercise_id; });
+        if (ids.some(function (id) { return id == null; })) return Promise.reject(new Error('方案存在未绑定动作 ID 的动作，计划未保存'));
         if (!ids.length) return Promise.reject(new Error('训练计划缺少可同步动作'));
         var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
         var request = v25ApiFetch('/api/plans/generate', { method: 'POST', body: JSON.stringify({ date: activeDateKey, title: plan.title, theme: plan.scene || '训练', exerciseIds: ids, notes: plan.reason || '' }) }).then(function (body) {
