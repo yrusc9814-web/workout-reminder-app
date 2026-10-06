@@ -4225,6 +4225,44 @@
           return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char];
         });
       }
+      // VAN-23：业务文本必须在节点/属性 API 中写入。固定的产品模板仍可
+      // 通过 openModal() 使用 innerHTML，但备份或 API 返回的文本不再进入
+      // HTML 字符串，数据库继续保存原始语义文本，避免双重编码。
+      function v25ClearChildren(node) {
+        if (!node) return;
+        while (node.firstChild) node.removeChild(node.firstChild);
+      }
+      function v25Element(tag, className, text) {
+        var node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined && text !== null) node.textContent = String(text);
+        return node;
+      }
+      function v25Modal(build) {
+        v25ClearChildren(appModalCard);
+        if (typeof build === 'function') build(appModalCard);
+        appModalLayer.classList.add('show');
+        appModalLayer.setAttribute('aria-hidden', 'false');
+      }
+      function v25ModalCloseButton() {
+        var button = v25Element('button', 'modal-close', '×');
+        button.type = 'button';
+        button.setAttribute('data-modal-close', '');
+        return button;
+      }
+      function v25ModalHeader(title, description) {
+        var head = v25Element('div', 'modal-head');
+        var inner = v25Element('div');
+        inner.appendChild(v25Element('h3', null, title));
+        if (description !== undefined) inner.appendChild(v25Element('p', null, description));
+        head.appendChild(inner);
+        return head;
+      }
+      function v25ModalActions(buttons) {
+        var actions = v25Element('div', 'modal-actions');
+        (buttons || []).forEach(function (button) { actions.appendChild(button); });
+        return actions;
+      }
       function openModal(content) {
         appModalCard.innerHTML = content;
         appModalLayer.classList.add('show');
@@ -4270,12 +4308,15 @@
         var dateState = getCalendarDateState(day);
         cell.className = 'cal-cell ' + plan.status + (dateState.isCurrentWeek ? ' current-week' : '') + (dateState.isToday ? ' today' : '') + (selectedDay === day ? ' selected-calendar' : '');
         var icon = plan.body === '下肢' ? '🦵' : plan.body === '上肢' ? '💪' : plan.title === '八段锦' ? '🧘' : plan.status === 'rest' ? '' : '💪';
+        v25ClearChildren(cell);
+        cell.appendChild(v25Element('span', 'd-num', day));
         if (plan.status === 'rest') {
-          cell.innerHTML = '<span class="d-num">' + day + '</span><span class="d-badge">休</span>';
+          cell.appendChild(v25Element('span', 'd-badge', '休'));
         } else if (plan.status === 'loading' || plan.status === 'error') {
-          cell.innerHTML = '<span class="d-num">' + day + '</span><span class="d-badge">' + escapeHtml(plan.title) + '</span>';
+          cell.appendChild(v25Element('span', 'd-badge', plan.title));
         } else {
-          cell.innerHTML = '<span class="d-num">' + day + '</span><span class="d-dot"></span><span class="d-badge">' + icon + ' ' + escapeHtml(plan.title) + ' · ' + plan.time + "'</span>";
+          cell.appendChild(v25Element('span', 'd-dot'));
+          cell.appendChild(v25Element('span', 'd-badge', icon + ' ' + plan.title + ' · ' + plan.time + "'"));
         }
       }
       function renderDayModal(day) {
@@ -4288,30 +4329,53 @@
         }
         var plan = getCalendarPlan(displayedDateKey(day));
         if (plan.status === 'loading' || plan.status === 'error') {
-          openModal(
-            '<button class="modal-close" type="button" data-modal-close>×</button>' +
-            '<div class="modal-head"><div><h3>' + displayedMonthLabel() + ' ' + day + ' 日 · ' + escapeHtml(plan.title) + '</h3><p>' + (plan.status === 'loading' ? '该日期还未完成后端读取。' : '该月份读取失败，未显示本地旧数据。') + '</p></div></div>' +
-            '<div class="modal-actions"><button class="btn primary" type="button" data-v25-retry-month>重试读取</button><button class="btn ghost" type="button" data-modal-close>关闭</button></div>'
-          );
+          v25Modal(function (card) {
+            card.appendChild(v25ModalCloseButton());
+            card.appendChild(v25ModalHeader(displayedMonthLabel() + ' ' + day + ' 日 · ' + plan.title, plan.status === 'loading' ? '该日期还未完成后端读取。' : '该月份读取失败，未显示本地旧数据。'));
+            var retry = v25Element('button', 'btn primary', '重试读取');
+            retry.type = 'button';
+            retry.setAttribute('data-v25-retry-month', '');
+            var close = v25Element('button', 'btn ghost', '关闭');
+            close.type = 'button';
+            close.setAttribute('data-modal-close', '');
+            card.appendChild(v25ModalActions([retry, close]));
+          });
           return;
         }
         // 每天都可调整（含已完成/休息日），修改只影响当天
-        var list = plan.items.map(function(item) { return '<div class="modal-list-item"><span>✓</span>' + escapeHtml(item) + '</div>'; }).join('');
         var headHint = plan.status === 'rest'
           ? '今天是恢复日，也可临时安排低强度训练；修改只影响这一天'
           : (plan.status === 'done'
             ? '这天已完成，仍可调整训练计划（补练/替换），只影响这一天'
             : '查看本次训练内容；修改只影响这一天');
-        openModal(
-          '<button class="modal-close" type="button" data-modal-close>×</button>' +
-          '<div class="modal-head"><div><h3>' + displayedMonthLabel() + ' ' + day + ' 日 · ' + escapeHtml(plan.title) + '</h3><p>' + headHint + '</p></div></div>' +
-          '<div class="modal-meta"><span class="tag ' + (plan.status === 'rest' ? 'easy' : plan.intensity.indexOf('中') >= 0 ? 'med' : 'low') + '">' + escapeHtml(plan.label) + '</span><span class="tag scene">⏱ ' + (plan.time || '恢复') + (plan.time ? ' 分钟' : '') + '</span><span class="tag core">' + escapeHtml(plan.intensity) + '</span></div>' +
-          '<div class="modal-list">' + list + '</div>' +
-          '<div class="modal-actions">' +
-          (plan.status !== 'done' ? '<button class="btn primary" type="button" data-start-day="' + day + '">▶ 开始训练</button>' : '<button class="btn primary" type="button" data-start-day="' + day + '">▶ 再练一次</button>') +
-          '<button class="btn ghost" type="button" data-adjust-day="' + day + '">调整训练计划</button>' +
-          '<button class="btn ghost" type="button" data-modal-close>关闭</button></div>'
-        );
+        v25Modal(function (card) {
+          card.appendChild(v25ModalCloseButton());
+          card.appendChild(v25ModalHeader(displayedMonthLabel() + ' ' + day + ' 日 · ' + plan.title, headHint));
+          var meta = v25Element('div', 'modal-meta');
+          var intensity = String(plan.intensity || '');
+          meta.appendChild(v25Element('span', 'tag ' + (plan.status === 'rest' ? 'easy' : intensity.indexOf('中') >= 0 ? 'med' : 'low'), plan.label));
+          meta.appendChild(v25Element('span', 'tag scene', '⏱ ' + (plan.time || '恢复') + (plan.time ? ' 分钟' : '')));
+          meta.appendChild(v25Element('span', 'tag core', intensity));
+          card.appendChild(meta);
+          var list = v25Element('div', 'modal-list');
+          (plan.items || []).forEach(function (item) {
+            var row = v25Element('div', 'modal-list-item');
+            row.appendChild(v25Element('span', null, '✓'));
+            row.appendChild(document.createTextNode(String(item)));
+            list.appendChild(row);
+          });
+          card.appendChild(list);
+          var start = v25Element('button', 'btn primary', plan.status !== 'done' ? '▶ 开始训练' : '▶ 再练一次');
+          start.type = 'button';
+          start.setAttribute('data-start-day', String(day));
+          var adjust = v25Element('button', 'btn ghost', '调整训练计划');
+          adjust.type = 'button';
+          adjust.setAttribute('data-adjust-day', String(day));
+          var close = v25Element('button', 'btn ghost', '关闭');
+          close.type = 'button';
+          close.setAttribute('data-modal-close', '');
+          card.appendChild(v25ModalActions([start, adjust, close]));
+        });
       }
       function renderAdjustModal(day, reason) {
         var current = getCalendarPlan(displayedDateKey(day));
@@ -4325,7 +4389,9 @@
           return '<button class="adjust-reason ' + (reason === r[0] ? 'active' : '') + '" type="button" data-adjust-reason="' + r[0] + '"><span>' + r[1] + '<small>' + r[2] + '</small></span><span>›</span></button>';
         }).join('');
         if (!reason) {
-          openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>调整 ' + displayedMonthLabel() + ' ' + day + ' 日训练</h3><p>原方案：' + escapeHtml(current.title) + ' · ' + current.time + ' 分钟</p></div></div><div class="adjust-choices">' + reasonButtons + '</div><div class="modal-actions"><button class="btn ghost" type="button" data-back-day="' + day + '">返回详情</button></div>');
+          openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>调整 ' + displayedMonthLabel() + ' ' + day + ' 日训练</h3><p data-v25-original-plan></p></div></div><div class="adjust-choices">' + reasonButtons + '</div><div class="modal-actions"><button class="btn ghost" type="button" data-back-day="' + day + '">返回详情</button></div>');
+          var originalPlan = appModalCard.querySelector('[data-v25-original-plan]');
+          if (originalPlan) originalPlan.textContent = '原方案：' + String(current.title || '') + ' · ' + (current.time || 0) + ' 分钟';
           return;
         }
         var suggestions = {
@@ -4433,6 +4499,8 @@
       }
       function renderTodayPlan() {
         var list = todayPlanEl('todayPlanList');
+        var clearChildren = v25ClearChildren;
+        var element = v25Element;
         var title = todayPlanEl('todayTitle');
         var meta = todayPlanEl('todayMeta');
         var summary = todayPlanEl('todaySummary');
@@ -4471,11 +4539,19 @@
           fetchState.setAttribute('aria-busy', String(isLoading));
           fetchState.setAttribute('aria-live', isError ? 'assertive' : 'polite');
           if (isLoading) {
-            fetchState.innerHTML = '<strong>' + escapeHtml(renderDateLabel) + '计划读取中</strong><span>正在从后端读取' + escapeHtml(renderDateNoun) + '的计划，请稍候</span>';
+            clearChildren(fetchState);
+            fetchState.appendChild(element('strong', null, renderDateLabel + '计划读取中'));
+            fetchState.appendChild(element('span', null, '正在从后端读取' + renderDateNoun + '的计划，请稍候'));
           } else if (isError) {
-            fetchState.innerHTML = '<strong>' + escapeHtml(renderDateLabel) + '计划读取失败</strong><span>未确认到后端数据，请重试读取' + escapeHtml(renderDateNoun) + '的计划</span><button class="btn primary mini" type="button" data-v25-retry-today>重试读取</button>';
+            clearChildren(fetchState);
+            fetchState.appendChild(element('strong', null, renderDateLabel + '计划读取失败'));
+            fetchState.appendChild(element('span', null, '未确认到后端数据，请重试读取' + renderDateNoun + '的计划'));
+            var retryToday = element('button', 'btn primary mini', '重试读取');
+            retryToday.type = 'button';
+            retryToday.setAttribute('data-v25-retry-today', '');
+            fetchState.appendChild(retryToday);
           } else {
-            fetchState.innerHTML = '';
+            clearChildren(fetchState);
           }
         }
 
@@ -4505,25 +4581,56 @@
           if (detailPanel) detailPanel.hidden = true;
           if (skipBtn) skipBtn.hidden = true;
           if (v25TodayDisplayState === 'loading') {
-            if (list) list.innerHTML = '<div class="today-empty">正在读取' + escapeHtml(renderDateNoun) + '真实计划…</div>';
+            if (list) {
+              clearChildren(list);
+              list.appendChild(element('div', 'today-empty', '正在读取' + renderDateNoun + '真实计划…'));
+            }
             if (title) title.textContent = renderDateLabel + '计划读取中';
             if (meta) meta.textContent = '正在从后端读取' + renderDateNoun + '的计划，请稍候';
           } else if (v25TodayDisplayState === 'error') {
-            if (list) list.innerHTML = '<div class="today-empty">' + escapeHtml(renderDateLabel) + '计划读取失败。<br><button class="btn mini" type="button" data-v25-retry-today>重试读取</button></div>';
+            if (list) {
+              clearChildren(list);
+              var errorEmpty = element('div', 'today-empty');
+              errorEmpty.appendChild(document.createTextNode(renderDateLabel + '计划读取失败。'));
+              errorEmpty.appendChild(element('br'));
+              var errorRetry = element('button', 'btn mini', '重试读取');
+              errorRetry.type = 'button';
+              errorRetry.setAttribute('data-v25-retry-today', '');
+              errorEmpty.appendChild(errorRetry);
+              list.appendChild(errorEmpty);
+            }
             if (title) title.textContent = renderDateLabel + '计划读取失败';
             if (meta) meta.textContent = '未确认到' + renderDateNoun + '后端数据，页面不会把未知状态当作恢复日';
           } else if (v25TodayDisplayState === 'empty') {
             // 只有后端成功确认当前选中日期没有计划/动作时才展示正常空态。
             if (emptyHero) {
               var emptyCopy = emptyHero.querySelector('p');
-              if (emptyCopy) emptyCopy.innerHTML = escapeHtml(renderDateNoun) + '还没有训练动作。<br/>从动作库加入，或去训练方案一键开始，都会进入这份' + escapeHtml(renderDateLabel) + '计划。';
+              if (emptyCopy) {
+                clearChildren(emptyCopy);
+                emptyCopy.appendChild(document.createTextNode(renderDateNoun + '还没有训练动作。'));
+                emptyCopy.appendChild(element('br'));
+                emptyCopy.appendChild(document.createTextNode('从动作库加入，或去训练方案一键开始，都会进入这份' + renderDateLabel + '计划。'));
+              }
             }
-            if (list) list.innerHTML = '<div class="today-empty">' + escapeHtml(renderDateNoun) + '还没有训练动作。<br><button class="btn mini" type="button" data-view="library">去动作库添加</button></div>';
+            if (list) {
+              clearChildren(list);
+              var emptyList = element('div', 'today-empty');
+              emptyList.appendChild(document.createTextNode(renderDateNoun + '还没有训练动作。'));
+              emptyList.appendChild(element('br'));
+              var libraryButton = element('button', 'btn mini', '去动作库添加');
+              libraryButton.type = 'button';
+              libraryButton.setAttribute('data-view', 'library');
+              emptyList.appendChild(libraryButton);
+              list.appendChild(emptyList);
+            }
             if (title) title.textContent = renderDateLabel + '训练';
             if (meta) meta.textContent = todayIsRest ? renderDateNoun + '不安排正式训练，想加练可从动作库添加动作' : '从动作库添加动作，或直接开始一个训练方案';
           } else {
             // 防御性分支：没有成功确认的状态不得落入成功空态。
-            if (list) list.innerHTML = '<div class="today-empty">' + escapeHtml(renderDateLabel) + '计划尚未确认，请重试读取。</div>';
+            if (list) {
+              clearChildren(list);
+              list.appendChild(element('div', 'today-empty', renderDateLabel + '计划尚未确认，请重试读取。'));
+            }
             if (title) title.textContent = renderDateLabel + '计划读取中';
             if (meta) meta.textContent = '正在从后端读取' + renderDateNoun + '的计划，请稍候';
           }
@@ -4612,29 +4719,39 @@
         }
         if (track) {
           track.style.gridTemplateColumns = 'repeat(' + n + ', 1fr)';
-          track.innerHTML = todayPlan.map(function(item, index) {
+          clearChildren(track);
+          todayPlan.forEach(function(item, index) {
             var cls = 'progress-seg';
             var fact = todayRecordFact(index);
             if (fact && fact.status === 'skipped') cls += ' skipped';
             else if (fact && fact.status === 'completed') cls += ' done';
             else if (index < todayStepIndex) cls += ' done';
             if (index === todayStepIndex) cls += ' current';
-            return '<span class="' + cls + '" role="listitem" title="' + escapeHtml(item.name) + '"></span>';
-          }).join('');
+            var segment = element('span', cls);
+            segment.setAttribute('role', 'listitem');
+            segment.setAttribute('title', String(item.name || ''));
+            track.appendChild(segment);
+          });
         }
         if (steps) {
           steps.style.gridTemplateColumns = 'repeat(' + n + ', 1fr)';
-          steps.innerHTML = todayPlan.map(function(item, index) {
-            return '<span class="' + (index === todayStepIndex ? 'current' : '') + '">' + escapeHtml(item.name) + '</span>';
-          }).join('');
+          clearChildren(steps);
+          todayPlan.forEach(function(item, index) {
+            steps.appendChild(element('span', index === todayStepIndex ? 'current' : '', item.name));
+          });
         }
         if (progressCaption) {
-          progressCaption.innerHTML = n ? '当前动作：<em>' + escapeHtml(currentName) + '</em>' : '';
+          clearChildren(progressCaption);
+          if (n) {
+            progressCaption.appendChild(document.createTextNode('当前动作：'));
+            progressCaption.appendChild(element('em', null, currentName));
+          }
         }
 
         // 详情编辑清单
         if (list) {
-          list.innerHTML = todayPlan.map(function(item, index) {
+          clearChildren(list);
+          todayPlan.forEach(function(item, index) {
             var itemSets = Math.max(1, Number(item.sets || 1));
             var fact = todayRecordFact(index);
             var factSets = fact ? Math.min(Number(fact.setsCompleted || 0), itemSets) : 0;
@@ -4644,8 +4761,19 @@
                 ? factSets + ' / ' + itemSets + ' 组 · 已完成'
                 : (index === todayStepIndex ? Math.min(todaySetIndex, itemSets) + ' / ' + itemSets + ' 组' : '0 / ' + itemSets + ' 组');
             var actual = fact && fact.durationSeconds != null ? ' · 实际 ' + fact.durationSeconds + ' 秒' : '';
-            return '<div class="today-item"><span class="ti-num">' + (index + 1) + '</span><div><strong>' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(item.spec) + ' · ' + itemProgress + actual + ' · 预计 ' + item.time + ' 分钟</small></div><button class="icon-btn" type="button" data-remove-today="' + escapeHtml(item.name) + '" title="移除动作">×</button></div>';
-          }).join('');
+            var row = element('div', 'today-item');
+            row.appendChild(element('span', 'ti-num', index + 1));
+            var text = element('div');
+            text.appendChild(element('strong', null, item.name));
+            text.appendChild(element('small', null, String(item.spec || '') + ' · ' + itemProgress + actual + ' · 预计 ' + item.time + ' 分钟'));
+            row.appendChild(text);
+            var remove = element('button', 'icon-btn', '×');
+            remove.type = 'button';
+            remove.setAttribute('data-remove-today', String(item.name || ''));
+            remove.setAttribute('title', '移除动作');
+            row.appendChild(remove);
+            list.appendChild(row);
+          });
         }
         var editMeta = todayPlanEl('todayEditMeta');
         if (editMeta) editMeta.textContent = todayPlan.length + ' 个动作 · 约 ' + duration + ' 分钟 · 增删后上方首页同步刷新';
@@ -4952,10 +5080,28 @@
       function renderTrainingPlans() {
         var container = document.getElementById('trainingPlanList');
         if (!container) return;
-        container.innerHTML = Object.keys(trainingPlans).map(function(id) {
+        v25ClearChildren(container);
+        Object.keys(trainingPlans).forEach(function(id) {
           var plan = trainingPlans[id];
-          return '<div class="list-card"><div class="lc-main"><h4>' + escapeHtml(plan.title) + ' · ' + plan.time + ' 分钟</h4><p>' + plan.items.map(escapeHtml).join(' + ') + ' · ' + escapeHtml(plan.intensity) + ' · ' + escapeHtml(plan.scene) + '</p></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span class="tag scene">' + escapeHtml(plan.scene) + '</span><button class="btn mini" type="button" data-start-plan="' + escapeHtml(id) + '">直接开始</button><button class="btn mini plan-schedule-btn" type="button" data-plan-id="' + escapeHtml(id) + '">安排到某天</button></div></div>';
-        }).join('');
+          var card = v25Element('div', 'list-card');
+          var main = v25Element('div', 'lc-main');
+          main.appendChild(v25Element('h4', null, plan.title + ' · ' + plan.time + ' 分钟'));
+          main.appendChild(v25Element('p', null, (plan.items || []).join(' + ') + ' · ' + String(plan.intensity || '') + ' · ' + String(plan.scene || '')));
+          card.appendChild(main);
+          var actions = v25Element('div');
+          actions.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
+          actions.appendChild(v25Element('span', 'tag scene', plan.scene));
+          var start = v25Element('button', 'btn mini', '直接开始');
+          start.type = 'button';
+          start.setAttribute('data-start-plan', String(id));
+          actions.appendChild(start);
+          var schedule = v25Element('button', 'btn mini plan-schedule-btn', '安排到某天');
+          schedule.type = 'button';
+          schedule.setAttribute('data-plan-id', String(id));
+          actions.appendChild(schedule);
+          card.appendChild(actions);
+          container.appendChild(card);
+        });
       }
       // ═══════════════════════════════════════════════════════════
       // P1-2 功能入口闭环：统一训练推进 / 新建训练方案 / 数据导入导出
@@ -5268,7 +5414,15 @@
       }
       function showImportError(msg) {
         pendingImportState = null;
-        openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>导入失败</h3><p>' + escapeHtml(msg) + '</p></div></div><div class="safety-note">当前训练数据未做任何修改。</div><div class="modal-actions"><button class="btn primary" type="button" data-modal-close>知道了</button></div>');
+        v25Modal(function (card) {
+          card.appendChild(v25ModalCloseButton());
+          card.appendChild(v25ModalHeader('导入失败', msg));
+          card.appendChild(v25Element('div', 'safety-note', '当前训练数据未做任何修改。'));
+          var close = v25Element('button', 'btn primary', '知道了');
+          close.type = 'button';
+          close.setAttribute('data-modal-close', '');
+          card.appendChild(v25ModalActions([close]));
+        });
       }
       function readImportFile(file) {
         var name = (file && file.name) || '';
@@ -5530,11 +5684,26 @@
           pendingSchedulePlanId = target.getAttribute('data-plan-id') || 'quick10';
           var schedulePlan = trainingPlans[pendingSchedulePlanId];
           var scheduleOptions = getScheduleCandidates();
-          var scheduleBtns = scheduleOptions.map(function (o) {
-            return '<button class="adjust-reason" type="button" data-schedule-day="' + o.dateKey + '"><span>' + o.label + '<small>' + o.currentLabel + '</small></span><span>安排</span></button>';
-          }).join('');
-          if (!scheduleBtns) scheduleBtns = '<p class="today-empty">未来 60 天内没有可安排的日期。</p>';
-          openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>安排“' + escapeHtml(schedulePlan.title) + '”</h3><p>从今天之后挑选未来日期（已过滤过去与已完成日）；确认后仅修改该日期。</p></div></div><div class="adjust-choices">' + scheduleBtns + '</div>');
+          v25Modal(function (card) {
+            card.appendChild(v25ModalCloseButton());
+            card.appendChild(v25ModalHeader('安排“' + String(schedulePlan.title || '') + '”', '从今天之后挑选未来日期（已过滤过去与已完成日）；确认后仅修改该日期。'));
+            var choices = v25Element('div', 'adjust-choices');
+            if (!scheduleOptions.length) {
+              choices.appendChild(v25Element('p', 'today-empty', '未来 60 天内没有可安排的日期。'));
+            } else {
+              scheduleOptions.forEach(function (o) {
+                var button = v25Element('button', 'adjust-reason');
+                button.type = 'button';
+                button.setAttribute('data-schedule-day', String(o.dateKey));
+                var label = v25Element('span', null, o.label);
+                label.appendChild(v25Element('small', null, o.currentLabel));
+                button.appendChild(label);
+                button.appendChild(v25Element('span', null, '安排'));
+                choices.appendChild(button);
+              });
+            }
+            card.appendChild(choices);
+          });
           return;
         }
         if (target.hasAttribute('data-schedule-day')) {
@@ -5574,8 +5743,8 @@
         var today = getToday();
         var todayKey = formatDateKey(today);
         var weekDates = getCurrentWeekDates(today);
-        var html = '';
         var todayPlanInfo = null;
+        v25ClearChildren(list);
         weekDates.forEach(function (d) {
           var dk = formatDateKey(d);
           var plan = getCalendarPlan(dk);
@@ -5591,18 +5760,24 @@
               ? plan.title
               : (isToday ? '今日 · ' + plan.title : plan.title + (plan.status === 'done' ? ' ✓' : '')));
           if (isToday) todayPlanInfo = plan;
-          html += '<button class="' + cls + '" type="button" role="listitem" data-date="' + dk + '" data-plan="' + escapeHtml(plan.title) + '">' +
-            '<span class="wd">' + WEEKDAY_NAMES[d.getDay()] + '</span>' +
-            '<span class="dn">' + pad2(d.getDate()) + '</span>' +
-            '<span class="plan">' + escapeHtml(planText) + '</span>' +
-          '</button>';
+          var button = v25Element('button', cls);
+          button.type = 'button';
+          button.setAttribute('role', 'listitem');
+          button.setAttribute('data-date', dk);
+          button.setAttribute('data-plan', String(plan.title || ''));
+          button.appendChild(v25Element('span', 'wd', WEEKDAY_NAMES[d.getDay()]));
+          button.appendChild(v25Element('span', 'dn', pad2(d.getDate())));
+          button.appendChild(v25Element('span', 'plan', planText));
+          list.appendChild(button);
         });
-        list.innerHTML = html;
         if (hint) {
+          v25ClearChildren(hint);
           if (todayPlanInfo) {
-            hint.innerHTML = '已选 <strong>' + (today.getMonth() + 1) + '/' + today.getDate() + ' · ' + (todayPlanInfo.status === 'rest' ? '休息日' : '今日 · ' + todayPlanInfo.title) + '</strong>';
+            hint.appendChild(document.createTextNode('已选 '));
+            hint.appendChild(v25Element('strong', null, (today.getMonth() + 1) + '/' + today.getDate() + ' · ' + (todayPlanInfo.status === 'rest' ? '休息日' : '今日 · ' + todayPlanInfo.title)));
           } else {
-            hint.innerHTML = '本周 <strong>' + formatDateKey(weekDates[0]) + ' → ' + formatDateKey(weekDates[6]) + '</strong>';
+            hint.appendChild(document.createTextNode('本周 '));
+            hint.appendChild(v25Element('strong', null, formatDateKey(weekDates[0]) + ' → ' + formatDateKey(weekDates[6])));
           }
         }
       }
@@ -5618,7 +5793,7 @@
         if (svg) svg.setAttribute('aria-label', displayedYearMonthLabel() + '整月训练完成趋势');
         if (chartFoot) {
           var isCurrent = calendarDisplayYear === getToday().getFullYear() && calendarDisplayMonth === getToday().getMonth();
-          chartFoot.innerHTML = (calendarDisplayMonth + 1) + ' 月 1–' + getDaysInMonth(calendarDisplayYear, calendarDisplayMonth) + ' 日' + (isCurrent ? ' · 今日为第 ' + getToday().getDate() + ' 日' : '');
+          chartFoot.textContent = (calendarDisplayMonth + 1) + ' 月 1–' + getDaysInMonth(calendarDisplayYear, calendarDisplayMonth) + ' 日' + (isCurrent ? ' · 今日为第 ' + getToday().getDate() + ' 日' : '');
         }
       }
       // 仅 class 级更新（不重建 DOM）：补齐 today / current-week 标记
@@ -5650,20 +5825,27 @@
         calendarEl.setAttribute('aria-label', monthStatus === 'error' || monthStatus === 'partial_error' ? '本月训练日历，读取失败' : '本月训练日历');
         var days = getDaysInMonth(year, month);
         var offset = getMonthStartOffset(year, month);
-        var html = ['日','一','二','三','四','五','六'].map(function (w) { return '<div class="cal-wd">' + w + '</div>'; }).join('');
-        for (var i = 0; i < offset; i++) html += '<div class="cal-cell empty"></div>';
+        v25ClearChildren(calendarEl);
+        ['日','一','二','三','四','五','六'].forEach(function (w) { calendarEl.appendChild(v25Element('div', 'cal-wd', w)); });
+        for (var i = 0; i < offset; i++) calendarEl.appendChild(v25Element('div', 'cal-cell empty'));
         for (var d = 1; d <= days; d++) {
           var plan = getCalendarPlan(displayedDateKey(d));
           var cls = 'cal-cell ' + plan.status;
           var icon = plan.body === '下肢' ? '🦵' : plan.body === '上肢' ? '💪' : plan.title === '八段锦' ? '🧘' : plan.status === 'rest' ? '' : '💪';
-          var body = plan.status === 'rest'
-            ? '<span class="d-num">' + d + '</span><span class="d-badge">休</span>'
-            : (plan.status === 'loading' || plan.status === 'error'
-              ? '<span class="d-num">' + d + '</span><span class="d-badge">' + escapeHtml(plan.title) + '</span>'
-              : '<span class="d-num">' + d + '</span><span class="d-dot"></span><span class="d-badge">' + icon + ' ' + escapeHtml(plan.title) + ' · ' + plan.time + "'</span>");
-          html += '<button class="' + cls + '" type="button" data-day="' + d + '">' + body + '</button>';
+          var cell = v25Element('button', cls);
+          cell.type = 'button';
+          cell.setAttribute('data-day', String(d));
+          cell.appendChild(v25Element('span', 'd-num', d));
+          if (plan.status === 'rest') {
+            cell.appendChild(v25Element('span', 'd-badge', '休'));
+          } else if (plan.status === 'loading' || plan.status === 'error') {
+            cell.appendChild(v25Element('span', 'd-badge', plan.title));
+          } else {
+            cell.appendChild(v25Element('span', 'd-dot'));
+            cell.appendChild(v25Element('span', 'd-badge', icon + ' ' + plan.title + ' · ' + plan.time + "'"));
+          }
+          calendarEl.appendChild(cell);
         }
-        calendarEl.innerHTML = html;
         applyCalendarStateClasses();
         updateMonthHead();
       }
@@ -7901,6 +8083,11 @@
         getVideoStatus: getVideoStatus,
         getCalendarPlan: getCalendarPlan,
         renderTodayPlan: renderTodayPlan,
+        renderWeek: renderWeek,
+        renderCalendarCell: renderCalendarCell,
+        renderCalendarMonth: renderCalendarMonth,
+        renderTrainingPlans: renderTrainingPlans,
+        renderAdjustModal: renderAdjustModal,
         // Canonical date mutations exposed only through the existing
         // automation hook so readback failure/retry paths can be exercised
         // with the complete page lifecycle.

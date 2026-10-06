@@ -458,6 +458,10 @@ def test_van13_inline_reconcile_facts_and_terminal_skip_retry():
         r"""
         const fs = require('fs');
         const vm = require('vm');
+        const { JSDOM } = require(require('path').join(
+          process.env.VAN13_DOM_DEPS || '/private/tmp/van13-jsdom-deps/node_modules',
+          'jsdom'
+        ));
         const source = fs.readFileSync('static/index.html', 'utf8');
         function section(startMarker, endMarker) {
           const start = source.indexOf(startMarker);
@@ -535,15 +539,12 @@ def test_van13_inline_reconcile_facts_and_terminal_skip_retry():
         retry.showToast = () => {};
         const result = await retry.advanceTodayTraining();
         if (result !== true || !retry.todayDone || retry.todayRecordFacts[1].setsCompleted !== 1) throw new Error('terminal skipped complete retry failed');
-        function element() {
-          return { hidden: false, disabled: false, textContent: '', innerHTML: '', className: '', style: {},
-            querySelector: () => null, setAttribute: () => {} };
-        }
+        const renderDom = new JSDOM(source, { url: 'http://127.0.0.1:3000/' });
         const ids = {};
-        ['todayPlanList', 'todayTitle', 'todayMeta', 'todaySummary', 'dayEmptyHero', 'dayHeroContent', 'dayHeroVideo', 'dayHeroProgress', 'dayDetailPanel', 'todayStatusPill', 'todayCountPill', 'startTodayBtn', 'skipTodayBtn', 'dayVideoName', 'dayVideoCap', 'dayVideoHint', 'dayVideoThumb', 'dayProgressTrack', 'dayProgressSteps', 'dayProgressLabel', 'dayProgressStat', 'dayProgressCaption', 'todayEditMeta'].forEach((id) => { ids[id] = element(); });
+        ['todayPlanList', 'todayTitle', 'todayMeta', 'todaySummary', 'dayEmptyHero', 'dayHeroContent', 'dayHeroVideo', 'dayHeroProgress', 'dayDetailPanel', 'todayStatusPill', 'todayCountPill', 'startTodayBtn', 'skipTodayBtn', 'dayVideoName', 'dayVideoCap', 'dayVideoHint', 'dayVideoThumb', 'dayProgressTrack', 'dayProgressSteps', 'dayProgressLabel', 'dayProgressStat', 'dayProgressCaption', 'todayEditMeta'].forEach((id) => { ids[id] = renderDom.window.document.getElementById(id); });
         const view = {
           console, Promise, JSON, Object, Array, Error, Math, Date,
-          document: { getElementById: (id) => ids[id] || null },
+          document: renderDom.window.document,
           todayPlan: plan, todayStepIndex: 2, todaySetIndex: 0, todayActionElapsedSeconds: 0,
           todayActionStartedAt: null, todaySkipped: [1], todayRecordFacts: [
             { status: 'completed', setsCompleted: 2, durationSeconds: 83 },
@@ -556,6 +557,7 @@ def test_van13_inline_reconcile_facts_and_terminal_skip_retry():
           escapeHtml: (value) => String(value), todayPlanEl: (id) => ids[id],
         };
         vm.createContext(view);
+        vm.runInContext(section('function v25ClearChildren', 'function openModal'), view);
         vm.runInContext(section('function todayRecordFact', 'function startPlan'), view);
         view.todayPlanEl = (id) => ids[id];
         view.renderTodayPlan();

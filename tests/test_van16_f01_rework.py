@@ -233,6 +233,10 @@ def test_f01_extracted_boot_generation_supplement():
           // retry from presenting the previous local/session snapshot.
           vm.runInContext(section('function resetTodayRuntimeForUnverifiedData', 'function hydrateTrainingState'), context);
           vm.runInContext(section('function v25ApiFetch', 'function v25ShowSessionConflict'), context);
+          // The production renderer now requires its real DOM helpers. Load
+          // them into this extracted fixture instead of providing a fake HTML
+          // fallback in production code.
+          vm.runInContext(section('function v25ClearChildren', 'function openModal'), context);
           vm.runInContext(section('function renderTodayPlan', 'function startPlan'), context);
           vm.runInContext(section('function bootV25Api', '// P0-2：启动前'), context);
           return {
