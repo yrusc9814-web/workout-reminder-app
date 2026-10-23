@@ -42,10 +42,9 @@ python run.py
 | 15 | GET | `/api/calendar/month` | 月历兼容路径，支持 `month=YYYY-MM` |
 | 16 | GET | `/api/settings` | 获取设置 |
 | 17 | POST | `/api/settings` | 保存设置 |
-| 18 | POST | `/api/reminders/test` | 提醒 mock，不真实发送 |
-| 19 | POST | `/api/reminders/wechat/send` | 微信提醒 mock，不真实发送 |
-| 20 | POST | `/api/reminders/dingtalk/send` | 钉钉提醒；无凭据返回 `not_configured`，有 `DINGTALK_WEBHOOK_URL` 时真实调用 |
-| 21 | POST | `/api/todos/dingtalk/create` | 钉钉代办；无凭据返回 `not_configured`，有 `DINGTALK_TODO_CREATE_URL` + `DINGTALK_ACCESS_TOKEN` 时真实调用 |
+| 18 | POST | `/api/reminders/dingtalk/send` | 钉钉提醒；无凭据返回 `not_configured`，有 `DINGTALK_WEBHOOK_URL` 时真实调用 |
+| 19 | POST | `/api/todos/dingtalk/create` | 钉钉代办；无凭据返回 `not_configured`，有 `DINGTALK_TODO_CREATE_URL` + `DINGTALK_ACCESS_TOKEN` 时真实调用 |
+| 20 | POST | `/api/notifications/send` | 统一通知入口，组合提醒和待办结果 |
 
 ## 5. Seed 数据范围与提醒闭环
 
@@ -68,14 +67,12 @@ python seed.py
 
 ## 6. 本地定时提醒最小闭环
 
-`scripts/workout_reminder_tick.py` 用于本地定时任务一次性检查今日计划：
+`scripts/workout_reminder_tick.py` 用于本地定时任务一次性发送今日通知：
 
-- 默认读取 `http://127.0.0.1:3000/api/today`，支持 `WORKOUT_REMINDER_API_URL` 覆盖。
-- 默认写入 `data/reminder-log.json`，支持 `WORKOUT_REMINDER_LOG_PATH` 覆盖。
-- 训练日且同一 `date + plan_id` 未提醒过时，stdout 打印提醒，调用钉钉提醒/代办接口，并追加 JSON 日志。
-- 同日同计划重复运行不重复提醒，也不会重复创建钉钉提醒/代办。
-- 无训练计划 stdout 提示不提醒并 `exit 0`。
-- API 不可用、非 2xx、坏 JSON、日志损坏或写入失败时，stderr 输出 `ERROR:` 并 `exit 1`。
+- 默认 POST `http://127.0.0.1:3000/api/notifications/send`，支持 `WORKOUT_NOTIFICATION_URL` 覆盖。
+- 去重事实由服务端 SQLite `reminders` 表管理，脚本不读写旧 JSON 日志。
+- 训练日且同一 `date + plan_id` 未成功投递时执行通知；已成功投递、无计划和休息日正常跳过。
+- API 不可用、非 2xx、坏 JSON 或未知业务状态时，stderr 输出 `ERROR:` 并 `exit 1`。
 - 详细定时器配置见 `docs/reminder-scheduler.md`。
 
 ## 7. 桌面快捷方式脚本
@@ -110,17 +107,17 @@ pytest 覆盖重点：
 - 统计接口。
 - 设置接口读写。
 - complete / skip / postpone 一致性。
-- 微信提醒 mock 接口存在；钉钉提醒/代办接口在无凭据时返回 `not_configured`。
+- 钉钉提醒/代办及统一通知接口在无凭据时返回 `not_configured`。
 - seed 幂等。
 - 2026-06/07/08 未来月份 seed、每周一/三/五训练日、`/api/plans/month?month=2026-06`、模拟未来训练日 `/api/today`。
 - 前端调用的接口路径与后端契约一致。
 - 首页前端已优化为本地个人运动提醒仪表盘，保留轻量 HTML/CSS/JS，无 React/Vue/Tailwind/Vite。
-- 本地定时提醒 tick：训练日调用钉钉提醒/代办并写状态日志、重复不重复、无训练不提醒、服务/JSON/日志错误清晰失败。
+- 本地定时提醒 tick：训练日调用统一通知接口、重复不重复、无训练不提醒、服务/JSON 错误清晰失败。
 
 建议运行方式：
 
 ```bash
-python - <<'PY'
+python3 - <<'PY'
 import pytest, sys
 sys.exit(pytest.main(['-q', '-c', '/dev/null', '--rootdir=.', 'tests']))
 PY
@@ -134,9 +131,7 @@ PY
 - `requirements.txt`
 - `run.py`
 - `static/index.html`
-- `static/app.js`
 - `static/styles.css`
-- `data/.gitkeep`
 - `scripts/workout_reminder_tick.py`
 - `scripts/create_desktop_shortcut.ps1`
 - `tests/test_api.py`

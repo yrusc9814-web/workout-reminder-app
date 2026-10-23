@@ -451,7 +451,7 @@ def test_e2e_full_required_flow(server, browser_context):
           return { firstOk: first && first.ok === true, kept, secondOk: second && second.ok !== false, cleared, n };
         }"""
     )
-    # finishTraining returns undefined in app.js; infer from session keep/clear
+    # The legacy page hook returns no completion payload; infer from session keep/clear.
     assert fail_retry["kept"] is True, f"session not kept after failed complete: {fail_retry}"
     # After retry with real fetch restored inside evaluate after second call, session should clear if backend accepts
     # second call still uses mocked fetch with n>=2 so real complete is called

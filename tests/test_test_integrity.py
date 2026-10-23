@@ -31,6 +31,11 @@ def test_root_serves_the_current_page(client):
     assert 'src="/static/app.js"' not in result.text
 
 
+def test_obsolete_app_js_resource_has_no_checkout_copy():
+    """The inline current page must not leave the retired app.js implementation behind."""
+    assert not (APP_DIR / "static" / "app.js").exists()
+
+
 def test_dom_gate_detects_a_broken_production_skip_handler(tmp_path):
     source = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
     target = "          skipTodayTraining();"

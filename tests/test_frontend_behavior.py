@@ -26,7 +26,7 @@ def _assert_ok(result: subprocess.CompletedProcess):
     assert "PASS" in result.stdout
 
 
-# Current-page equivalents replace the obsolete app.js logic-copy tests.
+# Current-page equivalents replace the obsolete frontend logic-copy tests.
 # Plan mutation/readback and imports reuse VAN-17 and VAN-23 full-page gates.
 
 

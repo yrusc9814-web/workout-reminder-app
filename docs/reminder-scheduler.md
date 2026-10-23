@@ -24,7 +24,7 @@ WORKOUT_NOTIFICATION_URL=http://127.0.0.1:3000/api/notifications/send \
 WORKOUT_NOTIFICATION_CHANNEL=dingtalk \
 WORKOUT_NOTIFICATION_INCLUDE_TODO=1 \
 WORKOUT_NOTIFICATION_FORCE=0 \
-python scripts/workout_reminder_tick.py
+python3 scripts/workout_reminder_tick.py
 ```
 
 > 脚本不会启动服务。运行前需确认目标 API 可访问；`force=1` 会绕过去重。没有凭据返回 `not_configured` 并以 `1` 退出，不会记录成功。
@@ -86,7 +86,7 @@ Windows 包装入口的 JSONL 运行日志记录每次 tick 的实际结果；�
 在 `workout-app/` 目录运行：
 
 ```bash
-python -m pytest -q -c /dev/null --rootdir=. tests/test_van22_notifications.py tests/test_workout_reminder_tick.py
+python3 -m pytest -q -c /dev/null --rootdir=. tests/test_van22_notifications.py tests/test_workout_reminder_tick.py
 ```
 
 测试使用临时 SQLite、模拟钉钉回执和本机 loopback HTTP fixture，不发送真实通知。

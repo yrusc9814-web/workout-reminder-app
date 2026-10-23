@@ -2,14 +2,15 @@
 
 ## 执行方式
 
-在项目根目录使用已有的 Python 测试环境（pytest、requirements.txt 中的库及
-TestClient 所需 httpx）和已有 Node/jsdom。VAN-25 不自动下载或安装任何依赖。
-本次实际验证环境为 Python 3.12、Node 24、jsdom 26.1；未声称验证其他版本组合。
+在项目根目录使用 `requirements-runtime.lock` 与 `requirements-test.lock` 对应的 Python
+测试环境，以及已有 Node/jsdom。VAN-25 不自动下载或安装任何依赖。本次实际验证环境为
+Python 3.12、Node 24、jsdom 26.1；未声称验证其他版本组合或 Windows。
+仓库没有托管 CI 配置；本轮工程门禁是本地可重跑检查，不把缺少 CI 配置记为通过。
 
 项目已有 `node_modules/jsdom` 或正常 Node 模块搜索路径可解析 jsdom 时：
 
 ```sh
-python -m pytest -q -ra
+python3 -m pytest -q -ra
 ```
 
 复用项目外已经准备好的依赖时，设置两个通用入口（以下路径是占位符）：
@@ -17,7 +18,7 @@ python -m pytest -q -ra
 ```sh
 NODE_BINARY=/path/to/node \
 WORKOUT_NODE_MODULES=/path/to/existing/node_modules \
-python -m pytest -q -ra
+python3 -m pytest -q -ra
 ```
 
 `NODE_BINARY` 不设置时从 PATH 找 node；`WORKOUT_NODE_MODULES` 指向 node_modules
@@ -26,6 +27,23 @@ python -m pytest -q -ra
 缺少 node/jsdom 会明确失败，不静默跳过、不尝试安装。
 本机 fake provider/通知 HTTP fixture 需要允许绑定 loopback 临时端口；若宿主沙箱禁止绑定，
 应报告环境错误并在允许本机端口的执行环境重跑这些测试，不改成 skip 或产品失败。
+
+## VAN-26 工程基线门禁
+
+运行依赖的直接版本见 `requirements.txt`，完整运行闭包见 `requirements-runtime.lock`；
+pytest/httpx 等测试增量见 `requirements-test.lock`。锁文件对应本机 Python 3.12/macOS
+环境，未声称 Windows 或其他平台组合已验证。仓库没有托管 CI，本轮门禁均为本地可重跑检查。
+
+若宿主已配置 Git hook，可通过现有 Lefthook 二进制显式注入，不安装或复制二进制：
+
+```sh
+LEFTHOOK_BIN=/path/to/existing/lefthook \
+GIT_OPTIONAL_LOCKS=0 \
+git hook run pre-commit -- --no-auto-install --no-stage-fixed --skip-lfs --no-tty
+```
+
+candidate 没有 Lefthook 配置时，结果应标记为 `NOT_CONFIGURED/NOT_RUN`；hook 返回 0
+只说明调用链没有阻塞，不能当作项目检查通过。
 
 可直接运行单个 DOM 场景：
 
@@ -60,16 +78,16 @@ F01、VAN-23 生成日志位于 candidate 的 `.tmp`，其他历史专项日志�
 适用于当前页面的训练、保存失败、目标日期、模板/动作快照和导入确认断言由上述当前
 页面回归承接。旧专属表单、旧 `/api/plans/{id}` 保存流程、旧恢复按钮不再被冒充为
 当前 UI 行为。恢复预览/确认/备份与视频失败的后端契约继续由现有 API 回归验证。
-`frontend_behavior_harness.js` 保留为历史文件，没有活跃测试导入它；不清理旧前端。
+旧的 `frontend_behavior_harness.js` 与 `static/app.js` 已移除；当前页面回归只读取并执行正式的
+`static/index.html`，避免测试继续把无消费者的旧实现当作产品入口。
 
 ## 历史与平台专项（不计入当前页面通过数）
 
-`test_static_contract.py` 中仍读取旧 app.js/styles.css 的 29 个源码探针标记为
-`legacy_frontend`，默认明确 skip，原断言保留；正式首页的无硬编码 YouTube 检查
-已从旧 app.js 检查拆出、默认执行，两者复用原有逐行断言，未放宽 URL 规则。
-如需单独检查历史资源可使用 `--legacy-frontend`，其结果不能证明当前页面业务正确。
+`test_static_contract.py` 只保留正式首页和启动入口的静态契约；已删除针对退休 `app.js`
+的源码探针，避免跳过测试继续掩盖无消费者残留。正式首页的无硬编码 YouTube 检查默认执行，
+没有降低 URL 规则。
 
-`test_e2e_playwright.py` 是旧 app.js 的 15 步 Playwright 流程，默认 skip，未改写成新的
+`test_e2e_playwright.py` 是保留的 legacy Playwright 流程，默认 skip，未改写成新的
 E2E。`--legacy-e2e` 仅供非 macOS 主机主动运行历史诊断；macOS 始终 skip 此旧入口，
 真实 Chromium 验收必须使用已批准的 headed runner，不能从此测试直接启动 headless。
 VAN-25 未启动浏览器/服务，不声称浏览器渲染、真实计时或跨平台 E2E 通过。
@@ -109,7 +127,7 @@ CLOSEOUT BLOCKED；以上是历史执行结果，不能代替本轮最终定向�
 
 定向范围为 `test_static_contract.py`、`test_frontend_behavior.py`、
 `test_test_integrity.py`、F01 完整页，以及恢复收集的四个迁移/备份/seed 测试；
-另单独运行旧 app.js 的 URL 检查，确认拆分后原规则仍生效。
+另单独运行旧 `app.js` 的 URL 检查，确认拆分后原规则仍生效。
 不重跑其他完整回归，前述历史通过数不冒充本轮完整执行结果。
 
 本轮最终定向日志：`.tmp/van25-final-targeted-frozen.txt`、`.tmp/van25-final-legacy-url.txt`。
@@ -123,3 +141,8 @@ Windows 原生 DPAPI 及旧浏览器 E2E 的覆盖边界保持上文所述；JSD
 证明真实浏览器/实际后端连通、布局、真实计时、浏览器刷新持久化或 Windows 加解密。
 原 VAN-25 要求未增加完整浏览器 E2E；此次仅恢复和补足有效断言，不以跳过降低要求。
 独立审核仍未执行，本轮由主代理检查最终 diff 和定向结果。
+
+## VAN-26 工程清理说明
+
+VAN-26 删除了无生产消费者的 `static/app.js`、旧逻辑副本 harness 及对应默认跳过探针；
+当前首页 URL/DOM smoke 与删除结果记录在 `van26-evidence`，不改写上述 VAN-25 历史执行事实。

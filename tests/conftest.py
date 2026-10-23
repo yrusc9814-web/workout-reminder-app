@@ -65,7 +65,6 @@ def client(app_modules):
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "legacy_frontend: historical app.js source probes, excluded from current-page acceptance")
     warnings.filterwarnings(
         "ignore",
         message=r".*Using `httpx` with `starlette\.testclient` is deprecated.*",
@@ -73,18 +72,15 @@ def pytest_configure(config):
 
 
 def pytest_addoption(parser):
-    parser.addoption("--legacy-frontend", action="store_true", help="Run historical app.js source probes (not current-page acceptance)")
-    parser.addoption("--legacy-e2e", action="store_true", help="Run obsolete app.js Playwright flow on supported non-macOS hosts")
+    parser.addoption("--legacy-e2e", action="store_true", help="Run the legacy Playwright flow on supported non-macOS hosts")
 
 
 def pytest_collection_modifyitems(config, items):
     import sys
     for item in items:
-        if "legacy_frontend" in item.keywords and not config.getoption("--legacy-frontend"):
-            item.add_marker(pytest.mark.skip(reason="Historical app.js source probe; use --legacy-frontend explicitly, not current-page coverage"))
         if item.path.name == "test_e2e_playwright.py":
             if sys.platform == "darwin" or not config.getoption("--legacy-e2e"):
-                item.add_marker(pytest.mark.skip(reason="Legacy app.js E2E; not current index.html acceptance; macOS requires approved headed runner"))
+                item.add_marker(pytest.mark.skip(reason="Legacy Playwright E2E; macOS requires approved headed runner"))
 
 
 @pytest.fixture(autouse=True)

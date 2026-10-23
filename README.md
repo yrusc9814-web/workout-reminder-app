@@ -10,8 +10,8 @@
 - 本地静态仪表盘：首页、今日计划、周计划、月历、统计、设置、日志
 - 2026-05 至 2026-08 训练计划种子数据：每周一 / 三 / 五训练，其他日期恢复
 - 训练内容：髋部稳定与核心控制，动作包含中文说明、组数 / 次数 / 时长，以及 Bilibili 公开视频链接
-- 钉钉真实提醒 / 钉钉代办接口（未配置凭据时返回 not_configured）；保留微信 mock 兼容接口
-- 本地定时提醒 tick 脚本（一次性检查今日训练并写本地去重日志）
+- 钉钉真实提醒 / 钉钉代办接口（未配置凭据时返回 not_configured）
+- 本地定时通知 tick 脚本（一次性调用统一通知 API，服务端负责去重）
 - Windows 一键启动脚本和桌面快捷方式：双击“运动提醒 App”启动后端并打开浏览器
 - 训练动作视频直达链接
 
@@ -24,23 +24,30 @@
 - Python 3.11+
 - SQLite（内置文件数据库，无需额外安装）
 
-依赖见：`requirements.txt`
+POSIX 示例使用 `python3`，且该命令必须解析到 Python 3.11+；macOS 自带的 Python 3.9 不受支持。
+Windows 启动脚本使用当前系统的 `python` 命令。
+
+直接运行依赖见：`requirements.txt`；可复现安装使用已锁定的
+`requirements-runtime.lock`。测试只需在运行依赖之上再安装 `requirements-test.lock`。
 
 ---
 
 ## 安装依赖
 
-在 `workout-app/` 目录下执行：
+在 `workout-app/` 目录下执行。锁文件来自当前 Python 3.12/macOS arm64 环境的已安装
+metadata；本项目不声称 Windows 或其他 Python/平台组合已验证：
 
 ```bash
-python -m ensurepip --upgrade
-python -m pip install -r requirements.txt
+python3 -m ensurepip --upgrade
+python3 -m pip install -r requirements-runtime.lock
+python3 -m pip install -r requirements-test.lock  # 运行 pytest 时需要
 ```
 
 如果当前 Python 环境已经有 pip，可直接：
 
 ```bash
-python -m pip install -r requirements.txt
+python3 -m pip install -r requirements-runtime.lock
+python3 -m pip install -r requirements-test.lock  # 运行 pytest 时需要
 ```
 
 ---
@@ -50,7 +57,7 @@ python -m pip install -r requirements.txt
 在 `workout-app/` 目录下执行：
 
 ```bash
-python run.py
+python3 run.py
 ```
 
 默认监听：
@@ -65,8 +72,9 @@ python run.py
 静态资源：
 
 - `/static/index.html`
-- `/static/app.js`
 - `/static/styles.css`
+
+首页脚本内联在 `static/index.html`；项目不再保留旧的 `static/app.js`。
 
 ---
 
@@ -112,7 +120,7 @@ Windows 下也可传本地绝对路径。
 服务启动时会自动执行 seed。如果本地已有 `workout.db`，直接重启服务即可把新增月份写入本地数据库；也可在项目目录手动执行：
 
 ```bash
-python seed.py
+python3 seed.py
 ```
 
 如果使用了自定义数据库路径，执行 seed 时需带同一个 `WORKOUT_DB_PATH` 环境变量。
@@ -224,14 +232,13 @@ python seed.py
 整数 `reps` 可以覆盖同一 display spec。v24 预览/提交也使用同一规则，阻断的导入不会
 写入计划。
 
-### 提醒 mock 接口
+### 提醒接口
 
-微信接口只返回 mock；钉钉接口在未配置凭据时返回 `not_configured`，配置凭据后会真实调用钉钉：
+钉钉兼容接口在未配置凭据时返回 `not_configured`，配置凭据后会真实调用钉钉；统一通知接口会组合提醒和待办结果：
 
-- `POST /api/reminders/test`
-- `POST /api/reminders/wechat/send`
 - `POST /api/reminders/dingtalk/send`
 - `POST /api/todos/dingtalk/create`
+- `POST /api/notifications/send`
 
 示例：
 
@@ -254,15 +261,16 @@ python seed.py
 
 ## 本地定时提醒
 
-新增一次性 tick 脚本：
+新增一次性通知 tick 脚本：
 
 ```bash
-python scripts/workout_reminder_tick.py
+python3 scripts/workout_reminder_tick.py
 ```
 
-默认读取 `http://127.0.0.1:3000/api/today`，可用 `WORKOUT_REMINDER_API_URL` 覆盖；默认去重日志为 `data/reminder-log.json`，可用 `WORKOUT_REMINDER_LOG_PATH` 覆盖。
+脚本默认 POST `http://127.0.0.1:3000/api/notifications/send`，可用
+`WORKOUT_NOTIFICATION_URL` 覆盖；去重事实由服务端 SQLite 的 `reminders` 表管理，脚本不读写旧的 JSON 日志。
 
-行为：训练日且同一 `date + plan_id` 未提醒过时打印提醒并追加 JSON 日志；重复运行不会重复提醒；无训练计划时提示不提醒并正常退出。服务不可用、非 2xx、坏 JSON、日志损坏或写入失败会输出 `ERROR:` 到 stderr 并以 `1` 退出。
+行为：训练日且同一 `date + plan_id` 未成功投递时执行通知；`no_plan`、休息日和已成功去重是正常跳过。服务不可用、非 2xx、坏 JSON 或未知业务状态会输出 `ERROR:` 到 stderr 并以 `1` 退出。
 
 更多定时器配置示例见：`docs/reminder-scheduler.md`。
 
@@ -314,19 +322,19 @@ cd D:/workout-reminder-app-github/workout-app && python -m uvicorn main:app --ho
 - 统计接口
 - 设置接口读写
 - complete / skip / postpone 一致性
-- 提醒 mock 接口存在
+- 钉钉兼容提醒和统一通知接口存在，并在未配置凭据时返回 `not_configured`
 - seed 幂等
 - 2026-06/07/08 未来月份计划、每周一/三/五训练日、`/api/today` 模拟未来训练日
 - 错误参数返回 422 / 404
 - 前端调用的接口路径与后端契约一致
-- 本地定时提醒 tick：训练日写日志、重复不重复、无训练不提醒、服务/JSON/日志错误清晰失败
+- 本地定时提醒 tick：训练日调用统一通知接口、重复不重复、无训练不提醒、服务/JSON 错误清晰失败
 
 ### 运行测试
 
-由于父仓库根目录的 pytest 配置会影响本子项目，建议在 `workout-app/` 下通过 Python 显式执行：
+由于父仓库根目录的 pytest 配置会影响本子项目，POSIX 环境建议在 `workout-app/` 下通过 Python 3 显式执行：
 
 ```bash
-python - <<'PY'
+python3 - <<'PY'
 import pytest, sys
 sys.exit(pytest.main(['-q', '-c', '/dev/null', '--rootdir=.', 'tests']))
 PY
@@ -335,7 +343,7 @@ PY
 如果只跑单测文件：
 
 ```bash
-python - <<'PY'
+python3 - <<'PY'
 import pytest, sys
 sys.exit(pytest.main(['-q', '-c', '/dev/null', '--rootdir=.', 'tests/test_api.py']))
 PY
@@ -345,21 +353,11 @@ PY
 
 ## 前端联调说明
 
-首页会主动调用：
+正式首页使用内联脚本，按页面状态调用计划、统计、动作/方案、训练会话和 AI provider/chat 接口；训练完成通过
+`/api/session/start`、`/api/session/update`、`/api/session/complete` 闭环保存。
 
-- `/api/health`
-- `/api/today`
-- `/api/plans/week`
-- `/api/plans/month`
-- `/api/calendar`
-- `/api/stats`
-- `/api/settings`
-- `/api/logs`
-- `/api/reminders/test`
-
-页面上的“完成 / 跳过 / 延期”按钮会调用对应日志接口。
-
-提醒测试按钮会调用钉钉提醒和钉钉代办接口；无凭据时显示 not_configured，不会伪装成功。
+首页训练提醒开关为 disabled。通知只通过显式的兼容入口或 `/api/notifications/send` 调用，未配置凭据时会返回
+`not_configured`，不会伪装成功。
 
 ---
 
@@ -367,9 +365,8 @@ PY
 
 - 当前种子数据主要覆盖 `2026-05`
 - 今天若不在种子计划月份内，`/api/today` 会返回空计划结构，而不是报错
-- 微信提醒仍是 mock，不具备真实发送能力
 - 钉钉提醒/代办需要配置凭据；未配置时返回 not_configured
-- 本地定时提醒脚本会在训练日首次触发时调用本地钉钉提醒/代办接口，并保留本地日志去重；脚本不会启动服务
+- 首页训练提醒开关仍为 disabled；本地 tick 脚本不会启动服务，需由外部任务显式运行
 
 ---
 
@@ -392,5 +389,4 @@ PY
 ## 测试执行与可信度边界
 
 当前页面的回归入口、已有 Node/jsdom 的复用方式、历史测试和 Windows 专项边界见
-[测试说明](docs/testing.md)。测试不会自动安装依赖；历史 `app.js` 探针与旧 E2E
-不能作为当前 `static/index.html` 的验收证据。
+[测试说明](docs/testing.md)。测试不会自动安装依赖；平台专项 E2E 不能替代当前页面的正式 DOM 验收。

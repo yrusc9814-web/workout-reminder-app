@@ -8,7 +8,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request as FastAPIRequest
@@ -1631,29 +1630,8 @@ def update_plan(plan_id: int, payload: PlanUpdatePayload, db: Session = Depends(
 # AI 辅助能力（第二阶段）
 # ---------------------------------------------------------------------------
 
-BILIBILI_DOMAINS = {"bilibili.com", "www.bilibili.com", "b23.tv", "search.bilibili.com"}
-FORBIDDEN_DOMAINS = {"youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com"}
-AI_API_KEY_VARS = ("WORKOUT_AI_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "WUAPI_API_KEY")
-AI_BASE_URL_VARS = ("WORKOUT_AI_BASE_URL", "OPENAI_BASE_URL", "DEEPSEEK_BASE_URL", "WUAPI_BASE_URL")
-AI_MODEL_VARS = ("WORKOUT_AI_MODEL", "OPENAI_MODEL", "DEEPSEEK_MODEL", "WUAPI_MODEL")
-DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
-DEFAULT_AI_MODEL = "deepseek-v4-flash"
-
-
-def _first_env(names: tuple[str, ...]) -> tuple[str, str]:
-    return ai_service.first_env(names)
-
-
 def _ai_config() -> dict:
     return ai_service.ai_config()
-
-
-def _safe_base_url_label(base_url: str) -> str:
-    return ai_service.safe_base_url_label(base_url)
-
-
-def _bilibili_search_url(keyword: str) -> str:
-    return ai_service.bilibili_search_url(keyword)
 
 
 def _validate_bilibili_url(url: str) -> bool:
@@ -1661,99 +1639,8 @@ def _validate_bilibili_url(url: str) -> bool:
 
 
 def _validate_ai_draft(draft: dict) -> list[str]:
-    """校验 AI 生成的草稿 JSON 结构，返回中文错误列表."""
-    errors = []
-
-    if not isinstance(draft, dict):
-        return ["AI 返回的数据格式错误，预期为 JSON 对象"]
-
-    for field_name in ("version", "title", "theme", "recommendedDate"):
-        if not draft.get(field_name) or not isinstance(draft.get(field_name), str):
-            errors.append(f"缺少 {field_name} 字段")
-
-    exercises = draft.get("exercises", [])
-    exercise_ids = set()
-    if not isinstance(exercises, list):
-        errors.append("exercises 必须是数组")
-    else:
-        if len(exercises) == 0:
-            errors.append("exercises 至少需要 1 个动作")
-        for i, exercise in enumerate(exercises):
-            if not isinstance(exercise, dict):
-                errors.append(f"第 {i+1} 个动作格式错误")
-                continue
-            eid = exercise.get("id", "")
-            if not eid or not isinstance(eid, str):
-                errors.append(f"第 {i+1} 个动作缺少 id 或 id 不是字符串")
-            else:
-                if not re.match(r"^[A-Za-z0-9_]+$", eid):
-                    errors.append(f"动作 {eid} 的 ID 格式不合法，只允许英文、数字、下划线")
-                if eid in exercise_ids:
-                    errors.append(f"重复动作 ID：{eid}")
-                exercise_ids.add(eid)
-            if not exercise.get("name") or not isinstance(exercise.get("name"), str):
-                errors.append(f"动作 {eid or i+1} 缺少 name 字段")
-            has_reps = bool(exercise.get("defaultReps"))
-            has_duration = exercise.get("durationSeconds") is not None
-            if not exercise.get("defaultSets") or not (has_reps or has_duration):
-                errors.append(f"动作 {exercise.get('name', eid or i+1)} 缺少组数/次数/时长")
-            if not exercise.get("notes") or not isinstance(exercise.get("notes"), str):
-                errors.append(f"动作 {exercise.get('name', eid or i+1)} 缺少注意事项")
-
-            videos = exercise.get("videos", [])
-            if isinstance(videos, list):
-                default_count = 0
-                for v in videos:
-                    if not isinstance(v, dict):
-                        errors.append(f"动作 {exercise.get('name', eid or i+1)} 的视频格式错误")
-                        continue
-                    url = v.get("url", "")
-                    if url and not _validate_bilibili_url(url):
-                        ename = exercise.get("name", exercise.get("id", ""))
-                        errors.append(f"动作 {ename} 的视频 URL 不是合法 Bilibili 链接：{url}")
-                    if v.get("isDefault"):
-                        default_count += 1
-                if default_count > 1:
-                    ename = exercise.get("name", exercise.get("id", ""))
-                    errors.append(f"动作 {ename} 存在多个默认视频")
-
-    templates = draft.get("templates", [])
-    if not isinstance(templates, list):
-        errors.append("templates 必须是数组")
-    else:
-        template_ids = set()
-        for i, tmpl in enumerate(templates):
-            if not isinstance(tmpl, dict):
-                errors.append(f"第 {i+1} 个模板格式错误")
-                continue
-            tid = tmpl.get("id", "")
-            if not tid:
-                errors.append(f"第 {i+1} 个模板缺少 id")
-            if not tmpl.get("name"):
-                errors.append(f"模板 {tid or i+1} 缺少 name")
-            if tid in template_ids:
-                errors.append(f"重复模板 ID：{tid}")
-            template_ids.add(tid)
-            for eid in tmpl.get("exerciseIds", []):
-                if eid not in exercise_ids:
-                    errors.append(f"模板 {tmpl.get('name', tid)} 引用不存在动作：{eid}")
-
-    schedule = draft.get("schedule", {})
-    if not isinstance(schedule, dict):
-        errors.append("schedule 必须是对象")
-    else:
-        for ds, entry in schedule.items():
-            if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(ds)):
-                errors.append(f"日期 {ds} 格式错误，应为 YYYY-MM-DD")
-            if not isinstance(entry, dict):
-                errors.append(f"日期 {ds} 的计划格式错误")
-                continue
-            if entry.get("type") == "training" and not entry.get("templateId"):
-                errors.append(f"日期 {ds} 是训练日但缺少 templateId")
-            if entry.get("templateId") and entry.get("templateId") not in template_ids:
-                errors.append(f"日期 {ds} 引用不存在模板：{entry.get('templateId')}")
-
-    return errors
+    """保留旧私有导入名，实际校验只走 ai_service 的规范实现。"""
+    return ai_service.validate_ai_draft(draft)
 
 
 def _call_ai_chat(
@@ -3399,52 +3286,6 @@ def ai_chat(payload: AIChatRequest) -> dict:
         "message": {"role": "assistant", "content": content},
         "messages": messages,
     }
-
-
-def _fallback_ai_preview(prompt: str) -> dict:
-    return ai_service.PlanGenerator().fallback(prompt)
-
-
-def _draft_response(draft: dict, ai_enabled: bool = True) -> dict:
-    return ai_service.draft_response(draft, ai_enabled=ai_enabled)
-
-
-def _build_ai_import_prompt() -> str:
-    return """你是一个运动训练计划生成助手。根据用户描述生成结构化训练数据 JSON。
-
-输出格式必须严格遵循：
-{
-  "version": "1.0",
-  "source": "ai_generated",
-  "title": "训练标题",
-  "theme": "训练主题",
-  "recommendedDate": "YYYY-MM-DD",
-  "exercises": [
-    {
-      "id": "英文ID", "name": "动作名称", "category": "分类",
-      "bodyParts": ["部位"], "difficulty": "低/中/高",
-      "defaultSets": 3, "defaultReps": "12次", "durationSeconds": null,
-      "notes": "注意事项", "tips": ["要点1"],
-      "videos": [{"id":"vid","title":"Bilibili 搜索标题","platform":"bilibili","url":"https://search.bilibili.com/all?keyword=搜索词","isDefault":true,"remark":"搜索词或B站链接"}]
-    }
-  ],
-  "templates": [
-    { "id": "模板ID", "name": "名称", "description": "", "exerciseIds": ["动作ID"], "difficulty": "低强度", "estimatedMinutes": 30 }
-  ],
-  "schedule": {
-    "YYYY-MM-DD": { "type": "training", "templateId": "模板ID", "status": "pending", "note": "" }
-  }
-}
-
-硬性要求：
-- 只输出 JSON，不要 Markdown，不要解释
-- title、theme、recommendedDate 必填
-- exercises 至少 1 个动作，每个动作必须有名称、组数、次数或时长、注意事项
-- 视频只能给 Bilibili 搜索链接或 bilibili.com/b23.tv 链接
-- 严禁输出 YouTube/youtu.be 链接
-- templates 至少 1 个，exerciseIds 必须引用存在的动作 ID
-- schedule 日期只包含训练日
-- 所有文本使用中文"""
 
 
 @app.post("/api/ai/import-plan")
