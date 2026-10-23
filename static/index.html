@@ -3936,7 +3936,7 @@
             var items = s.items.filter(function (it) {
               return it && typeof it === 'object' && typeof it.name === 'string';
             }).map(function (it) {
-              return { id: it.id != null ? it.id : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : (it.exercise_id != null ? it.exercise_id : null), sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : (it.durationSeconds != null ? it.durationSeconds : null), notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : (it.videoUrl != null ? it.videoUrl : null), spec: typeof it.spec === 'string' ? it.spec : '', time: typeof it.time === 'number' ? it.time : 5 };
+              return { id: it.id != null ? it.id : null, sort_order: it.sort_order != null ? it.sort_order : (it.sortOrder != null ? it.sortOrder : null), plan_item_order: it.plan_item_order != null ? it.plan_item_order : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : (it.exercise_id != null ? it.exercise_id : null), sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : (it.durationSeconds != null ? it.durationSeconds : null), notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : (it.videoUrl != null ? it.videoUrl : null), spec: typeof it.spec === 'string' ? it.spec : '', time: typeof it.time === 'number' ? it.time : 5 };
             });
             var stepIndex = (typeof s.stepIndex === 'number' && s.stepIndex >= 0 && Math.floor(s.stepIndex) === s.stepIndex)
               ? Math.min(s.stepIndex, Math.max(0, items.length - 1)) : 0;
@@ -4046,7 +4046,7 @@
         var exists = Object.prototype.hasOwnProperty.call(dailySessions, key);
         if (!force && !meaningful && !exists) return; // 从未触碰：不建立 session（保留 calendar 自动初始化能力）
         dailySessions[key] = {
-          items: todayPlan.map(function (it) { return { id: it.id != null ? it.id : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : null, sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : null, notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : null, spec: it.spec || '', time: it.time }; }),
+          items: todayPlan.map(function (it) { return { id: it.id != null ? it.id : null, sort_order: it.sort_order != null ? it.sort_order : null, plan_item_order: it.plan_item_order != null ? it.plan_item_order : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : null, sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : null, notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : null, spec: it.spec || '', time: it.time }; }),
           source: todayPlan.source || '',   // 数组自定义 source 显式拆出持久化，避免 JSON 序列化丢失
           stepIndex: todayStepIndex,
           setIndex: todaySetIndex,
@@ -4084,7 +4084,7 @@
       }
       // 从某个 dailySession 恢复今日运行时状态（含数组级 source 恢复）
       function restoreSessionToToday(s) {
-        todayPlan = s.items.map(function (it) { return { id: it.id != null ? it.id : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : null, sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : null, notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : null, spec: it.spec || '', time: it.time }; });
+        todayPlan = s.items.map(function (it) { return { id: it.id != null ? it.id : null, sort_order: it.sort_order != null ? it.sort_order : null, plan_item_order: it.plan_item_order != null ? it.plan_item_order : null, name: it.name, exerciseId: it.exerciseId != null ? it.exerciseId : null, sets: it.sets != null ? it.sets : null, reps: it.reps != null ? it.reps : null, duration_seconds: it.duration_seconds != null ? it.duration_seconds : null, notes: it.notes != null ? it.notes : null, video_url: it.video_url != null ? it.video_url : null, spec: it.spec || '', time: it.time }; });
         if (todayPlan.length) todayPlan.source = s.source;
         todayStepIndex = s.stepIndex;
         todaySetIndex = s.setIndex || 0;
@@ -4769,6 +4769,9 @@
             row.appendChild(text);
             var remove = element('button', 'icon-btn', '×');
             remove.type = 'button';
+            // The slot index is the owned plan occurrence identity.  Names
+            // are display text and may legitimately repeat in one plan.
+            remove.setAttribute('data-remove-today-index', String(index));
             remove.setAttribute('data-remove-today', String(item.name || ''));
             remove.setAttribute('title', '移除动作');
             row.appendChild(remove);
@@ -4798,6 +4801,8 @@
           var remote = record.exercise_id != null ? { id: record.exercise_id } : v25RemoteExerciseByName(record.name);
           return {
             id: record.id,
+            sort_order: record.sort_order,
+            plan_item_order: record.plan_item_order,
             name: record.name,
             exerciseId: remote && remote.id,
             sets: record.sets,
@@ -4879,19 +4884,19 @@
           var remoteExercise = detail.remote || v25RemoteExerciseByName(name);
           var remoteSets = remoteExercise && remoteExercise.default_sets != null ? Number(remoteExercise.default_sets) : 3;
           var remoteRepsText = remoteExercise && remoteExercise.default_reps != null ? String(remoteExercise.default_reps) : '';
-          var remoteRepsMatch = remoteRepsText.match(/\d+/);
+          var remoteRepsMatch = remoteRepsText.match(/^\s*(\d+)\s*(?:次(?:\s*\/\s*侧)?)?\s*$/);
           var remoteDuration = remoteExercise && Object.prototype.hasOwnProperty.call(remoteExercise, 'duration_seconds') ? remoteExercise.duration_seconds : null;
           var nextItem = {
             name: name,
             exerciseId: detail.remoteId || (remoteExercise || {}).id,
             sets: remoteSets,
-            reps: remoteRepsMatch ? Number(remoteRepsMatch[0]) : null,
             duration_seconds: remoteDuration,
             notes: remoteExercise && Object.prototype.hasOwnProperty.call(remoteExercise, 'notes') ? remoteExercise.notes : null,
             video_url: remoteExercise && Object.prototype.hasOwnProperty.call(remoteExercise, 'video_url') ? remoteExercise.video_url : null,
             spec: remoteRepsText ? remoteSets + ' 组 · ' + remoteRepsText : (remoteDuration != null ? remoteSets + ' 组 · ' + remoteDuration + ' 秒' : remoteSets + ' 组 · 按动作说明完成'),
             time: parseInt((detail.tags.join(' ').match(/约 (\d+) 分钟/) || [])[1]) || (remoteDuration != null ? Math.max(1, Math.round(remoteDuration / 60)) : 5)
           };
+          if (remoteRepsMatch) nextItem.reps = Number(remoteRepsMatch[1]);
           nextItems.push(nextItem);
           var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
           var base = calendarPlans[activeDateKey] || restPlan;
@@ -5153,6 +5158,12 @@
         var actionTerminal = progress.status === 'skipped' || progress.setsCompleted >= targetSets;
         var remoteRecord = syncResult && syncResult.update ? syncResult.update.record : (syncResult && syncResult.record);
         todayRecordFacts[progress.index] = {
+          record_id: remoteRecord && (remoteRecord.record_id != null ? remoteRecord.record_id : remoteRecord.id) != null
+            ? Number(remoteRecord.record_id != null ? remoteRecord.record_id : remoteRecord.id)
+            : (todayRecordFacts[progress.index] && todayRecordFacts[progress.index].record_id != null ? todayRecordFacts[progress.index].record_id : null),
+          plan_item_order: remoteRecord && remoteRecord.plan_item_order != null
+            ? Number(remoteRecord.plan_item_order)
+            : (todayRecordFacts[progress.index] && todayRecordFacts[progress.index].plan_item_order != null ? todayRecordFacts[progress.index].plan_item_order : progress.index + 1),
           status: remoteRecord && remoteRecord.status ? remoteRecord.status : progress.status,
           setsCompleted: remoteRecord && remoteRecord.sets_completed != null ? Number(remoteRecord.sets_completed) : progress.setsCompleted,
           durationSeconds: remoteRecord && remoteRecord.duration_seconds != null ? Number(remoteRecord.duration_seconds) : progress.durationSeconds
@@ -5609,9 +5620,18 @@
           }
           return;
         }
-        if (target.hasAttribute('data-remove-today')) {
-          var removeName = target.getAttribute('data-remove-today');
-          var nextTodayItems = todayPlan.filter(function(item) { return item.name !== removeName; });
+        if (target.hasAttribute('data-remove-today-index') || target.hasAttribute('data-remove-today')) {
+          var removeIndexValue = target.getAttribute('data-remove-today-index');
+          var removeIndex = removeIndexValue == null ? -1 : Number(removeIndexValue);
+          var nextTodayItems;
+          if (Number.isInteger(removeIndex) && removeIndex >= 0 && removeIndex < todayPlan.length) {
+            nextTodayItems = todayPlan.filter(function(_item, index) { return index !== removeIndex; });
+          } else {
+            // Compatibility for older saved DOM fixtures that only carry a
+            // name attribute; production rows always use the validated slot.
+            var removeName = target.getAttribute('data-remove-today');
+            nextTodayItems = todayPlan.filter(function(item) { return item.name !== removeName; });
+          }
           var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
           if (!v25Remote.ready) {
             showToast('后端未连接，今日动作未删除', 'error');
@@ -6137,10 +6157,16 @@
             input.exercise_id = matches[0].id;
             var record = v25ParseUiItem(input);
             if (!record.name) throw new Error('方案第 ' + (index + 1) + ' 个动作缺少名称，计划未保存');
+            if (record.invalid_reps) throw new Error('方案第 ' + (index + 1) + ' 个动作的次数格式无效，计划未保存');
+            if (record.reps == null && !record.has_reps) delete record.reps;
+            delete record.has_reps;
             return record;
           }
           var record = v25ParseUiItem(item);
           if (!record.name) throw new Error('方案第 ' + (index + 1) + ' 个动作缺少名称，计划未保存');
+          if (record.invalid_reps) throw new Error('方案第 ' + (index + 1) + ' 个动作的次数格式无效，计划未保存');
+          if (record.reps == null && !record.has_reps) delete record.reps;
+          delete record.has_reps;
           return record;
         });
       }
@@ -6160,6 +6186,9 @@
         var notes = v25Has(item, 'notes') ? item.notes : (v25Has(item, 'instructions') ? item.instructions : item.description);
         return {
           id: item.id != null ? Number(item.id) : null,
+          record_id: item.record_id != null ? Number(item.record_id) : null,
+          plan_item_order: item.plan_item_order != null ? Number(item.plan_item_order) : null,
+          sort_order: item.sort_order != null ? Number(item.sort_order) : (item.sortOrder != null ? Number(item.sortOrder) : null),
           exercise_id: exerciseId != null ? Number(exerciseId) : null,
           name: item.name || '',
           sets: item.sets != null ? Number(item.sets) : null,
@@ -6170,6 +6199,21 @@
           spec: item.spec != null ? String(item.spec) : v25SpecForItem(item)
         };
       }
+      function v25ParseImplicitReps(spec) {
+        var text = String(spec || '');
+        var unit = '(?:次(?:\\s*\\/\\s*侧)?|reps?)';
+        if (new RegExp('([+-]?\\d+)\\s*(?:-|–|—)\\s*([+-]?\\d+)\\s*' + unit, 'i').test(text)) return { invalid: true };
+        if (new RegExp('[+-]\\s*\\d+\\s*' + unit, 'i').test(text)
+          || new RegExp('\\d+\\.\\d+\\s*' + unit, 'i').test(text)
+          || new RegExp('[A-Za-z_.]\\s*\\d+\\s*' + unit, 'i').test(text)) return { invalid: true };
+        var token = text.match(new RegExp('([+-]?\\d+)\\s*' + unit, 'i'));
+        if (!token) return { value: null, explicit: false };
+        if (!/^\d+$/.test(token[1])) return { invalid: true };
+        var value = Number(token[1]);
+        return Number.isInteger(value) && value >= 1 && value <= 10000
+          ? { value: value, explicit: true }
+          : { invalid: true };
+      }
       function v25ParseUiItem(item) {
         var direct = typeof item === 'object' && item ? item : null;
         var raw = typeof item === 'string' ? item : (direct && direct.name) || '';
@@ -6179,7 +6223,11 @@
         var linkedId = direct && (direct.exercise_id != null ? direct.exercise_id : direct.exerciseId);
         var linked = linkedId != null ? { id: linkedId } : v25RemoteExerciseByName(name);
         var setsMatch = spec.match(/(\d+)\s*组/);
-        var repsMatch = spec.match(/(\d+)\s*(?:次|秒)/);
+        // A display range is never reduced to its first/last number.  The
+        // backend keeps it as raw spec text and requires an explicit scalar
+        // reps value when one is intended.
+        var implicitReps = v25ParseImplicitReps(spec);
+        var repsMatch = implicitReps.invalid ? null : spec.match(/(\d+)\s*(?:次|秒)/);
         var compactMatch = spec.match(/(\d+)\s*[×x*]\s*(\d+)\s*(次|秒)?/i);
         if (!setsMatch && compactMatch) setsMatch = [compactMatch[0], compactMatch[1]];
         if (!repsMatch && compactMatch && compactMatch[3] !== '秒') repsMatch = [compactMatch[0], compactMatch[2]];
@@ -6191,13 +6239,35 @@
         var hasReps = v25Has(direct, 'reps');
         var durationValue = hasDuration ? (v25Has(direct, 'duration_seconds') ? direct.duration_seconds : direct.durationSeconds) : undefined;
         var setsValue = hasSets ? direct.sets : (setsMatch ? Number(setsMatch[1]) : 1);
-        var repsValue = hasReps ? direct.reps : (repsMatch && !/秒/.test(spec) ? Number(repsMatch[1]) : null);
+        var invalidExplicitReps = false;
+        var repsValue = null;
+        if (hasReps) {
+          if (direct.reps == null) repsValue = null;
+          else if (typeof direct.reps === 'number' && Number.isInteger(direct.reps) && direct.reps >= 1 && direct.reps <= 10000) repsValue = direct.reps;
+          else if (/^\s*\d+\s*(?:次(?:\s*\/\s*侧)?|reps?)?\s*$/i.test(String(direct.reps))) {
+            var explicitNumber = Number(String(direct.reps).match(/\d+/)[0]);
+            if (Number.isInteger(explicitNumber) && explicitNumber >= 1 && explicitNumber <= 10000) repsValue = explicitNumber;
+            else invalidExplicitReps = true;
+          } else invalidExplicitReps = true;
+        } else {
+          repsValue = implicitReps.value != null
+            ? implicitReps.value
+            : (repsMatch && !/秒/.test(spec) ? Number(repsMatch[1]) : null);
+        }
         var duration = minutesMatch ? Number(minutesMatch[1]) * 60 : (compactMatch && compactMatch[3] === '秒' ? Number(compactMatch[2]) : (itemTime ? Number(itemTime) * 60 : null));
         if (secondsMatch && !compactMatch) duration = Number(secondsMatch[1]);
         if (hasDuration) duration = durationValue;
         var notes = v25Has(direct, 'notes') ? direct.notes : (v25Has(direct, 'instructions') ? direct.instructions : (v25Has(direct, 'description') ? direct.description : null));
         return {
           id: direct && direct.id != null ? Number(direct.id) : null,
+          record_id: direct && direct.record_id != null ? Number(direct.record_id) : null,
+          plan_item_order: direct && direct.plan_item_order != null ? Number(direct.plan_item_order) : null,
+          sort_order: direct && direct.sort_order != null ? Number(direct.sort_order) : (direct && direct.sortOrder != null ? Number(direct.sortOrder) : null),
+          has_reps: hasReps || (!hasReps && repsMatch && !/秒/.test(spec)),
+          // An explicit typed scalar/NULL is authoritative alongside a free
+          // display spec.  Only an implicit invalid token is rejected here;
+          // malformed explicit values remain rejected independently.
+          invalid_reps: (!hasReps && !!implicitReps.invalid) || invalidExplicitReps,
           exercise_id: linked && linked.id != null ? Number(linked.id) : null,
           name: name,
           sets: setsValue == null ? 1 : Number(setsValue),
@@ -6421,7 +6491,7 @@
             todayPlan = (today.items || []).map(function (item) {
               var duration = item.durationSeconds || item.duration_seconds;
               var record = v25ParseUiItem(item);
-              return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 };
+              return { id: record.id, sort_order: record.sort_order, plan_item_order: record.plan_item_order, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 };
             });
             todayPlan.source = today.title || '今日训练';
             todayIsRest = false;
@@ -6569,6 +6639,8 @@
         var items = (planItems || []).map(function (item) {
           return {
             id: item.id != null ? item.id : null,
+            sort_order: item.sort_order != null ? item.sort_order : (item.sortOrder != null ? item.sortOrder : null),
+            plan_item_order: item.plan_item_order != null ? item.plan_item_order : null,
             name: item.name,
             exerciseId: item.exerciseId != null ? item.exerciseId : null,
             sets: item.sets != null ? item.sets : null,
@@ -6584,9 +6656,24 @@
           if (backendSession.records.length !== items.length) {
             contextMismatch = true;
           } else {
+            var orderedBackendRecords = backendSession.records.slice().sort(function (a, b) {
+              var ao = a && a.plan_item_order != null ? Number(a.plan_item_order) : null;
+              var bo = b && b.plan_item_order != null ? Number(b.plan_item_order) : null;
+              if (ao == null || bo == null) return 0;
+              return ao - bo;
+            });
             for (var contextIndex = 0; contextIndex < items.length; contextIndex += 1) {
               var expectedExerciseId = items[contextIndex].exerciseId;
-              var actualExerciseId = backendSession.records[contextIndex] && backendSession.records[contextIndex].exercise_id;
+              var actualRecord = orderedBackendRecords[contextIndex];
+              var expectedOrder = items[contextIndex].plan_item_order != null
+                ? Number(items[contextIndex].plan_item_order)
+                : (items[contextIndex].sort_order != null ? Number(items[contextIndex].sort_order) : contextIndex + 1);
+              var actualOrder = actualRecord && actualRecord.plan_item_order != null ? Number(actualRecord.plan_item_order) : null;
+              var actualExerciseId = actualRecord && actualRecord.exercise_id;
+              if (actualOrder != null && actualOrder !== expectedOrder) {
+                contextMismatch = true;
+                break;
+              }
               if (expectedExerciseId != null && expectedExerciseId !== actualExerciseId) {
                 contextMismatch = true;
                 break;
@@ -6629,12 +6716,25 @@
         var derivedSkipped = Array.isArray(previous.skipped) ? previous.skipped.slice() : [];
         var allTerminal = !!backendSession && items.length > 0;
         if (backendSession && Array.isArray(backendSession.records)) {
+          var usedRemoteRecordIds = {};
           facts = items.map(function (item) {
+            var itemIndex = items.indexOf(item);
+            var expectedOrder = item.plan_item_order != null
+              ? Number(item.plan_item_order)
+              : (item.sort_order != null ? Number(item.sort_order) : itemIndex + 1);
             var record = backendSession.records.find(function (row) {
-              return row && item.exerciseId != null && row.exercise_id === item.exerciseId;
+              if (!row) return false;
+              var rowId = row.record_id != null ? row.record_id : row.id;
+              if (rowId != null && usedRemoteRecordIds[String(rowId)]) return false;
+              if (row.plan_item_order != null) return Number(row.plan_item_order) === expectedOrder;
+              return item.exerciseId != null && row.exercise_id === item.exerciseId;
             });
             if (!record) return { status: 'pending', setsCompleted: 0, durationSeconds: null };
+            var recordId = record.record_id != null ? record.record_id : record.id;
+            if (recordId != null) usedRemoteRecordIds[String(recordId)] = true;
             return {
+              record_id: recordId != null ? Number(recordId) : null,
+              plan_item_order: record.plan_item_order != null ? Number(record.plan_item_order) : null,
               status: record.status === 'completed' || record.status === 'skipped' ? record.status : 'pending',
               setsCompleted: Number(record.sets_completed || 0),
               durationSeconds: record.duration_seconds != null ? Number(record.duration_seconds) : null
@@ -6981,6 +7081,8 @@
           ? todayPlan.map(function (item) {
             return {
               id: item && item.id != null ? item.id : null,
+              sort_order: item && item.sort_order != null ? item.sort_order : null,
+              plan_item_order: item && item.plan_item_order != null ? item.plan_item_order : null,
               name: item && item.name || '',
               exerciseId: item && item.exerciseId != null ? item.exerciseId : null,
               sets: item && item.sets != null ? item.sets : null,
@@ -6998,6 +7100,8 @@
           sessionId: sessionId,
           generation: typeof v25ActiveContextGeneration === 'number' ? v25ActiveContextGeneration : 0,
           items: items,
+          records: typeof todayRecordFacts !== 'undefined' && Array.isArray(todayRecordFacts)
+            ? todayRecordFacts.map(function (record) { return record ? clonePlain(record) : null; }) : [],
           source: typeof todayPlan !== 'undefined' ? (todayPlan.source || '') : '',
           queue: typeof v25RemoteStepPromise !== 'undefined' ? v25RemoteStepPromise : Promise.resolve(),
           startPromise: null,
@@ -7036,6 +7140,7 @@
         var reconciled = v25ReconcileTodaySession(previous, items, source, false, true, false, session);
         owner.hydrated = true;
         owner.resumed = session.status === 'in_progress' && reconciled.started;
+        owner.records = reconciled.records || [];
         owner.sessionPayload = session;
         if (!v25ExecutionContextOwns(owner)) return reconciled;
         dailySessions[key] = reconciled;
@@ -7122,6 +7227,8 @@
           var duration = record.duration_seconds;
           return {
             id: record.id,
+            sort_order: record.sort_order,
+            plan_item_order: record.plan_item_order,
             name: record.name,
             exerciseId: record.exercise_id,
             sets: record.sets,
@@ -7238,8 +7345,15 @@
       function v25SyncRemoteRecord(index, status, progress, context) {
         var owner = context || v25CaptureExecutionContext();
         var exerciseId = v25RemoteExerciseId(index, owner);
-        if (exerciseId == null) return Promise.reject(new Error('当前动作未绑定后端动作 ID'));
-        var body = { session_id: null, exercise_id: exerciseId, status: status };
+        var fact = owner.records && owner.records[index] ? owner.records[index] : (todayRecordFacts[index] || null);
+        var recordId = fact && (fact.record_id != null ? fact.record_id : fact.id);
+        if (recordId == null && exerciseId == null) return Promise.reject(new Error('当前动作未绑定后端动作记录'));
+        var body = { session_id: null, status: status };
+        // New sessions use record_id, while old mocks/imported metadata may
+        // lack occurrence fields and continue through the unique exercise-ID
+        // compatibility path.
+        if (recordId != null) body.record_id = Number(recordId);
+        if (exerciseId != null) body.exercise_id = exerciseId;
         if (progress && typeof progress.setsCompleted === 'number') body.sets_completed = progress.setsCompleted;
         if (progress && typeof progress.durationSeconds === 'number') body.duration_seconds = progress.durationSeconds;
         if (!owner.planId) return Promise.reject(new Error('训练计划保存失败，无法同步动作进度'));
@@ -7526,7 +7640,7 @@
             v25TodayDisplayState = selectedRangeReady ? 'empty' : 'error';
           } else if (v25Remote.today && (v25Remote.today.isTrainingDay || v25Remote.today.is_training)) {
             v25RemotePlanId = v25Remote.today.id; v25RemotePlanPromise = Promise.resolve(v25RemotePlanId);
-            todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
+            todayPlan = (v25Remote.today.items || []).map(function (item) { var record = v25ParseUiItem(item), duration = record.duration_seconds; return { id: record.id, sort_order: record.sort_order, plan_item_order: record.plan_item_order, name: record.name, exerciseId: record.exercise_id, sets: record.sets, reps: record.reps, duration_seconds: record.duration_seconds, notes: record.notes, video_url: record.video_url, spec: record.spec || v25SpecForItem(record), time: duration ? Math.max(1, Math.round(duration / 60)) : 5 }; });
             todayPlan.source = v25Remote.today.title; todayIsRest = false;
             v25TodayDisplayState = results[0].ok ? (todayPlan.length ? 'data' : 'empty') : 'error';
           } else { todayPlan = []; todayIsRest = true; v25TodayDisplayState = results[0].ok ? 'empty' : 'error'; }

@@ -90,6 +90,15 @@ WORKOUT_DB_PATH=/tmp/workout-test.db
 
 Windows 下也可传本地绝对路径。
 
+数据恢复接口 `POST /api/data/restore-defaults` 默认先返回只读预览；只有明确提交
+`{"confirm": true}` 才会执行。预览会列出将删除的训练表和保留的设置。数据库中只要
+存在任何训练 session（包括 cancelled）或完成日志，执行请求就必须带
+`{"backup": true}`；服务端会先创建并通过 `integrity_check` 验证 SQLite 备份，再在同一
+个 `BEGIN IMMEDIATE` 写事务中按外键顺序删除并重建默认数据。这个写锁覆盖历史检查、
+备份和删除窗口，避免并发 writer 的已提交事实漏出归档；备份失败、seed 失败或其他写入
+异常都会回滚整次恢复并返回结构化错误。没有历史训练事实时可以使用 `backup: false`，
+响应会明确说明没有创建备份。
+
 
 ## 种子训练计划范围
 
@@ -194,7 +203,9 @@ python seed.py
 ### 训练会话
 
 - `POST /api/session/start`：按 `plan_id` 创建或恢复该计划的进行中 session；计划日期由服务端的 `WorkoutPlan.plan_date` 决定。
-- `POST /api/session/update`：保存一个动作的组数、时长和状态。
+- `POST /api/session/update`：保存一个动作的组数、时长和状态。新调用应提交返回的
+  `record_id`；同一计划中重复出现的动作不能再只用 `exercise_id` 定位，旧字段只在会话内
+  唯一时兼容。每条记录还返回 `plan_item_order`，用于按计划出现顺序恢复历史事实。
 - `POST /api/session/complete`：只有所有动作已完成或跳过后才提交完成事实；同一 session 重放返回幂等结果。
 - `GET /api/session/current?plan_id=...&include_completed=true`：按计划恢复进行中或最近完成的 session。
 - `GET /api/session/current?date=YYYY-MM-DD&include_completed=true`：按目标计划日期恢复进行中或最近完成的 session；该日期没有计划时返回 `session: null`。如果同时提供 `plan_id`，当前 API 以 `plan_id` 为准。
@@ -202,6 +213,16 @@ python seed.py
 每次完成 session 都会保留独立的 `session_id` 和计划日期。历史兼容日志没有
 `session_id`，但仍作为独立完成事实保留；动作快照替换后不会把旧 session 或已带快照
 指纹的旧日志映射为当前计划的完成日期。页面保存的活动日期只作为恢复选择线索，完成状态、组数和时长必须以后端返回的计划与 session 事实为准。
+
+旧版 `session_records` 迁移会保留原 record ID、状态、时间和外键；迁移在
+`PRAGMA foreign_keys=ON` 下原子重建，并按旧记录顺序映射到计划实际的 `sort_order`，
+因此 10、20 这类非连续计划顺序也能正确恢复。无法证明动作上下文的历史行保留为受保护事实。
+
+`WorkoutExercise.reps` 只接受 1 到 10000 的单一整数。空白默认次数表示没有 reps；
+次数范围、负数、零、逆序范围和超大值在计划写入前返回 422。自由 display spec 可以
+保留原文，但隐式 spec 次数范围不会被转换成端点或 `NULL` 绕过校验；只有明确提交的
+整数 `reps` 可以覆盖同一 display spec。v24 预览/提交也使用同一规则，阻断的导入不会
+写入计划。
 
 ### 提醒 mock 接口
 

@@ -46,6 +46,7 @@ from v25_migration import (
     commit_preview,
 )
 from v25_catalog import build_catalog_preview, reconcile_catalog
+from reps_contract import parse_implicit_spec_reps, parse_scalar_reps
 
 
 @asynccontextmanager
@@ -412,7 +413,7 @@ def write_log(db: Session, plan_id: int, state: str, notes: Optional[str]) -> di
     )
     if existing_facts:
         if state == "completed":
-            valid = _context_valid_logs(db, existing_facts)
+            valid = [row for row in _context_valid_logs(db, existing_facts) if row.status == state]
             if valid:
                 return log_item(valid[0])
             if any(row.session_id is not None for row in existing_facts):
@@ -420,7 +421,7 @@ def write_log(db: Session, plan_id: int, state: str, notes: Optional[str]) -> di
                     status_code=409,
                     detail="已有完成事实属于旧训练动作快照，当前计划已更换；请开始新的训练会话",
                 )
-        standalone = next((row for row in existing_facts if row.session_id is None), None)
+        standalone = next((row for row in existing_facts if row.session_id is None and row.status == state), None)
         if standalone is not None:
             fingerprint = _plan_action_fingerprint(plan)
             if standalone.plan_action_fingerprint and standalone.plan_action_fingerprint != fingerprint:
@@ -441,29 +442,17 @@ def write_log(db: Session, plan_id: int, state: str, notes: Optional[str]) -> di
     db.add(row)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
-        existing_facts = (
-            db.query(WorkoutLog)
-            .filter(
-                WorkoutLog.plan_id == plan_id,
-                WorkoutLog.log_date == plan.plan_date,
-                WorkoutLog.action == state,
-            )
-            .order_by(WorkoutLog.id.asc())
-            .all()
-        )
-        if not existing_facts:
+        if not _is_standalone_completion_unique_error(exc):
             raise
-        if state == "completed":
-            valid = _context_valid_logs(db, existing_facts)
-            if valid:
-                return log_item(valid[0])
+        matching = _matching_standalone_completion(db, plan, state)
+        if matching is not None:
+            return log_item(matching)
+        candidates = _standalone_logs_for_completion(db, plan, state)
+        if candidates and state == "completed":
             raise HTTPException(status_code=409, detail="完成事实属于旧训练动作快照，当前计划已更换")
-        standalone = next((row for row in existing_facts if row.session_id is None), None)
-        if standalone is None:
-            raise
-        return log_item(standalone)
+        raise
     db.refresh(row)
     return log_item(row)
 
@@ -1127,11 +1116,58 @@ def update_exercise(exercise_id: int, payload: ExercisePayload, db: Session = De
 
 @app.delete("/api/exercises/{exercise_id}")
 def delete_exercise(exercise_id: int, db: Session = Depends(get_db)) -> dict:
+    from sqlalchemy.exc import IntegrityError
+
     ex = db.query(Exercise).filter(Exercise.id == exercise_id).first()
     if not ex:
         raise HTTPException(status_code=404, detail="动作不存在")
+
+    plan_refs = db.query(WorkoutExercise).filter(
+        WorkoutExercise.exercise_id == exercise_id,
+    ).count()
+    history_refs = db.query(SessionRecord).filter(
+        SessionRecord.exercise_id == exercise_id,
+    ).count()
+    if plan_refs or history_refs:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "EXERCISE_IN_USE",
+                "message": "动作仍被训练计划或历史训练记录引用，不能删除",
+                "exercise_id": exercise_id,
+                "plan_references": plan_refs,
+                "history_references": history_refs,
+            },
+        )
+
     db.delete(ex)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # A second writer may add a plan/history reference after the
+        # read-only check.  Classify only that FK race as the same business
+        # conflict; unrelated integrity failures must remain visible.
+        db.rollback()
+        if _sqlite_integrity_error_code(exc) != 787:
+            raise
+        plan_refs = db.query(WorkoutExercise).filter(
+            WorkoutExercise.exercise_id == exercise_id,
+        ).count()
+        history_refs = db.query(SessionRecord).filter(
+            SessionRecord.exercise_id == exercise_id,
+        ).count()
+        if plan_refs or history_refs:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "EXERCISE_IN_USE",
+                    "message": "动作在删除过程中被训练计划或历史训练记录引用，不能删除",
+                    "exercise_id": exercise_id,
+                    "plan_references": plan_refs,
+                    "history_references": history_refs,
+                },
+            )
+        raise
     return {"status": "deleted", "id": exercise_id}
 
 
@@ -1249,13 +1285,13 @@ def restore_defaults(payload: RestoreDefaultsRequest, db: Session = Depends(get_
     explicit confirmation (confirm=True). Without confirmation, it only reports
     what would happen.
     """
-    plan_count = db.query(WorkoutPlan).count()
-    exercise_count = db.query(Exercise).count()
-    template_count = db.query(Template).count()
-    session_count = db.query(WorkoutSession).count()
-    log_count = db.query(WorkoutLog).count()
-
     if not payload.confirm:
+        plan_count = db.query(WorkoutPlan).count()
+        exercise_count = db.query(Exercise).count()
+        template_count = db.query(Template).count()
+        session_count = db.query(WorkoutSession).count()
+        record_count = db.query(SessionRecord).count()
+        log_count = db.query(WorkoutLog).count()
         return {
             "status": "dry_run",
             "message": "需要明确确认才能恢复默认数据",
@@ -1264,6 +1300,7 @@ def restore_defaults(payload: RestoreDefaultsRequest, db: Session = Depends(get_
                 "exercises": exercise_count,
                 "templates": template_count,
                 "sessions": session_count,
+                "records": record_count,
                 "logs": log_count,
             },
             "will_delete": ["workout_plans", "workout_exercises", "workout_sessions", "session_records", "workout_logs", "reminders", "exercises", "templates"],
@@ -1271,44 +1308,101 @@ def restore_defaults(payload: RestoreDefaultsRequest, db: Session = Depends(get_
             "action": "发送 confirm=true 并 backup=true 来执行恢复",
         }
 
-    if db.query(WorkoutSession).filter(WorkoutSession.status == "in_progress").first():
-        raise HTTPException(
-            status_code=409,
-            detail="存在活跃训练会话，不能恢复默认数据；请先完成或取消训练",
-        )
-
-    # Create backup before overwriting using SQLite backup API (consistent snapshot)
+    # BEGIN IMMEDIATE serializes the entire confirmed reset, including the
+    # history/active checks and the SQLite backup snapshot, against peer
+    # writers.  A peer either commits before this lock (and is archived) or
+    # waits until this reset commits (and writes into the new database).
     backup_info = None
-    if payload.backup:
-        import database as database_module
-        backup_dir = Path(__file__).parent / ".tmp" / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        backup_info = database_module.sqlite_backup(database_module.DATABASE_PATH, str(backup_dir))
-        if backup_info["integrity"] != "ok":
-            raise HTTPException(status_code=500, detail=f"备份完整性校验失败: {backup_info['integrity']}")
+    try:
+        db.execute(text("BEGIN IMMEDIATE"))
+        plan_count = db.query(WorkoutPlan).count()
+        exercise_count = db.query(Exercise).count()
+        template_count = db.query(Template).count()
+        session_count = db.query(WorkoutSession).count()
+        record_count = db.query(SessionRecord).count()
+        log_count = db.query(WorkoutLog).count()
 
-    # Wipe user-facing training data and reseed defaults in a single transaction path
-    # Order matters under foreign_keys=ON
-    db.query(SessionRecord).delete()
-    db.query(WorkoutSession).delete()
-    db.query(WorkoutLog).delete()
-    db.query(WorkoutExercise).delete()
-    db.query(Reminder).delete()
-    # Clear template FK before deleting templates
-    db.query(WorkoutPlan).update({WorkoutPlan.template_id: None})
-    db.query(WorkoutPlan).delete()
-    db.execute(text("DELETE FROM template_exercises"))
-    db.query(Template).delete()
-    db.query(Exercise).delete()
-    db.commit()
+        if db.query(WorkoutSession).filter(WorkoutSession.status == "in_progress").first():
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "ACTIVE_SESSION_BLOCKS_RESTORE",
+                    "message": "存在活跃训练会话，不能恢复默认数据；请先完成或取消训练",
+                },
+            )
 
-    from database import seed_database as do_seed
-    do_seed()
+        # Any session, including cancelled history, or any completion log is a
+        # durable training fact. Never overwrite it without an archive made
+        # while this same write lock is held.
+        if (session_count or log_count) and not payload.backup:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "BACKUP_REQUIRED_FOR_HISTORY",
+                    "message": "存在训练会话或完成历史，必须先创建并验证 SQLite 备份后才能恢复默认数据",
+                    "sessions": session_count,
+                    "records": record_count,
+                    "logs": log_count,
+                },
+            )
+
+        if payload.backup:
+            import database as database_module
+            backup_dir = Path(__file__).parent / ".tmp" / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_info = database_module.sqlite_backup(database_module.DATABASE_PATH, str(backup_dir))
+            if backup_info["integrity"] != "ok":
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "code": "RESTORE_BACKUP_INVALID",
+                        "message": f"备份完整性校验失败: {backup_info['integrity']}",
+                    },
+                )
+
+        # Wipe user-facing training data and reseed defaults in this same
+        # transaction. Logs reference sessions, records reference
+        # sessions/exercises, plan items and reminders reference plans, and
+        # template membership references templates/exercises.
+        db.query(WorkoutLog).delete(synchronize_session=False)
+        db.query(SessionRecord).delete(synchronize_session=False)
+        db.query(WorkoutSession).delete(synchronize_session=False)
+        db.query(WorkoutExercise).delete(synchronize_session=False)
+        db.query(Reminder).delete(synchronize_session=False)
+        db.query(WorkoutPlan).delete(synchronize_session=False)
+        db.execute(text("DELETE FROM template_exercises"))
+        db.query(Template).delete(synchronize_session=False)
+        db.query(Exercise).delete(synchronize_session=False)
+
+        # The caller-owned session keeps the destructive reset and seed writes
+        # atomic.  A seed trigger/error therefore rolls the whole operation
+        # back instead of leaving an empty or partially seeded database.
+        from database import seed_database as do_seed
+        do_seed(db=db)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "RESTORE_FAILED",
+                "message": "默认数据恢复失败，数据库已回滚",
+            },
+        ) from exc
+
+    backup_message = (
+        "默认数据已恢复，原数据已备份并归档"
+        if backup_info is not None
+        else "默认数据已恢复；本次没有训练历史，因此未创建备份"
+    )
 
     return {
         "status": "restored",
         "backup": backup_info,
-        "message": "默认数据已恢复，原数据已备份",
+        "message": backup_message,
         "restored": {
             "plans": db.query(WorkoutPlan).count(),
             "exercises": db.query(Exercise).count(),
@@ -1360,12 +1454,12 @@ def training_complete(payload: TrainingCompletePayload, db: Session = Depends(ge
     ).order_by(WorkoutLog.id.asc()).all()
     if existing_facts:
         if log_status == "completed":
-            valid = _context_valid_logs(db, existing_facts)
+            valid = [row for row in _context_valid_logs(db, existing_facts) if row.status == log_status]
             if valid:
                 return {"status": "already_recorded", "plan_id": plan_id, "log_id": valid[0].id, "completed": payload.completed, "skipped": payload.skipped}
             if any(row.session_id is not None for row in existing_facts):
                 raise HTTPException(status_code=409, detail="已有完成事实属于旧训练动作快照，当前计划已更换；请开始新的训练会话")
-        standalone = next((row for row in existing_facts if row.session_id is None), None)
+        standalone = next((row for row in existing_facts if row.session_id is None and row.status == log_status), None)
         if standalone is not None:
             fingerprint = _plan_action_fingerprint(plan) if plan else None
             if standalone.plan_action_fingerprint and standalone.plan_action_fingerprint != fingerprint:
@@ -1384,21 +1478,20 @@ def training_complete(payload: TrainingCompletePayload, db: Session = Depends(ge
         db.add(log)
         db.commit()
         db.refresh(log)
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
-        existing2 = db.query(WorkoutLog).filter(
-            WorkoutLog.plan_id == plan_id,
-            WorkoutLog.log_date == plan_date,
-            WorkoutLog.action == log_status,
-        ).order_by(WorkoutLog.id.asc()).all()
-        existing2_valid = _context_valid_logs(db, existing2) if log_status == "completed" else existing2
-        existing2_row = existing2_valid[0] if existing2_valid else (existing2[0] if existing2 else None)
-        if existing2_row is None:
-            # An unrelated trigger/check/FK failure is not an idempotent
-            # replay. Preserve the rollback and surface the real failure so a
-            # later retry can write the missing fact.
+        if not _is_standalone_completion_unique_error(exc):
+            # An unrelated trigger/check/FK/unique failure is not an
+            # idempotent replay. Preserve the rollback and surface the real
+            # failure so a later retry can write the missing fact.
             raise
-        return {"status": "already_recorded", "plan_id": plan_id, "log_id": existing2_row.id if existing2_row else None, "completed": payload.completed, "skipped": payload.skipped}
+        matching = _matching_standalone_completion(db, plan, log_status)
+        if matching is not None:
+            return {"status": "already_recorded", "plan_id": plan_id, "log_id": matching.id, "completed": payload.completed, "skipped": payload.skipped}
+        candidates = _standalone_logs_for_completion(db, plan, log_status)
+        if candidates and log_status == "completed":
+            raise HTTPException(status_code=409, detail="完成事实属于旧训练动作快照，当前计划已更换")
+        raise
 
     return {"status": "recorded", "plan_id": plan_id, "log_id": log.id, "completed": payload.completed, "skipped": payload.skipped}
 
@@ -1697,7 +1790,11 @@ class SessionStartRequest(BaseModel):
 
 class SessionUpdateRequest(BaseModel):
     session_id: int
-    exercise_id: int
+    # New callers identify the durable execution record.  ``exercise_id`` is
+    # retained for older one-occurrence callers and is rejected when it is
+    # ambiguous within one session.
+    record_id: int | None = Field(default=None, ge=1)
+    exercise_id: int | None = Field(default=None, ge=1)
     status: str = "completed"
     sets_completed: int | None = None
     reps_completed: str | None = None
@@ -1754,8 +1851,17 @@ def date_from_iso(value: str) -> date:
 
 
 def _parse_reps(value: str | None) -> int | None:
-    number = re.sub(r"[^0-9]", "", value or "")
-    return int(number) if number else None
+    """Parse the exercise-library scalar reps contract.
+
+    ``default_reps`` is a display string, but plan ``reps`` is an integer.
+    Only a single positive scalar is allowed to cross that boundary.  A
+    range remains a display specification and is never reduced to one of its
+    endpoints (or concatenated into a larger integer).
+    """
+    try:
+        return parse_scalar_reps(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _template_item_payloads(template: Template) -> list[dict]:
@@ -1888,7 +1994,7 @@ def _session_context_mismatch(session: WorkoutSession) -> dict | None:
         list(session.plan.exercises or []) if session.plan is not None else [],
         key=lambda row: row.sort_order or 0,
     )
-    records = list(session.records or [])
+    records = _ordered_session_records(session)
     if (
         session.plan_action_fingerprint is not None
         and session.plan is not None
@@ -1919,6 +2025,9 @@ def _session_context_mismatch(session: WorkoutSession) -> dict | None:
     else:
         reason = None
         for index, (item, record) in enumerate(zip(plan_items, records)):
+            if record.plan_item_order is not None and record.plan_item_order != item.sort_order:
+                reason = f"第 {index + 1} 个动作的计划出现顺序不一致"
+                break
             if item.exercise_id is not None and item.exercise_id != record.exercise_id:
                 reason = f"第 {index + 1} 个动作的引用不一致"
                 break
@@ -1996,6 +2105,64 @@ def _context_valid_logs(db: Session, logs: list[WorkoutLog]) -> list[WorkoutLog]
     return valid
 
 
+def _sqlite_integrity_error_code(exc: Exception) -> int | None:
+    original = getattr(exc, "orig", None)
+    return getattr(original, "sqlite_errorcode", None)
+
+
+def _is_standalone_completion_unique_error(exc: Exception) -> bool:
+    """Accept fallback only for the dedicated standalone completion index."""
+    if _sqlite_integrity_error_code(exc) != 2067:
+        return False
+    message = str(getattr(exc, "orig", exc))
+    match = re.search(r"index ['\"]([^'\"]+)['\"]", message)
+    return match is not None and match.group(1) == "uq_workout_logs_plan_action_date_session_coalesced"
+
+
+def _is_session_completion_unique_error(exc: Exception) -> bool:
+    """Recognize only the session-scoped completion uniqueness contract."""
+    if _sqlite_integrity_error_code(exc) != 2067:
+        return False
+    message = str(getattr(exc, "orig", exc))
+    match = re.search(r"index ['\"]([^'\"]+)['\"]", message)
+    if match is not None:
+        return match.group(1) == "uq_workout_logs_plan_action_date_session_coalesced"
+    return message == (
+        "UNIQUE constraint failed: workout_logs.plan_id, workout_logs.action, "
+        "workout_logs.log_date, workout_logs.session_id"
+    )
+
+
+def _standalone_logs_for_completion(
+    db: Session,
+    plan: WorkoutPlan | None,
+    action: str,
+) -> list[WorkoutLog]:
+    if plan is None:
+        return []
+    return (
+        db.query(WorkoutLog)
+        .filter(
+            WorkoutLog.plan_id == plan.id,
+            WorkoutLog.log_date == plan.plan_date,
+            WorkoutLog.action == action,
+            WorkoutLog.session_id.is_(None),
+        )
+        .order_by(WorkoutLog.id.asc())
+        .all()
+    )
+
+
+def _matching_standalone_completion(
+    db: Session,
+    plan: WorkoutPlan | None,
+    action: str,
+) -> WorkoutLog | None:
+    candidates = _standalone_logs_for_completion(db, plan, action)
+    valid = [row for row in _context_valid_logs(db, candidates) if row.status == action] if candidates else []
+    return valid[0] if valid else None
+
+
 def _raise_session_context_conflict(session: WorkoutSession, operation: str) -> None:
     mismatch = _session_context_mismatch(session)
     if mismatch is None:
@@ -2051,7 +2218,6 @@ def _resolve_plan_item_payloads(db: Session, items: list[PlanItemPayload]) -> li
         fields = getattr(item, "model_fields_set", set())
         spec = item.spec or ""
         spec_sets = re.search(r"(\d+)\s*组", spec)
-        spec_reps = re.search(r"(\d+)\s*次", spec)
         spec_seconds = re.search(r"(\d+)\s*秒", spec)
         spec_minutes = re.search(r"(\d+)\s*分钟", spec)
         exercise = None
@@ -2069,7 +2235,18 @@ def _resolve_plan_item_payloads(db: Session, items: list[PlanItemPayload]) -> li
             raise HTTPException(status_code=422, detail="每个计划动作必须提供 exercise_id 或 name")
 
         sets = item.sets if "sets" in fields else (int(spec_sets.group(1)) if spec_sets else (exercise.default_sets if exercise else item.sets))
-        reps = item.reps if "reps" in fields else (int(spec_reps.group(1)) if spec_reps else (_parse_reps(exercise.default_reps) if exercise else item.reps))
+        if "reps" in fields:
+            # Explicit nullable fields are part of the canonical API
+            # contract.  The formal UI omits ``reps`` when it is trying to
+            # submit an implicit range, so that case still reaches the
+            # validation branch below instead of bypassing it with NULL.
+            reps = item.reps
+        else:
+            try:
+                spec_reps = parse_implicit_spec_reps(spec)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            reps = spec_reps if spec_reps is not None else (_parse_reps(exercise.default_reps) if exercise else None)
         duration_seconds = item.duration_seconds if "duration_seconds" in fields else (int(spec_seconds.group(1)) if spec_seconds else (int(spec_minutes.group(1)) * 60 if spec_minutes else (exercise.duration_seconds if exercise else item.duration_seconds)))
         description = item.notes if "notes" in fields else (exercise.notes if exercise else "")
         video_url = item.video_url if "video_url" in fields else (exercise.video_url if exercise else None)
@@ -2244,11 +2421,25 @@ def plan_to_v31_dict(plan: WorkoutPlan) -> dict:
     }
 
 
+def _ordered_session_records(session: WorkoutSession) -> list[SessionRecord]:
+    """Return records in frozen plan occurrence order with legacy fallback."""
+    return sorted(
+        session.records or [],
+        key=lambda record: (
+            record.plan_item_order is None,
+            record.plan_item_order if record.plan_item_order is not None else record.id,
+            record.id,
+        ),
+    )
+
+
 def session_record_to_v31_dict(record: SessionRecord) -> dict:
     return {
         "id": record.id,
+        "record_id": record.id,
         "session_id": record.session_id,
         "exercise_id": record.exercise_id,
+        "plan_item_order": record.plan_item_order,
         "status": record.status,
         "sets_completed": record.sets_completed,
         "reps_completed": record.reps_completed,
@@ -2259,6 +2450,7 @@ def session_record_to_v31_dict(record: SessionRecord) -> dict:
 
 
 def session_to_v31_dict(session: WorkoutSession) -> dict:
+    records = _ordered_session_records(session)
     return {
         "id": session.id,
         "plan_id": session.plan_id,
@@ -2270,7 +2462,7 @@ def session_to_v31_dict(session: WorkoutSession) -> dict:
         "notes": session.notes,
         "rating": session.rating,
         "ai_feedback": session.ai_feedback,
-        "records": [session_record_to_v31_dict(record) for record in session.records],
+        "records": [session_record_to_v31_dict(record) for record in records],
     }
 
 
@@ -2299,17 +2491,29 @@ def _session_record_target_sets(session: WorkoutSession, record: SessionRecord) 
     remains the source of the target count, so legacy records without a linked
     exercise still use the safe one-set default.
     """
+    plan_items = sorted(session.plan.exercises or [], key=lambda row: row.sort_order or 0)
+    if record.plan_item_order is not None:
+        item = next((row for row in plan_items if row.sort_order == record.plan_item_order), None)
+        if item is not None:
+            return max(1, int(item.sets or 1))
+
     record_name = record.exercise.name if record.exercise is not None else None
-    for item in sorted(session.plan.exercises or [], key=lambda row: row.sort_order or 0):
+    matches = [
+        item for item in plan_items
         if item.exercise_id == record.exercise_id or (
             item.exercise_id is None and record_name and item.name == record_name
-        ):
-            return max(1, int(item.sets or 1))
+        )
+    ]
+    # Legacy rows without an occurrence marker are safe only when the action
+    # identity is unique in the plan.  A repeated action cannot guess which
+    # target-set snapshot belongs to that historical record.
+    if len(matches) == 1:
+        return max(1, int(matches[0].sets or 1))
     return 1
 
 
 def _session_completion_summary(session: WorkoutSession) -> dict:
-    records = list(session.records or [])
+    records = _ordered_session_records(session)
     completed = [record for record in records if record.status == "completed"]
     skipped = [record for record in records if record.status == "skipped"]
     return {
@@ -2331,8 +2535,9 @@ def _session_completion_summary(session: WorkoutSession) -> dict:
 
 
 def _local_ai_analysis(session: WorkoutSession) -> dict:
-    completed = sum(1 for record in session.records if record.status == "completed")
-    total = len(session.records) or 1
+    records = _ordered_session_records(session)
+    completed = sum(1 for record in records if record.status == "completed")
+    total = len(records) or 1
     score = round((completed / total) * 100)
     return {
         "session_id": session.id,
@@ -2429,13 +2634,18 @@ def _complete_session_unified(db: Session, session: WorkoutSession, payload_note
         )
         db.add(log)
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+        if not _is_session_completion_unique_error(exc):
+            # CHECK/FK/NOT NULL/trigger and unrelated UNIQUE failures leave
+            # the terminal transition rolled back and the session retryable.
+            raise
         existing_log = db.query(WorkoutLog).filter(
             WorkoutLog.plan_id == session.plan_id,
             WorkoutLog.action == "completed",
             WorkoutLog.log_date == session.plan.plan_date,
             WorkoutLog.session_id == session.id,
+            WorkoutLog.status == "completed",
         ).first()
         if existing_log is None:
             # Do not turn a trigger/FK/check/locking failure into a false
@@ -2700,15 +2910,26 @@ def start_session(payload: SessionStartRequest, db: Session = Depends(get_db)) -
         db.add(session)
         # Unique partial index may raise here under concurrent starts
         db.flush()
-        for item in plan.exercises:
+        for item in sorted(plan.exercises or [], key=lambda row: row.sort_order or 0):
             exercise_id = item.exercise_id
             if exercise_id is None:
                 matched = db.query(Exercise).filter(Exercise.name == item.name).first()
                 exercise_id = matched.id if matched else None
             if exercise_id is not None:
-                db.add(SessionRecord(session_id=session.id, exercise_id=exercise_id, status="pending"))
+                db.add(SessionRecord(
+                    session_id=session.id,
+                    exercise_id=exercise_id,
+                    plan_item_order=item.sort_order,
+                    status="pending",
+                ))
             else:
-                db.add(SessionRecord(session_id=session.id, exercise_id=None, status="pending", notes=f"未匹配动作库: {item.name}"))
+                db.add(SessionRecord(
+                    session_id=session.id,
+                    exercise_id=None,
+                    plan_item_order=item.sort_order,
+                    status="pending",
+                    notes=f"未匹配动作库: {item.name}",
+                ))
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -2744,13 +2965,32 @@ def update_session(payload: SessionUpdateRequest, db: Session = Depends(get_db))
     if db_status is None:
         raise HTTPException(status_code=422, detail=f"不允许的动作记录状态: {payload.status}")
 
-    # Validate exercise exists in this session's records (which were created by session/start)
-    existing_record = db.query(SessionRecord).filter(
-        SessionRecord.session_id == session.id,
-        SessionRecord.exercise_id == payload.exercise_id,
-    ).first()
-    if existing_record is None:
-        raise HTTPException(status_code=422, detail=f"动作 {payload.exercise_id} 不在此训练会话中")
+    # New clients address the durable record ID.  Keep exercise-ID lookup for
+    # old callers only while it remains unambiguous within this session.
+    if payload.record_id is not None:
+        existing_record = db.query(SessionRecord).filter(
+            SessionRecord.id == payload.record_id,
+            SessionRecord.session_id == session.id,
+        ).first()
+        if existing_record is None:
+            raise HTTPException(status_code=422, detail="动作记录不在此训练会话中")
+        if payload.exercise_id is not None and payload.exercise_id != existing_record.exercise_id:
+            raise HTTPException(status_code=422, detail="record_id 与 exercise_id 不匹配")
+    else:
+        if payload.exercise_id is None:
+            raise HTTPException(status_code=422, detail="必须提供 record_id 或 exercise_id")
+        candidates = db.query(SessionRecord).filter(
+            SessionRecord.session_id == session.id,
+            SessionRecord.exercise_id == payload.exercise_id,
+        ).order_by(SessionRecord.id.asc()).all()
+        if not candidates:
+            raise HTTPException(status_code=422, detail=f"动作 {payload.exercise_id} 不在此训练会话中")
+        if len(candidates) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail="该动作在此训练会话中出现多次，请使用 record_id 指定具体动作",
+            )
+        existing_record = candidates[0]
 
     # A lost response may cause the browser to replay the same update. Equal
     # progress is idempotent; the final UPDATE below repeats the monotonic

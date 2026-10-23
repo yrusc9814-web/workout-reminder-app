@@ -64,6 +64,10 @@ class WorkoutExercise(Base):
     __tablename__ = "workout_exercises"
     __table_args__ = (
         UniqueConstraint("plan_id", "sort_order", name="uq_workout_exercises_plan_sort"),
+        CheckConstraint(
+            "reps IS NULL OR (reps >= 1 AND reps <= 10000)",
+            name="ck_workout_exercises_reps_range",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -173,7 +177,12 @@ class WorkoutSession(Base):
 class SessionRecord(Base):
     __tablename__ = "session_records"
     __table_args__ = (
-        UniqueConstraint("session_id", "exercise_id", name="uq_session_records_session_exercise"),
+        # A library exercise may occur more than once in one plan.  The
+        # occurrence is identified by the frozen plan sort order; the record
+        # primary key remains the durable execution identity used by updates.
+        # ``plan_item_order`` stays nullable for imported/direct legacy rows;
+        # API-created session rows always populate it.
+        UniqueConstraint("session_id", "plan_item_order", name="uq_session_records_session_order"),
         CheckConstraint(
             "status IN ('pending', 'completed', 'skipped')",
             name="ck_session_records_status",
@@ -183,6 +192,7 @@ class SessionRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("workout_sessions.id"), nullable=False, index=True)
     exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=True, index=True)
+    plan_item_order = Column(Integer, nullable=True, index=True)
     status = Column(String(20), nullable=False, default="pending")
     sets_completed = Column(Integer, nullable=True)
     reps_completed = Column(String(40), nullable=True)
@@ -552,8 +562,168 @@ def _rebuild_workout_logs_with_session_scoped_uniqueness():
             raw.close()
 
 
+def _rebuild_session_records_with_occurrence_identity():
+    """Replace the legacy exercise-ID uniqueness with plan occurrence order.
+
+    SQLite cannot drop a table-level UNIQUE constraint in place.  Existing
+    record IDs and execution facts are copied into a new table inside one
+    transaction, with a deterministic occurrence number backfilled from the
+    historical record ID order.  ``session_records`` is a leaf table, so the
+    rebuild keeps SQLite foreign-key enforcement enabled throughout.
+    """
+    inspector = inspect(engine)
+    if "session_records" not in inspector.get_table_names():
+        return False
+
+    raw = engine.raw_connection()
+    cursor = raw.cursor()
+    original_isolation_level = raw.isolation_level
+    try:
+        table_sql_row = cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'session_records'"
+        ).fetchone()
+        normalized_sql = (table_sql_row[0] if table_sql_row else "").lower().replace("\n", " ")
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(session_records)").fetchall()}
+        legacy_unique = (
+            "uq_session_records_session_exercise" in normalized_sql
+            or "unique (session_id, exercise_id)" in normalized_sql
+        )
+        foreign_keys = cursor.execute("PRAGMA foreign_keys").fetchone()[0]
+        if foreign_keys != 1:
+            raise RuntimeError("session_records migration requires PRAGMA foreign_keys=ON")
+
+        # Derive a safe historical mapping from the old record insertion order
+        # to the actual sorted plan snapshot.  A gapped plan (10, 20, ...) is
+        # therefore preserved; a mismatched/unknown context stays NULL.
+        records_by_session = {}
+        for row in cursor.execute(
+            """
+            SELECT sr.id, sr.session_id, sr.exercise_id, ws.plan_id
+            FROM session_records AS sr
+            LEFT JOIN workout_sessions AS ws ON ws.id = sr.session_id
+            ORDER BY sr.session_id, sr.id
+            """
+        ).fetchall():
+            records_by_session.setdefault(row[1], []).append(row)
+        items_by_plan = {}
+        for row in cursor.execute(
+            "SELECT plan_id, sort_order, exercise_id FROM workout_exercises ORDER BY plan_id, sort_order"
+        ).fetchall():
+            items_by_plan.setdefault(row[0], []).append(row)
+        occurrence_map = {}
+        for session_id, records in records_by_session.items():
+            plan_id = records[0][3] if records else None
+            items = items_by_plan.get(plan_id, [])
+            aligned = len(records) == len(items) and bool(records)
+            if aligned:
+                aligned = all(
+                    record[2] == item[2]
+                    for record, item in zip(records, items)
+                )
+            if aligned:
+                for record, item in zip(records, items):
+                    occurrence_map[(session_id, record[0])] = item[1]
+
+        needs_rebuild = legacy_unique or "plan_item_order" not in columns
+        if not needs_rebuild and occurrence_map:
+            for session_id, records in records_by_session.items():
+                for record in records:
+                    expected = occurrence_map.get((session_id, record[0]))
+                    if expected is not None:
+                        current = cursor.execute(
+                            "SELECT plan_item_order FROM session_records WHERE id=?",
+                            (record[0],),
+                        ).fetchone()[0]
+                        if current != expected:
+                            needs_rebuild = True
+                            break
+                if needs_rebuild:
+                    break
+        if not needs_rebuild:
+            return False
+
+        raw.isolation_level = None
+        cursor.execute("BEGIN")
+        before_count = cursor.execute("SELECT COUNT(*) FROM session_records").fetchone()[0]
+        source_columns = [
+            "id", "session_id", "exercise_id", "plan_item_order", "status", "sets_completed",
+            "reps_completed", "duration_seconds", "notes", "completed_at",
+            "created_at", "updated_at",
+        ]
+        source_select = ", ".join(
+            column if column in columns else "NULL AS " + column
+            for column in source_columns
+        )
+        source_rows = cursor.execute(
+            f"SELECT {source_select} FROM session_records ORDER BY id"
+        ).fetchall()
+        cursor.execute(
+            """
+            CREATE TABLE session_records_v25_new (
+                id INTEGER NOT NULL PRIMARY KEY,
+                session_id INTEGER NOT NULL,
+                exercise_id INTEGER NULL,
+                plan_item_order INTEGER NULL,
+                status VARCHAR(20) NOT NULL,
+                sets_completed INTEGER NULL,
+                reps_completed VARCHAR(40) NULL,
+                duration_seconds INTEGER NULL,
+                notes TEXT NULL,
+                completed_at DATETIME NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NULL,
+                CONSTRAINT uq_session_records_session_order
+                    UNIQUE (session_id, plan_item_order),
+                CONSTRAINT ck_session_records_status
+                    CHECK (status IN ('pending', 'completed', 'skipped')),
+                FOREIGN KEY(session_id) REFERENCES workout_sessions(id),
+                FOREIGN KEY(exercise_id) REFERENCES exercises(id)
+            )
+            """
+        )
+        for row in source_rows:
+            record_id, session_id, exercise_id = row[0], row[1], row[2]
+            old_order = row[3]
+            order = occurrence_map.get((session_id, record_id), old_order)
+            cursor.execute(
+                """
+                INSERT INTO session_records_v25_new
+                    (id, session_id, exercise_id, plan_item_order, status,
+                     sets_completed, reps_completed, duration_seconds, notes,
+                     completed_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (record_id, session_id, exercise_id, order, row[4], row[5], row[6],
+                 row[7], row[8], row[9], row[10], row[11]),
+            )
+        after_count = cursor.execute("SELECT COUNT(*) FROM session_records_v25_new").fetchone()[0]
+        if before_count != after_count:
+            raise RuntimeError(
+                f"session_records rebuild row loss: before={before_count}, after={after_count}"
+            )
+        cursor.execute("DROP TABLE session_records")
+        cursor.execute("ALTER TABLE session_records_v25_new RENAME TO session_records")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_session_records_id ON session_records(id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_session_records_session_id ON session_records(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_session_records_exercise_id ON session_records(exercise_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS ix_session_records_plan_item_order ON session_records(plan_item_order)")
+        cursor.execute("COMMIT")
+        return True
+    except Exception:
+        try:
+            cursor.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        raw.isolation_level = original_isolation_level
+        cursor.close()
+        raw.close()
+
+
 def ensure_schema_columns():
     _rebuild_workout_sessions_with_nullable_started_at()
+    _rebuild_session_records_with_occurrence_identity()
     inspector = inspect(engine)
     ws_columns = {column["name"] for column in inspector.get_columns("workout_sessions")}
     if "plan_action_fingerprint" not in ws_columns:
@@ -718,13 +888,19 @@ def _seed_exercise_library(db):
         tmpl.exercises = [name_map[n] for n in enames if n in name_map]
 
 
-def seed_database():
+def seed_database(db=None):
     """Seed the database ONLY when it is empty (no WorkoutPlan rows exist).
 
     Once a user has any plan data, subsequent restarts will NEVER overwrite it.
     This replaces the old behaviour where every startup re-seeded all months.
+
+    When a SQLAlchemy session is supplied, all seed writes remain in that
+    caller-owned transaction and this function only flushes.  The standalone
+    call keeps the existing initialize-and-commit behavior.
     """
-    db = SessionLocal()
+    owns_session = db is None
+    if owns_session:
+        db = SessionLocal()
     try:
         existing_plan_count = db.query(WorkoutPlan).count()
         if existing_plan_count > 0:
@@ -746,12 +922,17 @@ def seed_database():
         else:
             setting.value = "2026-05..2026-08"
 
-        db.commit()
+        if owns_session:
+            db.commit()
+        else:
+            db.flush()
     except Exception:
-        db.rollback()
+        if owns_session:
+            db.rollback()
         raise
     finally:
-        db.close()
+        if owns_session:
+            db.close()
 
 
 def init_db():

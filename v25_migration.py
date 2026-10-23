@@ -17,6 +17,7 @@ from database import (
     WorkoutPlan,
     WorkoutSession,
 )
+from reps_contract import parse_implicit_spec_reps, parse_scalar_reps
 
 MIGRATION_NAME = "v24-training-state-v1"
 SOURCE_FORMAT = "qingdong-training-backup"
@@ -79,11 +80,17 @@ def _parse_int(pattern: str, value: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _item_values(exercise: Exercise, spec: str) -> dict:
+def _item_values(exercise: Exercise, spec: str, explicit_reps: Any = None) -> dict:
     sets = _parse_int(r"(\d+)\s*(?:组|sets?)", spec) or exercise.default_sets
-    reps = _parse_int(r"(\d+)\s*(?:次|reps?)", spec)
-    if reps is None and exercise.default_reps:
-        reps = _parse_int(r"(\d+)", exercise.default_reps)
+    try:
+        if explicit_reps is not None:
+            reps = parse_scalar_reps(explicit_reps)
+        else:
+            reps = parse_implicit_spec_reps(spec)
+            if reps is None:
+                reps = parse_scalar_reps(exercise.default_reps)
+    except ValueError as exc:
+        raise MigrationInputError(str(exc)) from exc
     duration = _parse_int(r"(\d+)\s*(?:秒|seconds?)", spec)
     if duration is None and "分钟" in spec:
         minutes = _parse_int(r"(\d+)\s*分钟", spec)
@@ -169,7 +176,13 @@ def build_preview(db: Session, payload: dict) -> dict:
                     item=name,
                 )
                 continue
-            parsed_items.append({"name": name, "spec": spec, "exercise_id": matches[0].id, **_item_values(matches[0], spec)})
+            explicit_reps = raw_item.get("reps") if isinstance(raw_item, dict) else None
+            try:
+                values = _item_values(matches[0], spec, explicit_reps)
+            except MigrationInputError as exc:
+                _block(blockers, "invalid_reps", date=key, item=name, reason=str(exc))
+                continue
+            parsed_items.append({"name": name, "spec": spec, "exercise_id": matches[0].id, **values})
         plan_actions.append({
             "date": key,
             "title": str(plan.get("title") or "历史训练计划"),
@@ -200,7 +213,12 @@ def build_preview(db: Session, payload: dict) -> dict:
             if len(matches) != 1:
                 _block(blockers, "unresolved_exercise" if not matches else "ambiguous_exercise", date=key, item=name)
                 continue
-            items.append({"name": name, "spec": spec, "exercise_id": matches[0].id})
+            try:
+                values = _item_values(matches[0], spec)
+            except MigrationInputError as exc:
+                _block(blockers, "invalid_reps", date=key, item=name, reason=str(exc))
+                continue
+            items.append({"name": name, "spec": spec, "exercise_id": matches[0].id, **values})
         if not started or not items or not isinstance(session.get("stepIndex"), int) or session["stepIndex"] != len(items) - 1:
             _block(blockers, "unverifiable_completion", date=key, reason="done_not_at_last_verified_item")
         plan_action = next((item for item in plan_actions if item["date"] == key), None)
@@ -366,10 +384,16 @@ def commit_preview(db: Session, payload: dict) -> dict:
         session.started_at = None
         session.completed_at = None
         db.flush()
-        for item in action["items"]:
+        plan_items = sorted(plan.exercises or [], key=lambda row: row.sort_order or 0)
+        aligned_occurrences = len(plan_items) == len(action["items"]) and all(
+            plan_item.exercise_id == item["exercise_id"]
+            for plan_item, item in zip(plan_items, action["items"])
+        )
+        for index, item in enumerate(action["items"], start=1):
             db.add(SessionRecord(
                 session_id=session.id,
                 exercise_id=item["exercise_id"],
+                plan_item_order=(plan_items[index - 1].sort_order if aligned_occurrences else None),
                 status="completed",
                 duration_seconds=None,
                 notes="Completion proven by v24 done=true and final stepIndex; duration unknown.",
