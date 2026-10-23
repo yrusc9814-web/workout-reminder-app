@@ -6,6 +6,8 @@ not copy their progress algorithm into a test helper.
 """
 from __future__ import annotations
 
+from node_test_support import NODE
+
 import json
 import os
 import subprocess
@@ -287,7 +289,7 @@ def test_van13_inline_production_js_counts_groups_and_freezes_failed_retry_durat
         run().catch((error) => { console.error(error.stack || error); process.exit(1); });
         """
     )
-    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1], timeout=30)
+    result = subprocess.run([NODE, "-e", script], capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1], timeout=30)
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     (EVIDENCE_DIR / "inline-js-group-duration.json").write_text(result.stdout or result.stderr, encoding="utf-8")
     assert result.returncode == 0, result.stderr + "\n" + result.stdout
@@ -458,10 +460,7 @@ def test_van13_inline_reconcile_facts_and_terminal_skip_retry():
         r"""
         const fs = require('fs');
         const vm = require('vm');
-        const { JSDOM } = require(require('path').join(
-          process.env.VAN13_DOM_DEPS || '/private/tmp/van13-jsdom-deps/node_modules',
-          'jsdom'
-        ));
+        const { JSDOM } = require('./tests/dom_dependencies');
         const source = fs.readFileSync('static/index.html', 'utf8');
         function section(startMarker, endMarker) {
           const start = source.indexOf(startMarker);
@@ -570,7 +569,7 @@ def test_van13_inline_reconcile_facts_and_terminal_skip_retry():
         })().catch((error) => { console.error(error.stack || error); process.exit(1); });
         """
     )
-    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1], timeout=30)
+    result = subprocess.run([NODE, "-e", script], capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1], timeout=30)
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     (EVIDENCE_DIR / "reconciliation-review.json").write_text(result.stdout or result.stderr, encoding="utf-8")
     assert result.returncode == 0, result.stderr + "\n" + result.stdout
@@ -578,20 +577,13 @@ def test_van13_inline_reconcile_facts_and_terminal_skip_retry():
 
 
 def test_van13_real_dom_terminal_progress_uses_record_facts_after_index_reset():
-    """真实 jsdom DOM 专项；依赖可临时安装：
-
-    npm install --prefix /private/tmp/van13-jsdom-deps --no-save --no-package-lock jsdom@26
-    VAN13_DOM_DEPS=/private/tmp/van13-jsdom-deps/node_modules pytest ...
-    """
+    """Use existing jsdom via WORKOUT_NODE_MODULES or standard Node resolution."""
     script = textwrap.dedent(
         r"""
         const fs = require('fs');
         const vm = require('vm');
         const path = require('path');
-        const { JSDOM } = require(path.join(
-          process.env.VAN13_DOM_DEPS || '/private/tmp/van13-jsdom-deps/node_modules',
-          'jsdom'
-        ));
+        const { JSDOM } = require('./tests/dom_dependencies');
         const source = fs.readFileSync('static/index.html', 'utf8');
         function section(startMarker, endMarker) {
           const start = source.indexOf(startMarker);
@@ -675,12 +667,12 @@ def test_van13_real_dom_terminal_progress_uses_record_facts_after_index_reset():
         """
     )
     result = subprocess.run(
-        ["node", "-e", script],
+        [NODE, "-e", script],
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parents[1],
         timeout=30,
-        env={**os.environ, "VAN13_DOM_DEPS": os.environ.get("VAN13_DOM_DEPS", "/private/tmp/van13-jsdom-deps/node_modules")},
+        env=os.environ.copy(),
     )
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     (EVIDENCE_DIR / "real-dom-terminal-progress.json").write_text(result.stdout or result.stderr, encoding="utf-8")

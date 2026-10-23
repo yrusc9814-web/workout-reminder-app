@@ -1,6 +1,8 @@
 """Focused VAN-17 frontend context and late-response regressions."""
 from __future__ import annotations
 
+from node_test_support import NODE
+
 from pathlib import Path
 import subprocess
 import textwrap
@@ -11,7 +13,7 @@ APP_DIR = Path(__file__).resolve().parents[1]
 
 def _run_node(script: str) -> str:
     result = subprocess.run(
-        ["node", "-e", textwrap.dedent(script)],
+        [NODE, "-e", textwrap.dedent(script)],
         cwd=APP_DIR,
         capture_output=True,
         text=True,
@@ -182,7 +184,7 @@ def test_changed_date_inside_current_week_invalidates_week_cache():
 
 def test_full_page_deferred_progress_stays_bound_to_old_session_after_date_switch():
     result = subprocess.run(
-        ["node", "tests/van17_deferred_context_behavior.js"],
+        [NODE, "tests/van17_deferred_context_behavior.js"],
         cwd=APP_DIR,
         capture_output=True,
         text=True,
@@ -194,7 +196,7 @@ def test_full_page_deferred_progress_stays_bound_to_old_session_after_date_switc
 
 def test_full_page_unseen_resume_keeps_backend_partial_sets_and_duration():
     result = subprocess.run(
-        ["node", "tests/van17_unseen_resume_behavior.js"],
+        [NODE, "tests/van17_unseen_resume_behavior.js"],
         cwd=APP_DIR,
         capture_output=True,
         text=True,
@@ -206,7 +208,7 @@ def test_full_page_unseen_resume_keeps_backend_partial_sets_and_duration():
 
 def test_full_page_selected_date_failure_does_not_fallback_to_today_plan():
     result = subprocess.run(
-        ["node", "tests/van17_selected_date_failure_behavior.js"],
+        [NODE, "tests/van17_selected_date_failure_behavior.js"],
         cwd=APP_DIR,
         capture_output=True,
         text=True,
@@ -218,7 +220,7 @@ def test_full_page_selected_date_failure_does_not_fallback_to_today_plan():
 
 def test_full_page_deferred_local_plan_save_cannot_reactivate_old_date():
     result = subprocess.run(
-        ["node", "tests/van17_plan_save_deferred_behavior.js"],
+        [NODE, "tests/van17_plan_save_deferred_behavior.js"],
         cwd=APP_DIR,
         capture_output=True,
         text=True,
@@ -230,7 +232,7 @@ def test_full_page_deferred_local_plan_save_cannot_reactivate_old_date():
 
 def test_full_page_failed_plan_edit_does_not_drop_held_progress_response():
     result = subprocess.run(
-        ["node", "tests/van17_failed_edit_inflight_behavior.js"],
+        [NODE, "tests/van17_failed_edit_inflight_behavior.js"],
         cwd=APP_DIR,
         capture_output=True,
         text=True,
@@ -242,7 +244,7 @@ def test_full_page_failed_plan_edit_does_not_drop_held_progress_response():
 
 def test_full_page_successful_plan_save_readback_failure_enters_error_and_retries_same_date():
     result = subprocess.run(
-        ["node", "tests/van17_save_readback_retry_behavior.js"],
+        [NODE, "tests/van17_save_readback_retry_behavior.js"],
         cwd=APP_DIR,
         capture_output=True,
         text=True,
@@ -254,7 +256,7 @@ def test_full_page_successful_plan_save_readback_failure_enters_error_and_retrie
 
 def test_full_page_snapshot_replacement_resets_old_session_but_metadata_save_preserves_partial_facts():
     result = subprocess.run(
-        ["node", "tests/van17_snapshot_binding_behavior.js"],
+        [NODE, "tests/van17_snapshot_binding_behavior.js"],
         cwd=APP_DIR,
         capture_output=True,
         text=True,
@@ -266,7 +268,7 @@ def test_full_page_snapshot_replacement_resets_old_session_but_metadata_save_pre
 
 def test_full_page_postpone_and_import_readback_failures_enter_error_and_retry():
     result = subprocess.run(
-        ["node", "tests/van17_readback_mutation_retry_behavior.js"],
+        [NODE, "tests/van17_readback_mutation_retry_behavior.js"],
         cwd=APP_DIR,
         capture_output=True,
         text=True,

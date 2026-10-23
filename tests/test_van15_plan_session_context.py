@@ -6,6 +6,8 @@ the browser cannot accept a session response for another plan.
 """
 from __future__ import annotations
 
+from node_test_support import NODE
+
 import subprocess
 import os
 import sys
@@ -518,7 +520,7 @@ async function run() {
 run().catch((error) => { console.error(error.stack || error); process.exit(1); });
 """
     result = subprocess.run(
-        ["node", "-e", script],
+        [NODE, "-e", script],
         capture_output=True,
         text=True,
         cwd=APP_DIR,
@@ -557,7 +559,7 @@ if (!result.contextConflict || result.started || result.done || result.records.l
 console.log('PASS');
 """
     result = subprocess.run(
-        ["node", "-e", script],
+        [NODE, "-e", script],
         capture_output=True,
         text=True,
         cwd=APP_DIR,
@@ -594,7 +596,7 @@ if (modal.includes('data-v25-cancel-conflict') || !modal.includes('历史完成�
 console.log('PASS');
 """
     result = subprocess.run(
-        ["node", "-e", script],
+        [NODE, "-e", script],
         capture_output=True,
         text=True,
         cwd=APP_DIR,

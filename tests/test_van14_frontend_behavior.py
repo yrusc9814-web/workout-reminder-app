@@ -1,6 +1,8 @@
 """VAN-14 behavior checks against the real inline v25 page logic."""
 from __future__ import annotations
 
+from node_test_support import NODE
+
 import json
 import os
 import subprocess
@@ -218,7 +220,7 @@ async function run() {
 run().catch((error) => { console.error(error.stack || error); process.exit(1); });
 """
     result = subprocess.run(
-        ["node", "-e", script],
+        [NODE, "-e", script],
         capture_output=True,
         text=True,
         cwd=str(APP_DIR),
@@ -399,7 +401,7 @@ async function run() {
 run().catch((error) => { console.error(error.stack || error); process.exit(1); });
 """
     result = subprocess.run(
-        ["node", "-e", script],
+        [NODE, "-e", script],
         capture_output=True,
         text=True,
         cwd=str(APP_DIR),

@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('assert');
 const fs = require('fs');
-const { JSDOM } = require(process.env.VAN18_DOM_DEPS || '/private/tmp/van13-jsdom-deps/node_modules/jsdom');
+const { JSDOM } = require('./dom_dependencies');
 const catalog = JSON.parse(process.env.VAN18_CATALOG);
 const today = '2026-10-04';
 const source = fs.readFileSync('static/index.html', 'utf8').replace('    })();\n  </script>', `

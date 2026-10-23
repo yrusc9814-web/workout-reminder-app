@@ -1,6 +1,8 @@
 """F01日视图状态机的真实 DOM 行为回归。"""
 from __future__ import annotations
 
+from node_test_support import NODE
+
 import os
 import subprocess
 import textwrap
@@ -10,25 +12,18 @@ import pytest
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
-EVIDENCE_DIR = Path("/private/tmp/van16-f01-rework-evidence")
-DEFAULT_DOM_DEPS = Path("/private/tmp/van13-jsdom-deps/node_modules")
+EVIDENCE_DIR = APP_DIR / ".tmp" / "van16-evidence"
 
 
 def test_f01_extracted_boot_generation_supplement():
     """Keep the narrow extracted boot-generation regression beside the full-page gate."""
-    dom_deps = Path(os.environ.get("VAN16_DOM_DEPS", str(DEFAULT_DOM_DEPS)))
-    if not (dom_deps / "jsdom").exists():
-        pytest.fail(f"F01 jsdom dependency is required at {dom_deps}; refusing to skip the gate")
 
     script = textwrap.dedent(
         r"""
         const fs = require('fs');
         const vm = require('vm');
         const path = require('path');
-        const { JSDOM } = require(path.join(
-          process.env.VAN16_DOM_DEPS || '/private/tmp/van13-jsdom-deps/node_modules',
-          'jsdom'
-        ));
+        const { JSDOM } = require('./tests/dom_dependencies');
 
         const source = fs.readFileSync('static/index.html', 'utf8');
         function section(startMarker, endMarker) {
@@ -325,12 +320,12 @@ def test_f01_extracted_boot_generation_supplement():
         """
     )
     result = subprocess.run(
-        ["node", "-e", script],
+        [NODE, "-e", script],
         capture_output=True,
         text=True,
         cwd=APP_DIR,
         timeout=45,
-        env={**os.environ, "VAN16_DOM_DEPS": str(dom_deps)},
+        env=os.environ.copy(),
     )
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     (EVIDENCE_DIR / "f01-real-dom-states.json").write_text(result.stdout or result.stderr, encoding="utf-8")

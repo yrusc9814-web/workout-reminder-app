@@ -5,10 +5,7 @@
 // -> confirmation -> API import/readback -> boot refresh path.
 const fs = require('fs');
 const path = require('path');
-const { JSDOM, VirtualConsole } = require(path.join(
-  process.env.VAN16_DOM_DEPS || '/private/tmp/van13-jsdom-deps/node_modules',
-  'jsdom'
-));
+const { JSDOM, VirtualConsole } = require('./dom_dependencies');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'static', 'index.html'), 'utf8');
 const TODAY = '2026-10-06';

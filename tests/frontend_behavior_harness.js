@@ -1,6 +1,6 @@
 /**
  * Frontend behavior harness — mirrors critical app.js async flows with injectable fetch.
- * Used by tests/test_frontend_behavior.py. Keep logic aligned with static/app.js.
+ * Historical artifact only. No active test imports this logic copy; current coverage executes static/index.html.
  */
 'use strict';
 

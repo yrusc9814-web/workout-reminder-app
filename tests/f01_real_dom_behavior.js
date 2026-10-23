@@ -2,10 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { JSDOM } = require(path.join(
-  process.env.VAN16_DOM_DEPS || '/private/tmp/van13-jsdom-deps/node_modules',
-  'jsdom'
-));
+const { JSDOM } = require('./dom_dependencies');
 
 const source = fs.readFileSync(process.env.VAN16_TEST_SOURCE || path.join(__dirname, '..', 'static', 'index.html'), 'utf8');
 const OLD_PLAN = '旧本地假动作';

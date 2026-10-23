@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from node_test_support import NODE
+
 import hashlib
 import json
 import os
@@ -505,13 +507,11 @@ def test_van24_g5_scalar_reps_and_display_ranges(client, app_modules):
 def test_van24_formal_production_dom_occurrence_and_range(tmp_path):
     env = {
         **os.environ,
-        "VAN13_DOM_DEPS": "/private/tmp/van24-jsdom-deps/node_modules",
-        "VAN16_DOM_DEPS": "/private/tmp/van24-jsdom-deps/node_modules",
         "WORKOUT_DB_PATH": str(tmp_path / "van24-dom.sqlite"),
         "WORKOUT_DISABLE_SEED": "1",
     }
     result = subprocess.run(
-        ["/Users/vantawork/.local/bin/node", "tests/van24_real_dom_behavior.js"],
+        [NODE, "tests/van24_real_dom_behavior.js"],
         cwd=APP_DIR,
         env=env,
         capture_output=True,
@@ -525,11 +525,9 @@ def test_van24_formal_production_dom_occurrence_and_range(tmp_path):
 def test_van24_formal_saved_scheme_rejects_invalid_implicit_reps():
     env = {
         **os.environ,
-        "VAN13_DOM_DEPS": "/private/tmp/van24-jsdom-deps/node_modules",
-        "VAN16_DOM_DEPS": "/private/tmp/van24-jsdom-deps/node_modules",
     }
     result = subprocess.run(
-        ["/Users/vantawork/.local/bin/node", "tests/van24_saved_scheme_dom_behavior.js"],
+        [NODE, "tests/van24_saved_scheme_dom_behavior.js"],
         cwd=APP_DIR,
         env=env,
         capture_output=True,

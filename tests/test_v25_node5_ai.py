@@ -1,3 +1,5 @@
+import os
+import pytest
 import json
 
 
@@ -119,6 +121,29 @@ def test_ai_video_recommendation_is_mocked_and_bilibili_only(client, app_modules
     assert all("bilibili" in url for url in body["candidates"])
 
 
+def test_ai_local_demo_provider_and_chat(client, app_modules, monkeypatch, tmp_path):
+    clear_ai_env(monkeypatch)
+    key_store = tmp_path / "ai-key-store.enc"
+    monkeypatch.setenv("WORKOUT_KEY_STORE", str(key_store))
+    main = app_modules[1]
+
+    local = client.get("/api/ai/provider")
+    assert local.status_code == 200
+    assert local.json()["provider"] == "local-demo"
+    assert local.json()["source"] == "local-demo"
+
+    messages = [
+        {"role": "system", "content": "你是训练助手"},
+        {"role": "user", "content": "第一轮"},
+        {"role": "assistant", "content": "已记录"},
+        {"role": "user", "content": "第二轮"},
+    ]
+    local_chat = client.post("/api/ai/chat", json={"messages": messages})
+    assert local_chat.status_code == 200
+    assert local_chat.json()["source"] == "local-demo"
+    assert local_chat.json()["messages"] == messages
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows DPAPI persistence requires Windows; fake-store contracts run on all platforms")
 def test_ai_chat_provider_models_and_dpapi_key_store(client, app_modules, monkeypatch, tmp_path):
     clear_ai_env(monkeypatch)
     key_store = tmp_path / "ai-key-store.enc"

@@ -2087,7 +2087,7 @@ def test_restore_defaults_uses_dry_run_before_confirm(client):
     assert data["status"] == "dry_run", f"Expected dry_run, got {data.get('status')}"
 
 
-def test_sqlite_backup_integrity(app_modules):
+def test_sqlite_backup_api_integrity(app_modules):
     """Backup integrity check — verify database can be copied and verified."""
     database, _ = app_modules
     import shutil, sqlite3, tempfile
@@ -2107,7 +2107,7 @@ def test_sqlite_backup_integrity(app_modules):
     verify.close()
 
 
-def test_migration_is_idempotent(app_modules):
+def test_seed_is_idempotent(app_modules):
     """Seed database can be called multiple times without errors or data changes."""
     database, _ = app_modules
     db = database.SessionLocal()

@@ -1,6 +1,8 @@
 """VAN-17 repeated sessions, date attribution, and statistics contracts."""
 from __future__ import annotations
 
+from node_test_support import NODE
+
 from datetime import date
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -515,7 +517,7 @@ def test_calendar_start_passes_the_selected_date_to_start_plan():
 
 def _run_node(script: str):
     result = subprocess.run(
-        ["node", "-e", textwrap.dedent(script)],
+        [NODE, "-e", textwrap.dedent(script)],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,
@@ -726,7 +728,7 @@ def test_frontend_fresh_hydrate_reads_last_active_plan_session_records():
 
 def test_frontend_full_page_click_and_fresh_hydrate_production_flow():
     result = subprocess.run(
-        ["node", "tests/van17_fresh_hydrate_behavior.js"],
+        [NODE, "tests/van17_fresh_hydrate_behavior.js"],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,

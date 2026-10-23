@@ -1,12 +1,15 @@
 from pathlib import Path
 import re
 
+import pytest
+
 from main import app
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_calls_existing_backend_endpoints():
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
 
@@ -83,6 +86,7 @@ def test_windows_one_click_launcher_exists():
     assert "运动提醒 App.lnk" in shortcut_text
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_backend_endpoint_contract_updated():
     """前端引用后端端点列表包含新增的 CRUD 端点。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -152,6 +156,7 @@ def test_dashboard_management_cards_use_explicit_visual_layers():
     assert 'data-card-contract="background overlay icon content"' not in index_html
 
 
+@pytest.mark.legacy_frontend
 def test_dashboard_month_stats_have_icon_rich_layout():
     """月度统计不能只是稀疏数字卡，必须有图标和主次层级。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -179,6 +184,7 @@ def test_sidebar_support_sections_are_collapsible_and_clean():
     assert "系统状态" not in index_html
 
 
+@pytest.mark.legacy_frontend
 def test_dashboard_month_trend_moves_above_today_videos():
     """月度曲线放在今日相关视频上方，统计卡原位展示完成率仪表盘。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -209,6 +215,7 @@ def test_dashboard_only_uses_a_static_welcome_image():
     assert "WELCOME BACK" not in index_html
 
 
+@pytest.mark.legacy_frontend
 def test_month_page_hides_duplicate_stats_icons():
     """月计划页不再重复展示仪表盘统计图标。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -218,6 +225,7 @@ def test_month_page_hides_duplicate_stats_icons():
     assert "#monthStats { display: none !important; }" in styles_css
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_training_session_has_core_buttons():
     """训练执行页包含完整闭环按钮：完成本组、跳过动作、结束训练、返回。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -236,6 +244,7 @@ def test_frontend_training_session_has_core_buttons():
     assert "完成按钮" not in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_training_session_tracks_state():
     """训练会话追踪状态：completed 数组、skipped 数组、currentSetIndex。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -246,6 +255,7 @@ def test_frontend_training_session_tracks_state():
     assert "currentExerciseIndex" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_import_export_has_preview_and_confirm():
     """导入/导出功能：预览、校验错误、确认后导入。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -262,6 +272,7 @@ def test_frontend_import_export_has_preview_and_confirm():
     assert "confirm" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_import_validates_exercise_ids():
     """导入校验：检查动作 ID 合法、不重复、模板引用存在。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -271,6 +282,7 @@ def test_frontend_import_validates_exercise_ids():
     assert "引用不存在动作" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_ai_draft_has_confirm_cancel():
     """AI 草稿有预览、确认导入、取消按钮，不自动覆盖。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
@@ -286,6 +298,7 @@ def test_frontend_ai_draft_has_confirm_cancel():
     assert "aiDraftErrors" in app_js or "aiDraftErrors" in index_html
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_ai_search_has_manual_confirm():
     """AI 搜索视频：手动确认/修改链接后确认使用，不自动覆盖。"""
     index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
@@ -296,6 +309,7 @@ def test_frontend_ai_search_has_manual_confirm():
     assert "confirmAiVideoSearch" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_week_month_shows_completion_status():
     """周/月计划视图展示完成状态。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -320,6 +334,7 @@ def test_frontend_exercise_template_crud_dialogs():
     assert 'id="clearTodayBtn"' in index_html
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_no_auto_overwrite_localstorage():
     """前端不允许自动覆盖 localStorage。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -344,6 +359,7 @@ def test_frontend_has_has_entry_points():
     assert "第二阶段开放" not in index_html
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_has_bilibili_url_validation():
     """前端包含 Bilibili URL 校验函数。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -353,6 +369,7 @@ def test_frontend_has_bilibili_url_validation():
     assert "仅支持 Bilibili" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_video_form_validates_url():
     """保存视频时校验 Bilibili 链接。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -362,6 +379,7 @@ def test_frontend_video_form_validates_url():
     assert "saveVideoFromForm" in app_js or "videoDialog" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_has_progress_bar():
     """训练执行页有进度条 UI。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -372,6 +390,7 @@ def test_frontend_has_progress_bar():
     assert "progress-label" in app_js or "progress-label" in styles_css
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_has_set_badges():
     """训练页有组次徽标显示当前/已完成组。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -381,6 +400,7 @@ def test_frontend_has_set_badges():
     assert "set-badge" in app_js or "set-badge" in styles_css
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_has_session_summary():
     """训练完成有摘要显示完成/跳过信息。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -390,6 +410,7 @@ def test_frontend_has_session_summary():
     assert "totalSetsDone" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_training_summary_banner():
     """训练完成后显示摘要横幅（完成/跳过/组数）。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -400,6 +421,7 @@ def test_frontend_training_summary_banner():
     assert "summary-banner-inner" in app_js or "summary-banner-inner" in index_html
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_week_month_class_completed():
     """周/月计划中已完成训练日有 completed 状态类。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -410,6 +432,7 @@ def test_frontend_week_month_class_completed():
     assert ".week-card.completed" in styles_css or ".calendar-day.completed" in styles_css
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_import_preview_shows_template_details():
     """导入预览显示模板描述和动作列表。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -418,6 +441,7 @@ def test_frontend_import_preview_shows_template_details():
     assert "templatePreviews" in app_js or "import-template-preview" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_import_checks_overlap():
     """导入时检查是否覆盖已有日期计划。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -426,6 +450,7 @@ def test_frontend_import_checks_overlap():
     assert "将被覆盖" in app_js or "覆盖" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_tracks_total_sets_done():
     """训练会话追踪已完成总组数。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -433,6 +458,7 @@ def test_frontend_tracks_total_sets_done():
     assert "totalSetsDone" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_validate_url_rejects_youtube():
     """validateBilibiliUrl 明确拒绝 YouTube/youtu.be 链接。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -441,6 +467,7 @@ def test_frontend_validate_url_rejects_youtube():
     assert "youtu.be" in app_js or "youtu" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_validate_url_allows_bilibili():
     """validateBilibiliUrl 允许 bilibili.com/video/ 和 b23.tv 链接。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -448,6 +475,7 @@ def test_frontend_validate_url_allows_bilibili():
     assert "b23.tv" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_import_failure_no_success():
     """导入失败（JSON 解析错误、校验失败）只显示失败，不提示成功。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -460,6 +488,7 @@ def test_frontend_import_failure_no_success():
         assert "导入失败" in catch_block or "error" in catch_block.lower()
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_preview_import_preview_only():
     """previewImport 仅预览不写入：预览阶段禁用 confirm()/state=data/saveData/alert('导入完成')。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -480,6 +509,7 @@ def test_frontend_preview_import_preview_only():
     assert "重叠" in app_js or "覆盖" in app_js
 
 
+@pytest.mark.legacy_frontend
 def test_frontend_confirm_import_writes_after_confirm():
     """确认按钮点击后才写入，点击前检查可选的日期重叠。"""
     app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -494,14 +524,20 @@ def test_frontend_confirm_import_writes_after_confirm():
 
 
 def test_frontend_no_hardcoded_youtube():
-    """前端不可包含 hardcoded YouTube 链接。"""
-    index_html = (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    app_js = (APP_DIR / "static" / "app.js").read_text(encoding="utf-8")
-    combined = "\n".join([index_html, app_js])
+    """正式首页的有效 URL 约束默认执行，不受 legacy 开关影响。"""
+    _assert_no_hardcoded_youtube((APP_DIR / "static" / "index.html").read_text(encoding="utf-8"))
 
+
+@pytest.mark.legacy_frontend
+def test_legacy_frontend_no_hardcoded_youtube():
+    """旧 app.js 使用同一原有断言，单独保留为历史检查。"""
+    _assert_no_hardcoded_youtube((APP_DIR / "static" / "app.js").read_text(encoding="utf-8"))
+
+
+def _assert_no_hardcoded_youtube(source):
     # 合法 AI 搜索中引用 YouTube 作为拒绝条件是可以的
     # 检查是否包含了非注释的 youtube.com 链接
-    lines = combined.split("\n")
+    lines = source.split("\n")
     for i, line in enumerate(lines):
         if "youtube" in line.lower() or "youtu.be" in line.lower():
             # 只允许在函数名、注释或拒绝条件中出现

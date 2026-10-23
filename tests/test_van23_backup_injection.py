@@ -1,6 +1,8 @@
 """VAN-23 production-page DOM and backup import regression gates."""
 from __future__ import annotations
 
+from node_test_support import NODE
+
 import os
 import subprocess
 from datetime import date
@@ -10,19 +12,14 @@ import pytest
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
-DOM_DEPS = Path(os.environ.get("VAN16_DOM_DEPS", "/private/tmp/van13-jsdom-deps/node_modules"))
-NODE = os.environ.get("VAN23_NODE", "/Users/vantawork/.local/bin/node")
-EVIDENCE_DIR = APP_DIR.parent / "van23-evidence"
+EVIDENCE_DIR = APP_DIR / ".tmp" / "van23-evidence"
 
 
 def test_van23_formal_production_dom_backup_flow(tmp_path: Path):
     """Use the complete static page, including FileReader and API readback mocks."""
-    if not (DOM_DEPS / "jsdom").exists():
-        pytest.fail(f"VAN-23 JSDOM dependency is required at {DOM_DEPS}; refusing to skip the gate")
     db_path = tmp_path / "van23-isolated.sqlite"
     env = {
         **os.environ,
-        "VAN16_DOM_DEPS": str(DOM_DEPS),
         "WORKOUT_DB_PATH": str(db_path),
         "WORKOUT_DISABLE_SEED": "1",
     }

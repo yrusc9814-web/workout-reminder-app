@@ -5,10 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
-const { JSDOM, VirtualConsole } = require(path.join(
-  process.env.VAN16_DOM_DEPS || '/private/tmp/van13-jsdom-deps/node_modules',
-  'jsdom'
-));
+const { JSDOM, VirtualConsole } = require('./dom_dependencies');
 
 const SOURCE_PATH = process.env.VAN20_SOURCE || path.join(__dirname, '..', 'static', 'index.html');
 const SOURCE = fs.readFileSync(SOURCE_PATH, 'utf8');

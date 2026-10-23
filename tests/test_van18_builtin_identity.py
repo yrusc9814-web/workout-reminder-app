@@ -1,4 +1,6 @@
 """VAN-18 uses catalog identities on real Exercise rows, with atomic failure."""
+
+from node_test_support import NODE
 import json
 import os
 import subprocess
@@ -98,7 +100,7 @@ def test_legacy_identity_adoption_is_unique_once_and_preserves_primary_ids(clien
 def test_real_inline_page_builtin_start_schedule_replace_refresh(client):
     rows = catalog(client)
     env = {**os.environ, 'VAN18_CATALOG': json.dumps(list(rows.values()), ensure_ascii=False)}
-    result = subprocess.run(['node', 'tests/van18_inline_behavior.js'], cwd=APP_DIR, env=env, text=True, capture_output=True, timeout=40)
+    result = subprocess.run([NODE, 'tests/van18_inline_behavior.js'], cwd=APP_DIR, env=env, text=True, capture_output=True, timeout=40)
     assert result.returncode == 0, result.stderr + result.stdout
     assert '"PASS":true' in result.stdout
 
