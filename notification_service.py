@@ -66,10 +66,11 @@ class NotificationService:
             reminder = self.dingtalk.send_reminder(plan_payload)
             todo = self.dingtalk.create_todo(plan_payload) if request.include_todo else None
 
-        self._record(plan, request, reminder)
+        status = self._combined_status(reminder, todo)
+        self._record(plan, request, {"status": status, "sent": status == "sent"})
         return {
-            "status": self._combined_status(reminder, todo),
-            "sent": reminder.get("sent") is True,
+            "status": status,
+            "sent": status == "sent",
             "plan_id": plan.id,
             "date": plan.plan_date.isoformat(),
             "channel": request.channel,
@@ -81,7 +82,7 @@ class NotificationService:
         if plan_id is None:
             return self._mock_result(NotificationRequest(title=title, message=message), "not_sent")
         result = self.send(NotificationRequest(plan_id=plan_id, channel="dingtalk", include_todo=False, force=True))
-        return result["reminder"]
+        return result.get("reminder", result)
 
     def create_dingtalk_todo(self, plan_id: int) -> dict:
         plan = self.db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
@@ -105,9 +106,8 @@ class NotificationService:
         )
 
     def _record(self, plan: WorkoutPlan, request: NotificationRequest, result: dict) -> None:
-        """Only record a successful delivery. Failed attempts leave no active record so the
-        system will retry on next request instead of incorrectly skipping as duplicate."""
-        if not result.get("sent"):
+        """Deduplicate only when every delivery requested in this attempt succeeded."""
+        if result.get("sent") is not True:
             return
         row = Reminder(
             plan_id=plan.id,
@@ -144,9 +144,18 @@ class NotificationService:
 
     @staticmethod
     def _combined_status(reminder: dict, todo: dict | None) -> str:
-        if todo and todo.get("status") in {"failed", "todo_unavailable_due_to_permission"}:
-            return todo["status"]
-        return str(reminder.get("status") or "unknown")
+        successes = [reminder.get("sent") is True]
+        results = [reminder]
+        if todo is not None:
+            successes.append(todo.get("created") is True)
+            results.append(todo)
+        if all(successes):
+            return "sent"
+        if any(successes):
+            return "partial_success"
+        if all(result.get("status") == "not_configured" for result in results):
+            return "not_configured"
+        return "failed"
 
     @staticmethod
     def _mock_result(request: NotificationRequest, status: str) -> dict:

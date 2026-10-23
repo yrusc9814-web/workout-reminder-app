@@ -360,7 +360,7 @@ def validate_ai_draft(draft: dict) -> list[str]:
     errors = []
     if not isinstance(draft, dict):
         return ["AI 返回的数据格式错误，预期为 JSON 对象"]
-    if draft.get("schemaVersion") not in {AI_SCHEMA_VERSION, None}:
+    if draft.get("schemaVersion") not in (AI_SCHEMA_VERSION, None):
         errors.append(f"schemaVersion 必须是 {AI_SCHEMA_VERSION}")
     for field_name in ("version", "title", "theme", "recommendedDate"):
         if not draft.get(field_name) or not isinstance(draft.get(field_name), str):
@@ -390,12 +390,28 @@ def validate_ai_draft(draft: dict) -> list[str]:
                 errors.append(f"动作 {eid or i+1} 缺少 name 字段")
             has_reps = bool(exercise.get("defaultReps"))
             has_duration = exercise.get("durationSeconds") is not None
+            if type(exercise.get("defaultSets")) is not int or exercise["defaultSets"] <= 0:
+                errors.append(f"第 {i+1} 个动作 defaultSets 必须是正整数")
+            if exercise.get("defaultReps") is not None and not isinstance(exercise["defaultReps"], str):
+                errors.append(f"第 {i+1} 个动作 defaultReps 必须是字符串或 null")
+            duration = exercise.get("durationSeconds")
+            if duration is not None and (type(duration) is not int or duration <= 0):
+                errors.append(f"第 {i+1} 个动作 durationSeconds 必须是正整数或 null")
             if not exercise.get("defaultSets") or not (has_reps or has_duration):
                 errors.append(f"动作 {exercise.get('name', eid or i+1)} 缺少组数/次数/时长")
             if not exercise.get("notes") or not isinstance(exercise.get("notes"), str):
                 errors.append(f"动作 {exercise.get('name', eid or i+1)} 缺少注意事项")
-            for video in exercise.get("videos", []) if isinstance(exercise.get("videos", []), list) else []:
-                url = video.get("url", "") if isinstance(video, dict) else ""
+            videos = exercise.get("videos", [])
+            if not isinstance(videos, list):
+                errors.append(f"第 {i+1} 个动作 videos 必须是数组")
+                continue
+            for video in videos:
+                if not isinstance(video, dict):
+                    errors.append(f"第 {i+1} 个动作的视频必须是对象")
+                    continue
+                url = video.get("url", "")
+                if not isinstance(url, str):
+                    errors.append(f"第 {i+1} 个动作的视频 URL 必须是字符串")
                 if url and not validate_bilibili_url(url):
                     errors.append(f"动作 {exercise.get('name', eid or i+1)} 的视频 URL 不是合法 Bilibili 链接：{url}")
 
@@ -409,15 +425,20 @@ def validate_ai_draft(draft: dict) -> list[str]:
                 errors.append(f"第 {i+1} 个模板格式错误")
                 continue
             tid = tmpl.get("id", "")
-            if not tid:
-                errors.append(f"第 {i+1} 个模板缺少 id")
-            if not tmpl.get("name"):
-                errors.append(f"模板 {tid or i+1} 缺少 name")
-            if tid in template_ids:
+            if not isinstance(tid, str) or not tid:
+                errors.append(f"第 {i+1} 个模板 id 必须是非空字符串")
+            elif tid in template_ids:
                 errors.append(f"重复模板 ID：{tid}")
-            template_ids.add(tid)
-            for eid in tmpl.get("exerciseIds", []):
-                if eid not in exercise_ids:
+            else:
+                template_ids.add(tid)
+            if not isinstance(tmpl.get("name"), str) or not tmpl["name"]:
+                errors.append(f"模板 {tid or i+1} 缺少 name")
+            refs = tmpl.get("exerciseIds", [])
+            if not isinstance(refs, list):
+                errors.append(f"第 {i+1} 个模板 exerciseIds 必须是字符串数组")
+                continue
+            for eid in refs:
+                if not isinstance(eid, str) or eid not in exercise_ids:
                     errors.append(f"模板 {tmpl.get('name', tid)} 引用不存在动作：{eid}")
 
     schedule = draft.get("schedule", {})
@@ -432,8 +453,14 @@ def validate_ai_draft(draft: dict) -> list[str]:
                 continue
             if entry.get("type") == "training" and not entry.get("templateId"):
                 errors.append(f"日期 {ds} 是训练日但缺少 templateId")
-            if entry.get("templateId") and entry.get("templateId") not in template_ids:
-                errors.append(f"日期 {ds} 引用不存在模板：{entry.get('templateId')}")
+            tid = entry.get("templateId")
+            if tid is not None and not isinstance(tid, str):
+                errors.append(f"日期 {ds} 的 templateId 必须是字符串或 null")
+            elif tid and tid not in template_ids:
+                errors.append(f"日期 {ds} 引用不存在模板：{tid}")
+            for field_name in ("type", "status", "note"):
+                if field_name in entry and not isinstance(entry[field_name], str):
+                    errors.append(f"日期 {ds} 的 {field_name} 必须是字符串")
     return errors
 
 
@@ -466,10 +493,15 @@ def call_ai_messages(
         raise RuntimeError(f"AI 服务连接失败: {exc.reason}")
     except Exception as exc:
         raise RuntimeError(f"AI 服务请求异常: {str(exc)[:300]}")
-    try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(f"AI 服务返回结构异常: {str(exc)[:200]}")
+    if not isinstance(data, dict) or not isinstance(data.get("choices"), list) or not data["choices"]:
+        raise RuntimeError("AI 服务返回结构异常：choices 必须是非空数组")
+    choice = data["choices"][0]
+    if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+        raise RuntimeError("AI 服务返回结构异常：缺少 message 对象")
+    content = choice["message"].get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("AI 服务返回结构异常：message.content 必须是非空字符串")
+    return content
 
 
 def call_ai_chat(
@@ -492,9 +524,12 @@ def call_ai_chat(
 def call_openai_compatible(base_url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, timeout: int = 60) -> dict:
     content = call_ai_chat(base_url, api_key, model, system_prompt, user_prompt, timeout=timeout)
     try:
-        return json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"AI 返回非 JSON：{content[:300]}") from exc
+        result = json.loads(content)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("AI 返回的不是合法 JSON 对象") from exc
+    if not isinstance(result, dict):
+        raise ValueError("AI 返回的数据格式错误，预期为 JSON 对象")
+    return result
 
 
 @dataclass
@@ -527,9 +562,10 @@ class PlanGenerator:
         content = self.chat_func(config["base_url"], config["api_key"], config["model"], self.prompt(), prompt)
         try:
             draft = json.loads(content)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, TypeError) as exc:
             raise ValueError(f"AI 返回的不是合法 JSON：{str(exc)[:200]}") from exc
-        draft.setdefault("schemaVersion", AI_SCHEMA_VERSION)
+        if isinstance(draft, dict):
+            draft.setdefault("schemaVersion", AI_SCHEMA_VERSION)
         errors = validate_ai_draft(draft)
         if errors:
             raise ValueError("AI 生成的草稿校验失败：\n" + "\n".join(errors))
@@ -580,13 +616,25 @@ class SessionAnalyzer:
         config = self.config_func()
         if not config["enabled"]:
             return self.local_analysis(session_payload)
-        return self.ai_call(
+        result = self.ai_call(
             config["base_url"],
             config["api_key"],
             config["model"],
             "你是运动训练复审助手，只能给 session 评分、训练调整建议，禁止输出写库指令。请返回 JSON。",
             json.dumps({"session": session_payload, "plan": plan_payload, "schemaVersion": AI_SCHEMA_VERSION}, ensure_ascii=False),
         )
+        if not isinstance(result, dict):
+            raise ValueError("AI 分析结果必须是 JSON 对象")
+        if "summary" in result and not isinstance(result["summary"], str):
+            raise ValueError("AI 分析结果 summary 必须是字符串")
+        if "adjustments" in result and (
+            not isinstance(result["adjustments"], list)
+            or any(not isinstance(item, str) for item in result["adjustments"])
+        ):
+            raise ValueError("AI 分析结果 adjustments 必须是字符串数组")
+        if "score" in result and (type(result["score"]) not in (int, float) or not 0 <= result["score"] <= 100):
+            raise ValueError("AI 分析结果 score 必须是 0 到 100 的数字")
+        return result
 
     @staticmethod
     def local_analysis(session_payload: dict) -> dict:
@@ -630,19 +678,25 @@ class VideoRecommender:
         )
         try:
             result = json.loads(content)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, TypeError) as exc:
             raise ValueError(f"AI 返回的不是合法 JSON：{str(exc)[:200]}") from exc
+        if not isinstance(result, dict):
+            raise ValueError("AI 视频建议必须是 JSON 对象")
         search_urls = result.get("searchUrls", [])
         if not isinstance(search_urls, list):
-            search_urls = []
+            raise ValueError("AI 视频建议 searchUrls 必须是字符串数组")
         for url in search_urls:
+            if not isinstance(url, str):
+                raise ValueError("AI 视频建议 searchUrls 必须是字符串数组")
             if not validate_bilibili_url(url):
                 raise ValueError(f"AI 返回了非 Bilibili 视频链接（已拒绝）：{url}")
         keywords = result.get("keywords", [])
-        if not isinstance(keywords, list):
-            keywords = []
-        query = str(keywords[0]) if keywords else exercise_name
-        search_url = str(search_urls[0]) if search_urls else bilibili_search_url(query)
+        if not isinstance(keywords, list) or any(not isinstance(item, str) for item in keywords):
+            raise ValueError("AI 视频建议 keywords 必须是字符串数组")
+        if not search_urls and not any(item.strip() for item in keywords):
+            raise ValueError("AI 视频建议必须包含搜索关键词或 Bilibili 链接")
+        query = keywords[0] if keywords else exercise_name
+        search_url = search_urls[0] if search_urls else bilibili_search_url(query)
         return {
             "status": "ok",
             "ai_enabled": True,

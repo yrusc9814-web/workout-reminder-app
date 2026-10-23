@@ -383,7 +383,7 @@ def test_dingtalk_todo_uses_dingtalk_access_token_header(client, monkeypatch):
         captured["url"] = url
         captured["payload"] = payload
         captured["headers"] = headers
-        return 200, "{}"
+        return 200, '{"id":"todo-1"}'
 
     monkeypatch.setenv("DINGTALK_TODO_CREATE_URL", "https://api.dingtalk.example/todos")
     monkeypatch.setenv("DINGTALK_ACCESS_TOKEN", "test-token")

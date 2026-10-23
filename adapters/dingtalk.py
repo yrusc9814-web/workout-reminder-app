@@ -57,7 +57,14 @@ class DingTalkAdapter:
                 },
             }
 
-        sent = 200 <= result["http_status"] < 300
+        response_data = self._response_object(result["response_body"])
+        # Webhook HTTP success only confirms receipt of the request, not delivery.
+        sent = (
+            200 <= result["http_status"] < 300
+            and response_data is not None
+            and type(response_data.get("errcode")) is int
+            and response_data["errcode"] == 0
+        )
         return {
             "channel": "dingtalk",
             "enabled": True,
@@ -66,6 +73,7 @@ class DingTalkAdapter:
             "status": "sent" if sent else "failed",
             "http_status": result["http_status"],
             "response": result["response_body"],
+            "error": None if sent else "钉钉提醒未确认成功，请检查业务回执后重试",
             "payload": {
                 "title": plan_payload["title"],
                 "text": message_payload["text"],
@@ -92,6 +100,8 @@ class DingTalkAdapter:
                 error_info = json.loads(str(exc))
             except json.JSONDecodeError:
                 error_info = self._network_error(str(exc), self.todo_url, todo_payload)
+            if not isinstance(error_info, dict):
+                error_info = self._network_error(str(exc), self.todo_url, todo_payload)
             return {
                 "channel": "dingtalk_todo",
                 "enabled": True,
@@ -113,13 +123,19 @@ class DingTalkAdapter:
             "response_body": body,
             "request_id": result.get("request_id"),
         }
-        created = 200 <= status_code < 300
+        response_data = self._response_object(body) or {}
+        # DingTalk's task and personal-task APIs return id and taskId respectively.
+        task_ids = (response_data.get("id"), response_data.get("taskId"))
+        created = (
+            200 <= status_code < 300
+            and any(isinstance(task_id, str) and task_id.strip() for task_id in task_ids)
+            and "code" not in response_data
+            and ("errcode" not in response_data or (
+                type(response_data["errcode"]) is int and response_data["errcode"] == 0
+            ))
+        )
         status = "created" if created else "failed"
         permission = None
-        try:
-            response_data = json.loads(body) if body else {}
-        except json.JSONDecodeError:
-            response_data = {}
         error_code = str(response_data.get("code") or response_data.get("errcode") or "")
         error_message = str(response_data.get("message") or response_data.get("errmsg") or "")
         if (
@@ -136,11 +152,20 @@ class DingTalkAdapter:
             "status": status,
             "http_status": status_code,
             "response": body,
+            "error": None if created else "钉钉待办未确认创建成功，请检查业务回执后重试",
             "permission": permission,
             "error_type": "api" if not created else "unknown",
             "debug_trace": trace,
             "payload": todo_payload,
         }
+
+    @staticmethod
+    def _response_object(body: str) -> dict | None:
+        try:
+            data = json.loads(body)
+        except (TypeError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
 
     def _post(self, payload: dict, url: str, headers: Optional[dict] = None) -> dict:
         result = self.post_func(url, payload, headers=headers) if self.post_func else self._post_json(url, payload, headers=headers)

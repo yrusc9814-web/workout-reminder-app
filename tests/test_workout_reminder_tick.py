@@ -2,6 +2,8 @@ import json
 import os
 import subprocess
 import sys
+
+import pytest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -73,8 +75,8 @@ def run_tick(body=None, status=200, raw_body=None, extra_env=None):
 def test_tick_posts_only_notification_endpoint():
     result, requests = run_tick()
 
-    assert result.returncode == 0
-    assert result.stderr == ""
+    assert result.returncode == 1
+    assert "not_configured" in result.stderr
     assert "NOTIFICATION: 2026-06-01 plan_id=42 status=not_configured" in result.stdout
     assert [request["path"] for request in requests] == ["/api/notifications/send"]
     assert requests[0]["body"] == {"channel": "dingtalk", "include_todo": True, "force": False}
@@ -128,3 +130,21 @@ def test_http_error_reports_response_body():
 
     assert result.returncode == 1
     assert "boom" in result.stderr
+
+
+@pytest.mark.parametrize("status,exit_code", [
+    ("sent", 0), ("partial_success", 1), ("failed", 1), ("not_configured", 1),
+    ("no_plan", 0), ("no_training_plan", 0), ("duplicate_skipped", 0),
+    ("not_found", 1), ("unknown", 1), (None, 1), ([], 1), ({}, 1),
+])
+def test_tick_exit_code_matches_business_result(status, exit_code):
+    result, _requests = run_tick(body={"status": status})
+    assert result.returncode == exit_code
+    if exit_code:
+        assert "ERROR:" in result.stderr
+
+
+def test_tick_rejects_contradictory_sent_result():
+    result, _requests = run_tick(body={"status": "sent", "sent": False})
+    assert result.returncode == 1
+    assert "contradictory sent result" in result.stderr

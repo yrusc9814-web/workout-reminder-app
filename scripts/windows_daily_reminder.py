@@ -242,8 +242,14 @@ def main(argv: Iterable[str] | None = None) -> int:
         record["tick_returncode"] = tick.returncode
         record["tick_stdout"] = tick.stdout.strip()[-1000:]
         record["tick_stderr"] = redact_text(tick.stderr.strip()[-1000:], env)
-        reminder_status = "sent" if '"status": "sent"' in tick.stdout else None
-        record["notification_status"] = reminder_status or "see_tick_stdout"
+        try:
+            notification_result = json.loads(tick.stdout.partition("\n")[2])
+        except (TypeError, ValueError):
+            notification_result = {}
+        record["notification_status"] = (
+            notification_result.get("status", "see_tick_stdout")
+            if isinstance(notification_result, dict) else "see_tick_stdout"
+        )
         record["mock_false_expected"] = True
         record["status"] = "success" if tick.returncode == 0 else "failed"
         record["finished_at"] = utc_now()
@@ -257,7 +263,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             "run_log": str(args.run_log),
             "secrets": record["secrets"],
         }, ensure_ascii=False))
-        return 0 if record["status"] == "success" else 1
+        return tick.returncode
     except Exception as exc:  # noqa: BLE001 - scheduled task needs explicit log on any failure.
         record["error"] = redact_text(str(exc), env)
         record["finished_at"] = utc_now()

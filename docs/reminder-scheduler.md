@@ -1,34 +1,33 @@
 # 本地定时提醒最小闭环
 
-本项目新增 `scripts/workout_reminder_tick.py` 作为一次性本地提醒 tick 脚本。它只使用 Python 标准库；训练日首次触发时调用本地钉钉提醒和钉钉代办 API，不接微信，不修改任务计划。
+`scripts/workout_reminder_tick.py` 是一次性本地提醒 tick 脚本，只使用 Python 标准库，调用本地统一通知 API。正式首页的训练提醒仍为未开放状态，不会自动调用此接口；本次修复不启用提醒或修改任务计划。
 
 ## 行为
 
-1. 读取今日计划 API。
-2. 如果今天不是训练日，打印“不提醒”提示并以 `0` 退出。
-3. 如果今天是训练日，检查本地提醒日志中是否已存在同一 `date + plan_id`。
-4. 未提醒过则在 stdout 打印提醒，调用钉钉提醒 / 钉钉代办 API，并向 JSON 日志追加一条记录。
-5. 已提醒过则打印“已提醒，不重复提醒”提示并以 `0` 退出。
-6. API 不可用、非 2xx、坏 JSON、日志读取/解析/写入失败时，在 stderr 打印清晰 `ERROR:` 并以 `1` 退出。
+1. POST `/api/notifications/send`，默认请求钉钉提醒和待办，服务端读取今日计划。
+2. 无计划（`no_plan`）、休息日（`no_training_plan`）、已成功投递（`duplicate_skipped`）是正常跳过，退出 `0`。
+3. HTTP 2xx 之后还须检查业务回执：提醒要求整数 `errcode: 0`；待办要求非空字符串顶层 `id`（CreateTodoTask）或 `taskId`（CreatePersonalTodoTask），且无业务错误。空对象、非对象、坏 JSON、错误回执不代表成功。回执字段依据 [DingTalk 官方 SDK 模型](https://pkg.go.dev/github.com/alibabacloud-go/dingtalk/todo_1_0#CreateTodoTaskResponseBody)。
+4. 本次请求的投递全部成功时返回 `sent`、`sent: true`，退出 `0`，服务端写入 SQLite `reminders` 的活动记录供去重。
+5. 部分成功返回 `partial_success`；全部失败返回 `failed`；全部未配置返回 `not_configured`。这些结果的顶层 `sent` 均为 `false`，退出 `1`，不会写入成功去重记录。各渠道结果保留在 `reminder` / `todo` 中。
+6. 部分成功后的重试会再次执行本次请求的全部投递，因此可能重复提醒或待办。这是当前按计划去重模型的明确限制；本次不引入逐渠道记录或数据库变更。独立兼容提醒入口成功后的记录仍可参与现有按计划去重。
+7. API 不可用、非 2xx、坏 JSON、未知业务状态均在 stderr 打印 `ERROR:` 并退出 `1`。Windows 包装入口保留 tick 的实际退出码。
 
 ## 默认配置
 
-- 今日计划 API：`http://127.0.0.1:3000/api/today`
-- 钉钉提醒 API：`http://127.0.0.1:3000/api/reminders/dingtalk/send`
-- 钉钉代办 API：`http://127.0.0.1:3000/api/todos/dingtalk/create`
-- 日志：`workout-app/data/reminder-log.json`
+- 通知 API：`http://127.0.0.1:3000/api/notifications/send`
+- 去重：服务端当前数据库 `reminders` 表（脚本不读写旧 JSON 去重日志）。
 
 可通过环境变量覆盖：
 
 ```bash
-WORKOUT_REMINDER_API_URL=http://127.0.0.1:3000/api/today \
-WORKOUT_REMINDER_LOG_PATH=data/reminder-log.json \
-WORKOUT_DINGTALK_REMINDER_URL=http://127.0.0.1:3000/api/reminders/dingtalk/send \
-WORKOUT_DINGTALK_TODO_URL=http://127.0.0.1:3000/api/todos/dingtalk/create \
+WORKOUT_NOTIFICATION_URL=http://127.0.0.1:3000/api/notifications/send \
+WORKOUT_NOTIFICATION_CHANNEL=dingtalk \
+WORKOUT_NOTIFICATION_INCLUDE_TODO=1 \
+WORKOUT_NOTIFICATION_FORCE=0 \
 python scripts/workout_reminder_tick.py
 ```
 
-> 注意：脚本不会启动服务。运行前需要用户自行确认 workout-app 服务已在目标 API 地址可访问。没有钉钉凭据时 API 返回 `not_configured`，脚本仍会记录状态但不能证明真实送达。
+> 脚本不会启动服务。运行前需确认目标 API 可访问；`force=1` 会绕过去重。没有凭据返回 `not_configured` 并以 `1` 退出，不会记录成功。
 
 ## 定时器示例
 
@@ -64,41 +63,30 @@ python scripts/workout_reminder_tick.py
 - 起始于：`D:\workout-reminder-app-github\workout-app`
 - 权限：当前 Windows 用户交互登录、非最高权限运行
 - 运行日志：`data/windows-reminder-runs.jsonl`
-- 去重日志：`data/windows-reminder-log.json`
+- 去重记录：服务端当前数据库 `reminders` 表
 
 如需使用自定义 API 或日志路径，可直接调用 Python 入口并传参：
 
 ```bash
-python scripts/windows_daily_reminder.py --port 3000 --run-log data/windows-reminder-runs.jsonl --tick-log data/windows-reminder-log.json
+python scripts/windows_daily_reminder.py --port 3000 --run-log data/windows-reminder-runs.jsonl
 ```
 
 ## 日志格式
 
-`data/reminder-log.json` 是 JSON 数组，每次成功提醒追加一项：
+Windows 包装入口的 JSONL 运行日志记录每次 tick 的实际结果；其 `status: success` 代表 tick 正常完成，也包括正常跳过，不一定发送了通知。示例：
 
 ```json
-[
-  {
-    "date": "2026-05-11",
-    "plan_id": 1,
-    "title": "力量训练",
-    "reminded_at": "2026-06-09T00:00:00.000000+00:00",
-    "api_url": "http://127.0.0.1:3000/api/today",
-    "dingtalk_reminder_status": "not_configured",
-    "dingtalk_todo_status": "not_configured"
-  }
-]
+{"status":"failed","tick_returncode":1,"tick_stdout":"...partial_success...","tick_stderr":"ERROR: notification delivery did not complete: partial_success"}
 ```
 
-该日志用于本地去重，建议不要手工破坏 JSON 结构。
+该运行日志不用于去重。`tick_stdout` 保留通知结果（最多末尾 1000 字符），不能替代渠道的业务回执。
 
 ## 测试
 
 在 `workout-app/` 目录运行：
 
 ```bash
-python - <<'PY'
-import pytest, sys
-sys.exit(pytest.main(['-q','-c','/dev/null','--rootdir=.','tests']))
-PY
+python -m pytest -q -c /dev/null --rootdir=. tests/test_van22_notifications.py tests/test_workout_reminder_tick.py
 ```
+
+测试使用临时 SQLite、模拟钉钉回执和本机 loopback HTTP fixture，不发送真实通知。

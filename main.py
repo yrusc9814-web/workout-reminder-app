@@ -3461,7 +3461,12 @@ def ai_import_plan(payload: AIImportRequest):
 def ai_analyze(payload: AIAnalyzeRequest, db: Session = Depends(get_db)):
     if payload.session_id is not None:
         session = _require_session(db, payload.session_id)
-        analysis = _run_session_analysis(session)
+        try:
+            analysis = _run_session_analysis(session)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=f"AI 调用失败，未生成分析结果：{exc}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"status": "analysis", "analysis": analysis, "warnings": []}
     if payload.prompt:
         return ai_import_plan(AIImportRequest(prompt=payload.prompt))

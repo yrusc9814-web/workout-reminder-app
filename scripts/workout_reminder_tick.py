@@ -60,7 +60,11 @@ def run(notification_url: str) -> int:
     date = result.get("date", "today")
     print(f"NOTIFICATION: {date} plan_id={plan_id} status={status}")
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    if status == "sent" and result.get("sent") is False:
+        return error("notification delivery did not complete: contradictory sent result")
+    if isinstance(status, str) and status in {"sent", "no_plan", "no_training_plan", "duplicate_skipped"}:
+        return 0
+    return error(f"notification delivery did not complete: {status}")
 
 
 def main() -> int:
