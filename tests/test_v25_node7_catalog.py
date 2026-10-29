@@ -1,4 +1,4 @@
-from v25_catalog import V24_BUILTIN_CATALOG
+from v25_catalog import BUILTIN_CATALOG
 
 
 def test_v24_catalog_preview_is_deterministic_and_commit_is_idempotent(client, app_modules):
@@ -6,7 +6,7 @@ def test_v24_catalog_preview_is_deterministic_and_commit_is_idempotent(client, a
     db = database.SessionLocal()
     try:
         existing = database.Exercise(
-            name=V24_BUILTIN_CATALOG[0]["name"],
+            name=BUILTIN_CATALOG[0]["name"],
             category="用户自定义分类",
             body_parts="自定义",
             difficulty="中",
@@ -24,9 +24,9 @@ def test_v24_catalog_preview_is_deterministic_and_commit_is_idempotent(client, a
     assert preview_response.status_code == 200
     preview = preview_response.json()
     assert preview["status"] == "ready"
-    assert preview["source_count"] == len(V24_BUILTIN_CATALOG)
+    assert preview["source_count"] == len(BUILTIN_CATALOG)
     assert preview["existing_count"] == 1
-    assert preview["create_count"] == len(V24_BUILTIN_CATALOG) - 1
+    assert preview["create_count"] == len(BUILTIN_CATALOG) - 1
     assert db_count(database, database.Exercise) == before_count
 
     payload = {
@@ -38,13 +38,13 @@ def test_v24_catalog_preview_is_deterministic_and_commit_is_idempotent(client, a
     assert committed.status_code == 200, committed.text
     body = committed.json()
     assert body["status"] == "committed"
-    assert len(body["created"]) == len(V24_BUILTIN_CATALOG) - 1
+    assert len(body["created"]) == len(BUILTIN_CATALOG) - 1
 
     db = database.SessionLocal()
     try:
-        assert db.query(database.Exercise).filter(database.Exercise.name == V24_BUILTIN_CATALOG[0]["name"]).one().id == existing_id
-        assert db.query(database.Exercise).filter(database.Exercise.name == V24_BUILTIN_CATALOG[0]["name"]).one().notes == "用户已经编辑的内容"
-        for item in V24_BUILTIN_CATALOG:
+        assert db.query(database.Exercise).filter(database.Exercise.name == BUILTIN_CATALOG[0]["name"]).one().id == existing_id
+        assert db.query(database.Exercise).filter(database.Exercise.name == BUILTIN_CATALOG[0]["name"]).one().notes == "用户已经编辑的内容"
+        for item in BUILTIN_CATALOG:
             assert db.query(database.Exercise).filter(database.Exercise.name == item["name"]).count() == 1
     finally:
         db.close()
@@ -52,14 +52,14 @@ def test_v24_catalog_preview_is_deterministic_and_commit_is_idempotent(client, a
     replay = client.post("/api/migration/catalog/v24/commit", json=payload)
     assert replay.status_code == 200
     assert replay.json()["status"] == "already_committed"
-    assert db_count(database, database.Exercise) == before_count + len(V24_BUILTIN_CATALOG) - 1
+    assert db_count(database, database.Exercise) == before_count + len(BUILTIN_CATALOG) - 1
 
 
 def test_v24_catalog_duplicate_name_is_blocked(client, app_modules):
     database, _main = app_modules
     db = database.SessionLocal()
     try:
-        item = V24_BUILTIN_CATALOG[0]
+        item = BUILTIN_CATALOG[0]
         db.add_all([
             database.Exercise(name=item["name"], category="a", body_parts="a", difficulty="低", default_sets=1),
             database.Exercise(name=item["name"], category="b", body_parts="b", difficulty="低", default_sets=1),

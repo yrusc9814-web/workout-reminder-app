@@ -3371,6 +3371,18 @@
       function parseDateKey(key) { var p = String(key).split('-'); return { year: parseInt(p[0], 10), month: parseInt(p[1], 10) - 1, day: parseInt(p[2], 10) }; }
       function getDaysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(); }
       function getMonthStartOffset(year, month) { return new Date(year, month, 1).getDay(); }
+      // User-facing copy must follow the active execution date.  The real
+      // current day keeps the established 今日/今天 wording; a historical or
+      // future session uses its full calendar date so edits cannot look like
+      // mutations of today's plan.
+      function v25ExecutionDateCopy(dateKey) {
+        var todayKey = formatDateKey(getToday());
+        var key = isValidDateKey(dateKey) ? dateKey : todayKey;
+        if (key === todayKey) return { key: key, label: '今日', noun: '今天', plan: '今日计划', training: '今日训练' };
+        var parts = parseDateKey(key);
+        var label = parts.year + ' 年 ' + (parts.month + 1) + ' 月 ' + parts.day + ' 日';
+        return { key: key, label: label, noun: label, plan: label + '计划', training: label + '训练' };
+      }
       // 展示月内某日（1~31）对应的完整日期 key
       function displayedDateKey(day) { return formatDateKeyParts(calendarDisplayYear, calendarDisplayMonth, day); }
       function displayedMonthLabel() { return (calendarDisplayMonth + 1) + ' 月'; }
@@ -4343,8 +4355,9 @@
           return;
         }
         // 每天都可调整（含已完成/休息日），修改只影响当天
+        var dayCopy = v25ExecutionDateCopy(displayedDateKey(day));
         var headHint = plan.status === 'rest'
-          ? '今天是恢复日，也可临时安排低强度训练；修改只影响这一天'
+          ? dayCopy.noun + '是恢复日，也可临时安排低强度训练；修改只影响这一天'
           : (plan.status === 'done'
             ? '这天已完成，仍可调整训练计划（补练/替换），只影响这一天'
             : '查看本次训练内容；修改只影响这一天');
@@ -4379,9 +4392,10 @@
       }
       function renderAdjustModal(day, reason) {
         var current = getCalendarPlan(displayedDateKey(day));
+        var dayCopy = v25ExecutionDateCopy(displayedDateKey(day));
         var reasons = [
           ['pain','该部位不舒服','例如腿部不舒服，避开下肢负重和跳跃'],
-          ['time','今天时间不够','保留核心目的，压缩为 10 分钟简化版'],
+          ['time', dayCopy.noun + '时间不够','保留核心目的，压缩为 10 分钟简化版'],
           ['equipment','没有器械','只推荐无需器械的动作'],
           ['body','想换训练部位','换到近期较少训练的部位']
         ];
@@ -4404,7 +4418,7 @@
           return '<button class="replace-option ' + (index === 0 ? 'selected' : '') + '" type="button" data-replace-plan="' + escapeHtml(plan.id) + '" data-replace-index="' + index + '"><strong>' + escapeHtml(plan.title) + '</strong><p>' + plan.items.map(escapeHtml).join(' · ') + '</p><span class="tags"><span class="tag scene">⏱ ' + plan.time + ' 分钟</span><span class="tag low">' + escapeHtml(plan.intensity) + '</span><span class="tag core">' + escapeHtml(plan.scene) + '</span></span></button>';
         }).join('');
         window.__replaceSuggestions = suggestions;
-        openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>按今天情况调整</h3><p>只替换 ' + displayedMonthLabel() + ' ' + day + ' 日，不改变整月其他训练。</p></div></div>' + (reason === 'pain' ? '<div class="safety-note">身体不适时，系统只能帮助降低训练负荷，不能判断伤病。若持续或明显疼痛、急性症状、活动受限或已有医嘱限制，请停止训练并咨询医生或康复专业人员。</div>' : '') + cards + '<div class="modal-actions"><button class="btn primary" type="button" data-confirm-replace="' + day + '">确认替换</button><button class="btn ghost" type="button" data-postpone-plan="' + day + '">推迟原训练</button><button class="btn ghost" type="button" data-adjust-day="' + day + '">重选原因</button></div>');
+        openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>按' + dayCopy.noun + '情况调整</h3><p>只替换 ' + displayedMonthLabel() + ' ' + day + ' 日，不改变整月其他训练。</p></div></div>' + (reason === 'pain' ? '<div class="safety-note">身体不适时，系统只能帮助降低训练负荷，不能判断伤病。若持续或明显疼痛、急性症状、活动受限或已有医嘱限制，请停止训练并咨询医生或康复专业人员。</div>' : '') + cards + '<div class="modal-actions"><button class="btn primary" type="button" data-confirm-replace="' + day + '">确认替换</button><button class="btn ghost" type="button" data-postpone-plan="' + day + '">推迟原训练</button><button class="btn ghost" type="button" data-adjust-day="' + day + '">重选原因</button></div>');
       }
       function replaceDayPlan(day, plan) {
         var dateKey = displayedDateKey(day);
@@ -4520,8 +4534,11 @@
           ? v25CurrentExecutionDateKey()
           : (typeof todaySessionKey === 'string' ? todaySessionKey : (typeof v25TodayKey === 'function' ? v25TodayKey() : ''));
         var renderTodayKey = typeof v25TodayKey === 'function' ? v25TodayKey() : renderDateKey;
-        var renderDateLabel = renderDateKey && renderDateKey !== renderTodayKey ? renderDateKey : '今日';
-        var renderDateNoun = renderDateLabel === '今日' ? '今天' : renderDateLabel;
+        var renderDateCopy = typeof v25ExecutionDateCopy === 'function'
+          ? v25ExecutionDateCopy(renderDateKey)
+          : { label: renderDateKey && renderDateKey !== renderTodayKey ? renderDateKey : '今日', noun: renderDateKey && renderDateKey !== renderTodayKey ? renderDateKey : '今天' };
+        var renderDateLabel = renderDateCopy.label;
+        var renderDateNoun = renderDateCopy.noun;
         // Narrow helper extraction tests from earlier VAN rounds do not load
         // the page's state variable; keep those isolated render contracts
         // compatible without weakening the real loading/error guards.
@@ -4648,10 +4665,16 @@
         var activeTodayKey = typeof v25TodayKey === 'function'
           ? v25TodayKey()
           : (typeof formatDateKey === 'function' && typeof getToday === 'function' ? formatDateKey(getToday()) : activeDateKey);
+        var activeDateCopy = typeof v25ExecutionDateCopy === 'function'
+          ? v25ExecutionDateCopy(activeDateKey)
+          : { label: activeDateKey && activeDateKey !== activeTodayKey ? activeDateKey : '今日' };
         var activeDatePrefix = activeDateKey && activeDateKey !== activeTodayKey ? activeDateKey + ' · ' : '';
-        var activeDateLabel = activeDatePrefix ? activeDateKey : '今日';
+        var activeDateLabel = activeDateCopy.label;
         var kicker = document.getElementById('todayKicker');
         if (kicker) kicker.textContent = '日计划 · ' + activeDateLabel;
+        if (heroProgress) heroProgress.setAttribute('aria-label', activeDateLabel + '训练进度');
+        var detailHeading = detailPanel && detailPanel.querySelector('h2');
+        if (detailHeading) detailHeading.textContent = '编辑' + activeDateLabel + '清单';
         var clearPlanButton = document.getElementById('clearTodayBtn');
         if (clearPlanButton) clearPlanButton.textContent = '清空' + activeDateLabel + '计划';
         if (title) title.textContent = activeDatePrefix + source + ' · 预计 ' + duration + ' 分钟';
@@ -4668,7 +4691,7 @@
           var currentItemForButton = todayPlan[Math.min(todayStepIndex, todayPlan.length - 1)] || {};
           var targetSetsForButton = Math.max(1, Number(currentItemForButton.sets || 1));
           startBtn.textContent = v25RemoteProgressPending ? '同步中…'
-            : doneForUi ? '✓ ' + (activeDatePrefix ? activeDateKey : '今日') + '已完成'
+            : doneForUi ? '✓ ' + activeDateLabel + '已完成'
             : (!todayStarted ? '开始训练'
             : (!todayActionStartedAt ? '开始当前动作 · 第 ' + Math.min(todaySetIndex + 1, targetSetsForButton) + ' 组'
             : (todaySetIndex + 1 < targetSetsForButton ? '完成第 ' + (todaySetIndex + 1) + ' 组'
@@ -4710,7 +4733,7 @@
         var progressCaption = todayPlanEl('dayProgressCaption');
         var n = todayPlan.length;
         var stepNo = todayPlan.length ? (todayStepIndex + 1) : 0;
-        if (progressLabel) progressLabel.textContent = (activeDatePrefix ? activeDateKey : '今日') + ' ' + n + ' 个动作 · 每组确认完成';
+        if (progressLabel) progressLabel.textContent = activeDateLabel + ' ' + n + ' 个动作 · 每组确认完成';
         if (progressStat) {
           var terminalActions = executionSummary.completedActions + executionSummary.skippedActions;
           progressStat.textContent = doneForUi
@@ -4875,8 +4898,12 @@
         var detail = exerciseDetails[name];
         if (!detail) return;
         var exists = todayPlan.some(function(item) { return item.name === name; });
+        var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var activeDateCopy = typeof v25ExecutionDateCopy === 'function'
+          ? v25ExecutionDateCopy(activeDateKey)
+          : { label: activeDateKey && activeDateKey !== v25TodayKey() ? activeDateKey : '今日', plan: activeDateKey && activeDateKey !== v25TodayKey() ? activeDateKey + '计划' : '今日计划', training: activeDateKey && activeDateKey !== v25TodayKey() ? activeDateKey + '训练' : '今日训练' };
         if (!v25Remote.ready && !exists) {
-          showToast('后端未连接，今日动作未保存', 'error');
+          showToast('后端未连接，' + activeDateCopy.plan + '动作未保存', 'error');
           return;
         }
         if (v25Remote.ready && !exists) {
@@ -4898,20 +4925,19 @@
           };
           if (remoteRepsMatch) nextItem.reps = Number(remoteRepsMatch[1]);
           nextItems.push(nextItem);
-          var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
           var base = calendarPlans[activeDateKey] || restPlan;
-          var nextPlan = Object.assign({}, base, { title: base.status === 'rest' ? '今日训练' : base.title, status:'planned', focus:base.focus || '临时训练', scene:base.scene || '临时训练', items:nextItems });
+          var nextPlan = Object.assign({}, base, { title: base.status === 'rest' ? activeDateCopy.training : base.title, status:'planned', focus:base.focus || '临时训练', scene:base.scene || '临时训练', items:nextItems });
           v25SaveCanonicalPlan(activeDateKey, nextItems, nextPlan).then(function () {
-            openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>已加入今日计划</h3><p>' + escapeHtml(name) + ' · 已保存到后端并完成回读。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-view="home" data-modal-close>查看今日计划</button><button class="btn ghost" type="button" data-modal-close>继续添加</button></div>');
-          }).catch(function (error) { showToast(error.message || '今日计划保存失败', 'error'); });
+            openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>已加入' + activeDateCopy.plan + '</h3><p>' + escapeHtml(name) + ' · 已保存到后端并完成回读。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-view="home" data-modal-close>查看' + activeDateCopy.plan + '</button><button class="btn ghost" type="button" data-modal-close>继续添加</button></div>');
+          }).catch(function (error) { showToast(error.message || activeDateCopy.plan + '保存失败', 'error'); });
           return;
         }
         if (v25Remote.ready && exists) {
-          openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>动作已在今日计划中</h3><p>' + escapeHtml(name) + ' · 没有重复添加。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-view="home" data-modal-close>查看今日计划</button><button class="btn ghost" type="button" data-modal-close>继续添加</button></div>');
+          openModal('<button class="modal-close" type="button" data-modal-close>×</button><div class="modal-head"><div><h3>动作已在' + activeDateCopy.plan + '中</h3><p>' + escapeHtml(name) + ' · 没有重复添加。</p></div></div><div class="modal-actions"><button class="btn primary" type="button" data-view="home" data-modal-close>查看' + activeDateCopy.plan + '</button><button class="btn ghost" type="button" data-modal-close>继续添加</button></div>');
           return;
         }
         if (!exists) {
-          showToast('后端未连接，今日动作未保存', 'error');
+          showToast('后端未连接，' + activeDateCopy.plan + '动作未保存', 'error');
         }
       }
       function renderFavorites() {
@@ -5007,6 +5033,9 @@
           dateKey: source === 'today' ? todaySessionKey : null,
           stepIndex: source === 'today' ? todayStepIndex : -1
         };
+        var playerDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var playerDateCopy = v25ExecutionDateCopy(playerDateKey);
+        if (phase2PlayerAdd) phase2PlayerAdd.textContent = '加入' + playerDateCopy.plan;
         // P1-2：日计划执行上下文且今日未完成 → 「完成跟练」推进真实训练；
         // 否则主按钮只负责「关闭」，绝不在非执行上下文修改 todaySession。
         if (playerContext.source === 'today' && !v25UiDoneConfirmed()) {
@@ -5633,31 +5662,33 @@
             nextTodayItems = todayPlan.filter(function(item) { return item.name !== removeName; });
           }
           var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+          var activeDateCopy = v25ExecutionDateCopy(activeDateKey);
           if (!v25Remote.ready) {
-            showToast('后端未连接，今日动作未删除', 'error');
+            showToast('后端未连接，' + activeDateCopy.plan + '动作未删除', 'error');
             return;
           }
           if (v25Remote.ready) {
             var currentTodayPlan = calendarPlans[activeDateKey] || { title:'训练计划', status:'planned', focus:'训练建议', items:todayPlan };
             v25SaveCanonicalPlan(activeDateKey, nextTodayItems, currentTodayPlan).then(function () {
-              showToast('今日动作已删除并同步', 'success');
-            }).catch(function (error) { showToast(error.message || '今日动作删除失败', 'error'); });
+              showToast(activeDateCopy.label + '动作已删除并同步', 'success');
+            }).catch(function (error) { showToast(error.message || activeDateCopy.label + '动作删除失败', 'error'); });
             return;
           }
           return;
         }
         if (target.id === 'clearTodayBtn') {
+          var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+          var activeDateCopy = v25ExecutionDateCopy(activeDateKey);
           if (!v25Remote.ready) {
-            showToast('后端未连接，今日计划未清空', 'error');
+            showToast('后端未连接，' + activeDateCopy.plan + '未清空', 'error');
             return;
           }
           if (v25Remote.ready) {
-            var activeDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
             var clearBase = calendarPlans[activeDateKey] || { title:'恢复日', status:'rest', focus:'恢复与轻量活动', items:[] };
             var clearPlan = Object.assign({}, clearBase, { title:'恢复日', status:'rest', focus:'恢复与轻量活动', items:[] });
             v25SaveCanonicalPlan(activeDateKey, [], clearPlan).then(function () {
-              showToast('今日计划已清空并同步', 'success');
-            }).catch(function (error) { showToast(error.message || '清空今日计划失败', 'error'); });
+              showToast(activeDateCopy.plan + '已清空并同步', 'success');
+            }).catch(function (error) { showToast(error.message || activeDateCopy.plan + '清空失败', 'error'); });
             return;
           }
           return;
@@ -5793,8 +5824,8 @@
         if (hint) {
           v25ClearChildren(hint);
           if (todayPlanInfo) {
-            hint.appendChild(document.createTextNode('已选 '));
-            hint.appendChild(v25Element('strong', null, (today.getMonth() + 1) + '/' + today.getDate() + ' · ' + (todayPlanInfo.status === 'rest' ? '休息日' : '今日 · ' + todayPlanInfo.title)));
+            hint.appendChild(document.createTextNode('今日 '));
+            hint.appendChild(v25Element('strong', null, (today.getMonth() + 1) + '/' + today.getDate() + ' · ' + (todayPlanInfo.status === 'rest' ? '休息日' : todayPlanInfo.title)));
           } else {
             hint.appendChild(document.createTextNode('本周 '));
             hint.appendChild(v25Element('strong', null, formatDateKey(weekDates[0]) + ' → ' + formatDateKey(weekDates[6])));
@@ -6005,6 +6036,9 @@
         oldOpenDrawer(name);
         currentDrawerExercise = name;
         var detail = exerciseDetails[name];
+        var drawerDateKey = typeof v25ActiveSessionDateKey === 'function' ? v25ActiveSessionDateKey() : v25TodayKey();
+        var drawerDateCopy = v25ExecutionDateCopy(drawerDateKey);
+        if (dAddToday) dAddToday.textContent = '＋ 加入' + drawerDateCopy.plan;
         // P1-1：仅 verified（真实验配 + 合法 src）才允许“播放教学”并显示“AI 已验配”，否则一律显示无资料空态。
         if (isVerifiedVideo(name)) {
           dViewVideo.disabled = false;

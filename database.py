@@ -968,8 +968,8 @@ def migrate_database():
         # to a later same-name custom row on restart, or guess ambiguous names.
         marker_key = "van18_catalog_identity_v1"
         if db.query(Setting).filter(Setting.key == marker_key).first() is None:
-            from v25_catalog import V24_BUILTIN_CATALOG
-            for item in V24_BUILTIN_CATALOG:
+            from v25_catalog import BUILTIN_CATALOG
+            for item in BUILTIN_CATALOG:
                 owner = db.query(Exercise).filter(Exercise.catalog_key == item["catalog_key"]).first()
                 rows = db.query(Exercise).filter(Exercise.name == item["name"]).all()
                 if owner is None and len(rows) == 1 and rows[0].catalog_key is None:

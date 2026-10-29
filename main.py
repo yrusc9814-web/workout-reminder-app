@@ -23,6 +23,7 @@ from database import (
     Base,
     Exercise,
     Favorite,
+    MigrationLog,
     Reminder,
     SessionRecord,
     Setting,
@@ -44,8 +45,72 @@ from v25_migration import (
     build_preview,
     commit_preview,
 )
-from v25_catalog import build_catalog_preview, reconcile_catalog
+from v25_catalog import BUILTIN_CATALOG, CATALOG_MIGRATION_NAME, build_catalog_preview, reconcile_catalog
 from reps_contract import parse_implicit_spec_reps, parse_scalar_reps
+
+
+def _auto_catalog_identity_blockers(db: Session) -> list[dict]:
+    """Reject post-marker name rebinding before any startup catalog write."""
+    blockers = []
+    for item in BUILTIN_CATALOG:
+        owners = db.query(Exercise).filter(Exercise.catalog_key == item["catalog_key"]).all()
+        if len(owners) > 1:
+            blockers.append({"code": "duplicate_catalog_key", "catalog_key": item["catalog_key"], "count": len(owners)})
+            continue
+        if owners:
+            continue
+        named = db.query(Exercise).filter(Exercise.name == item["name"]).all()
+        if named:
+            blockers.append({
+                "code": "stable_key_missing_name_conflict",
+                "catalog_key": item["catalog_key"],
+                "name": item["name"],
+                "exercise_ids": [row.id for row in named],
+            })
+    return blockers
+
+
+def _auto_reconcile_builtin_catalog() -> dict:
+    """Make the explicit v24 catalog migration part of first startup safely.
+
+    The stable-key resolver must never guess a display name or silently drop a
+    plan item.  A fresh/legacy database therefore gets the existing catalog
+    preview/commit flow once, while ambiguous user data remains untouched and
+    visible to the existing manual migration UI.
+    """
+    import database as database_module
+
+    db = database_module.SessionLocal()
+    try:
+        identity_blockers = _auto_catalog_identity_blockers(db)
+        if identity_blockers:
+            return {"status": "blocked", "blockers": identity_blockers}
+
+        committed = db.query(MigrationLog).filter(
+            MigrationLog.migration_name == CATALOG_MIGRATION_NAME,
+            MigrationLog.status == "committed",
+        ).order_by(MigrationLog.id.desc()).first()
+        preview = build_catalog_preview(db)
+        if preview["status"] != "ready":
+            # A blocker is user data requiring an explicit, inspectable choice;
+            # startup must not mutate it or manufacture a successful catalog.
+            return {"status": "blocked", "blockers": preview["blockers"]}
+
+        # Re-check the current frozen source even after an older migration
+        # log.  A future catalog revision may add a new stable key; the old
+        # log must not make that row permanently invisible.  Same source plus
+        # no pending rows remains a true idempotent replay.
+        if committed is not None and committed.source_sha256 == preview["source_sha256"] and preview["create_count"] == 0:
+            return {"status": "already_committed", "migration_log_id": committed.id}
+
+        result = reconcile_catalog(db, preview)
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 @asynccontextmanager
@@ -56,6 +121,9 @@ async def lifespan(_app: FastAPI):
     if os.environ.get("WORKOUT_DISABLE_SEED", "").strip() not in {"1", "true", "TRUE", "yes", "YES"}:
         seed_database()
     database_module.migrate_database()
+    catalog_result = _auto_reconcile_builtin_catalog()
+    if catalog_result.get("status") == "blocked":
+        print(f"catalog auto-reconcile blocked: {catalog_result.get('blockers')}")
     yield
 
 

@@ -28,6 +28,27 @@ V24_BUILTIN_CATALOG = (
     {"catalog_key": "eye-exercises", "name": "眼保健操", "category": "养生操", "body_parts": "眼部", "difficulty": "低", "default_sets": 1, "default_reps": None, "duration_seconds": 300, "notes": "缓解眼部疲劳，适合长期盯屏幕的人群。", "benefit": "按揉攒竹、睛明、四白和太阳穴。", "tips": "手指需洁净，力度适中。"},
 )
 
+# VAN-27 supplement for the stable identity already referenced by the frozen
+# upper-body built-in plan. Keep it separate so the frozen V24 tuple remains
+# unchanged; its only supplied defaults are the plan's existing 3 x 12 facts.
+VAN27_BUILTIN_CATALOG = (
+    {
+        "catalog_key": "wall-angel",
+        "name": "靠墙天使",
+        "category": "上肢",
+        "body_parts": "",
+        "difficulty": "中",
+        "default_sets": 3,
+        "default_reps": "12次",
+        "duration_seconds": None,
+        "notes": "",
+        "benefit": "",
+        "tips": "",
+    },
+)
+
+BUILTIN_CATALOG = V24_BUILTIN_CATALOG + VAN27_BUILTIN_CATALOG
+
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -68,7 +89,7 @@ def build_catalog_preview(db: Session) -> dict:
     blockers = []
     existing = []
     create = []
-    for item in V24_BUILTIN_CATALOG:
+    for item in BUILTIN_CATALOG:
         keyed = [by_key[item["catalog_key"]]] if item["catalog_key"] in by_key else []
         matches = keyed or by_name.get(item["name"], [])
         if len(matches) > 1:
@@ -82,7 +103,7 @@ def build_catalog_preview(db: Session) -> dict:
     fingerprint = _exercise_fingerprint(db)
     body = {
         "migration": CATALOG_MIGRATION_NAME,
-        "source_sha256": _sha(V24_BUILTIN_CATALOG),
+        "source_sha256": _sha(BUILTIN_CATALOG),
         "affected_fingerprint": fingerprint,
         "existing": existing,
         "create": create,
@@ -93,7 +114,7 @@ def build_catalog_preview(db: Session) -> dict:
         "source_sha256": body["source_sha256"],
         "affected_fingerprint": fingerprint,
         "preview_hash": _sha(body),
-        "source_count": len(V24_BUILTIN_CATALOG),
+        "source_count": len(BUILTIN_CATALOG),
         "existing_count": len(existing),
         "create_count": len(create),
         "existing": existing,
@@ -107,7 +128,7 @@ def reconcile_catalog(db: Session, payload: dict | None = None) -> dict:
     expected_preview = payload.get("preview_hash")
     expected_source = payload.get("source_sha256")
     expected_fingerprint = payload.get("affected_fingerprint")
-    source_hash = _sha(V24_BUILTIN_CATALOG)
+    source_hash = _sha(BUILTIN_CATALOG)
     if expected_preview:
         replay = db.query(MigrationLog).filter(
             MigrationLog.migration_name == CATALOG_MIGRATION_NAME,
@@ -128,7 +149,7 @@ def reconcile_catalog(db: Session, payload: dict | None = None) -> dict:
     if preview["status"] != "ready":
         raise ValueError("catalog preview 存在阻断项")
 
-    for item in V24_BUILTIN_CATALOG:
+    for item in BUILTIN_CATALOG:
         rows = db.query(Exercise).filter(Exercise.name == item["name"]).all()
         owner = db.query(Exercise).filter(Exercise.catalog_key == item["catalog_key"]).first()
         if owner is None and len(rows) == 1 and rows[0].catalog_key is None:
@@ -157,7 +178,7 @@ def reconcile_catalog(db: Session, payload: dict | None = None) -> dict:
         preview_hash=preview["preview_hash"],
         affected_fingerprint=preview["affected_fingerprint"],
         status="committed",
-        details=json.dumps({"created": created, "source_count": len(V24_BUILTIN_CATALOG)}, ensure_ascii=False, sort_keys=True),
+        details=json.dumps({"created": created, "source_count": len(BUILTIN_CATALOG)}, ensure_ascii=False, sort_keys=True),
     )
     db.add(log)
     db.flush()

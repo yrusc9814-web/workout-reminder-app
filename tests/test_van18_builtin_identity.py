@@ -30,7 +30,7 @@ def test_catalog_rename_keeps_identity_and_reconcile_does_not_duplicate(client, 
     database, _ = app_modules
     database.migrate_database()
     assert client.get(f"/api/exercises/{ex['id']}").json()['catalog_key'] == 'posterior-pelvic-tilt'
-    assert len(client.get('/api/exercises').json()['exercises']) == 15
+    assert len(client.get('/api/exercises').json()['exercises']) == 16
 
 
 @pytest.mark.parametrize('route', ['generate', 'by-date'])

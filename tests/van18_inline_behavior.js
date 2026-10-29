@@ -62,7 +62,7 @@ async function run() {
   // Real IDs from the isolated API catalog; rename every display name.
   const renamed=catalog.map(ex=>({...ex,name:'目录展示改名 '+ex.id}));
   w.van18.setCatalog(renamed);
-  for (const plan of [w.van18.plans.quick10,w.van18.plans.back15,...[10,20,30].map(w.van18.recommend)]) {
+  for (const plan of [w.van18.plans.quick10,w.van18.plans.back15,w.van18.plans.upper20,...[10,20,30].map(w.van18.recommend)]) {
     const altered={...plan,items:plan.items.map((x,i)=>'任意展示文案 '+i+' · '+x.split(' · ')[1])};
     const resolved=w.van18.resolve(altered);
     assert.equal(resolved.length,plan.items.length);
@@ -77,15 +77,19 @@ async function run() {
   const storage={}; for(let i=0;i<w.localStorage.length;i++) { const k=w.localStorage.key(i); storage[k]=w.localStorage.getItem(k); }
   dom.window.close(); dom=create(storage); w=dom.window; await settle();
   assert.deepEqual(Array.from(w.van18.getToday(),i=>i.exerciseId),expected);
-  // The missing catalog action cannot turn a three-action plan into two.
+  // The complete upper-body built-in keeps all three stable identities.
   const before=writes.length;
   w.document.querySelector('[data-start-plan="upper20"]').click(); await settle();
-  assert.equal(writes.length,before); assert(w.document.querySelector('#v25Toast').textContent.includes('wall-angel'));
+  assert.equal(writes.length,before + 1);
+  const upperExpected=Array.from(w.van18.plans.upper20.exerciseKeys,k=>catalog.find(ex=>ex.catalog_key===k).id);
+  assert.deepEqual(writes.at(-1).body.items.map(i=>i.exercise_id),upperExpected);
+  assert.equal(writes.at(-1).body.items.length,3);
+  const afterUpper=writes.length;
   const broken={...w.van18.plans.back15,exerciseKeys:['missing',...w.van18.plans.back15.exerciseKeys.slice(1)]};
   assert.throws(()=>w.van18.payload(today,broken),/无法解析/);
   await assert.rejects(w.van18.ensure(broken),/无法解析/);
   await assert.rejects(w.van18.ensure({items:['未知动作 · 3×8','猫牛式 · 3×10']}),/未绑定/);
-  assert.equal(writes.length,before);
+  assert.equal(writes.length,afterUpper);
   assert.throws(()=>w.van18.payload(today,{items:['有效动作','']}),/缺少名称/);
   // Schedule uses the same stable identities through actual modal buttons.
   w.document.querySelector('[data-plan-id="back15"]').click(); await settle();
@@ -98,6 +102,6 @@ async function run() {
   assert.equal(writes.at(-1).body.items.length,3);
   assert.deepEqual(writes.at(-1).body.items.map(i=>i.exercise_id),Array.from(short.exerciseKeys,k=>catalog.find(ex=>ex.catalog_key===k).id));
   assert.deepEqual(errors,[]);
-  dom.window.close(); console.log(JSON.stringify({PASS:true,startCount:4,refreshIds:expected,missingBlocked:true,schedule:true,replace:true}));
+  dom.window.close(); console.log(JSON.stringify({PASS:true,startCount:writes.length,refreshIds:expected,upper20:upperExpected,missingBlocked:true,schedule:true,replace:true}));
 }
 run().catch(e=>{console.error(e);process.exit(1);});
