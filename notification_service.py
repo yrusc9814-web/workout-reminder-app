@@ -50,7 +50,12 @@ class NotificationService:
                 "date": plan.plan_date.isoformat(),
             }
 
-        if not request.force and self._already_sent(plan):
+        successful = set() if request.force else self._successful_channels(plan)
+        reminder_channel = "workbuddy" if request.channel == "workbuddy" else "dingtalk_reminder"
+        required = {reminder_channel}
+        if request.channel != "workbuddy" and request.include_todo:
+            required.add("dingtalk_todo")
+        if required <= successful:
             return {
                 "status": "duplicate_skipped",
                 "sent": False,
@@ -59,15 +64,21 @@ class NotificationService:
             }
 
         plan_payload = self.plan_payload(plan)
-        if request.channel == "workbuddy":
-            reminder = self.workbuddy.send_reminder(plan_payload)
-            todo = None
+        if reminder_channel in successful:
+            reminder = {"channel": request.channel, "status": "duplicate_skipped", "sent": True, "previously_sent": True}
         else:
-            reminder = self.dingtalk.send_reminder(plan_payload)
-            todo = self.dingtalk.create_todo(plan_payload) if request.include_todo else None
+            reminder = (self.workbuddy if request.channel == "workbuddy" else self.dingtalk).send_reminder(plan_payload)
+            self._record(plan, request, reminder_channel, reminder)
+
+        todo = None
+        if "dingtalk_todo" in required:
+            if "dingtalk_todo" in successful:
+                todo = {"channel": "dingtalk_todo", "status": "duplicate_skipped", "created": True, "previously_sent": True}
+            else:
+                todo = self.dingtalk.create_todo(plan_payload)
+                self._record(plan, request, "dingtalk_todo", todo)
 
         status = self._combined_status(reminder, todo)
-        self._record(plan, request, {"status": status, "sent": status == "sent"})
         return {
             "status": status,
             "sent": status == "sent",
@@ -88,30 +99,38 @@ class NotificationService:
         plan = self.db.query(WorkoutPlan).filter(WorkoutPlan.id == plan_id).first()
         if plan is None:
             return {"status": "not_found", "created": False, "detail": "未找到训练计划"}
-        return self.dingtalk.create_todo(self.plan_payload(plan))
+        result = self.dingtalk.create_todo(self.plan_payload(plan))
+        self._record(plan, NotificationRequest(plan_id=plan_id), "dingtalk_todo", result)
+        return result
 
     def _today_plan(self) -> WorkoutPlan | None:
         return self.db.query(WorkoutPlan).filter(WorkoutPlan.plan_date == date.today()).first()
 
-    def _already_sent(self, plan: WorkoutPlan) -> bool:
-        return (
+    def _successful_channels(self, plan: WorkoutPlan) -> set[str]:
+        rows = (
             self.db.query(Reminder)
             .filter(
                 Reminder.plan_id == plan.id,
                 Reminder.reminder_date == plan.plan_date,
                 Reminder.is_active == True,
             )
-            .first()
-            is not None
+            .all()
         )
+        # Historical rows have no channel information; retain their original
+        # whole-plan meaning rather than guessing which deliveries succeeded.
+        if any(row.delivery_channel is None for row in rows):
+            return {"dingtalk_reminder", "dingtalk_todo", "workbuddy"}
+        return {row.delivery_channel for row in rows}
 
-    def _record(self, plan: WorkoutPlan, request: NotificationRequest, result: dict) -> None:
-        """Deduplicate only when every delivery requested in this attempt succeeded."""
-        if result.get("sent") is not True:
+    def _record(self, plan: WorkoutPlan, request: NotificationRequest, channel: str, result: dict) -> None:
+        """Persist each confirmed success before attempting the next delivery."""
+        success_key = "created" if channel == "dingtalk_todo" else "sent"
+        if result.get(success_key) is not True:
             return
         row = Reminder(
             plan_id=plan.id,
             reminder_date=plan.plan_date,
+            delivery_channel=channel,
             message=request.message or result.get("status") or "notification_sent",
             is_active=True,
         )

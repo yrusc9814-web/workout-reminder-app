@@ -88,11 +88,11 @@ def test_api_delivery_status_and_retry_dedup(app_modules, monkeypatch, reminder_
     assert first["status"] == expected
     assert first["sent"] is (reminder_ok and todo_ok)
     with database.SessionLocal() as db:
-        assert db.query(database.Reminder).filter_by(is_active=True).count() == (1 if expected == "sent" else 0)
+        assert db.query(database.Reminder).filter_by(is_active=True).count() == int(reminder_ok) + int(todo_ok)
     state.update(reminder=True, todo=True)
     second = client.post("/api/notifications/send", json={"plan_id": plan_id}).json()
     assert second["status"] == ("duplicate_skipped" if expected == "sent" else "sent")
-    assert len(calls) == (2 if expected == "sent" else 4)
+    assert len(calls) == 4 - int(reminder_ok) - int(todo_ok)
     third = client.post("/api/notifications/send", json={"plan_id": plan_id}).json()
     assert third["status"] == "duplicate_skipped"
 

@@ -251,6 +251,8 @@ class Reminder(Base):
     id = Column(Integer, primary_key=True, index=True)
     plan_id = Column(Integer, ForeignKey("workout_plans.id"), nullable=True, index=True)
     reminder_date = Column(Date, nullable=False, index=True)
+    # NULL preserves the pre-VAN-131 whole-plan deduplication contract.
+    delivery_channel = Column(String(40), nullable=True)
     message = Column(String(240), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -725,6 +727,10 @@ def ensure_schema_columns():
     _rebuild_workout_sessions_with_nullable_started_at()
     _rebuild_session_records_with_occurrence_identity()
     inspector = inspect(engine)
+    reminder_columns = {column["name"] for column in inspector.get_columns("reminders")}
+    if "delivery_channel" not in reminder_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE reminders ADD COLUMN delivery_channel VARCHAR(40)"))
     ws_columns = {column["name"] for column in inspector.get_columns("workout_sessions")}
     if "plan_action_fingerprint" not in ws_columns:
         with engine.begin() as connection:
