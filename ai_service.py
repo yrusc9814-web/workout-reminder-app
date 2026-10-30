@@ -32,6 +32,10 @@ _PROVIDER_ENV = (
 )
 
 
+class KeyStoreError(Exception):
+    """Persisted provider data is unreadable or invalid, not a request error."""
+
+
 class ProviderModelsError(RuntimeError):
     """A safe, user-facing error from temporary model discovery."""
 
@@ -65,7 +69,10 @@ def normalize_base_url(base_url: str) -> str:
         raise ValueError("base_url 不能为空")
     if any(char.isspace() for char in value):
         raise ValueError("base_url 格式不合法")
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+    except ValueError as exc:
+        raise ValueError("base_url 格式不合法") from exc
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         raise ValueError("base_url 必须是完整的 HTTP 或 HTTPS 地址")
     if parsed.username or parsed.password:
@@ -129,11 +136,40 @@ def _load_key_store() -> dict:
     path = _key_store_path()
     if not path or not os.path.exists(path):
         return {"active_provider": "", "providers": {}}
-    with open(path, "r", encoding="utf-8") as handle:
-        envelope = json.load(handle)
-    plain = _dpapi_unprotect(str(envelope["protected"]))
-    value = json.loads(plain.decode("utf-8"))
-    return value if isinstance(value, dict) else {"active_provider": "", "providers": {}}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            envelope = json.load(handle)
+        if (
+            not isinstance(envelope, dict)
+            or type(envelope.get("version")) is not int
+            or envelope["version"] != 1
+            or not isinstance(envelope.get("protected"), str)
+            or not envelope["protected"]
+        ):
+            raise ValueError("Invalid key store envelope")
+        plain = _dpapi_unprotect(envelope["protected"])
+        value = json.loads(plain.decode("utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("Invalid key store payload")
+        active = value.get("active_provider")
+        providers = value.get("providers")
+        if not isinstance(active, str) or not isinstance(providers, dict):
+            raise ValueError("Invalid key store structure")
+        if active not in ("", "local-demo") and active not in providers:
+            raise ValueError("Missing active provider")
+        for provider, config in providers.items():
+            normalize_provider_id(provider)
+            if not isinstance(config, dict) or any(
+                not isinstance(config.get(field), str) or not config[field].strip()
+                for field in ("api_key", "base_url", "model")
+            ):
+                raise ValueError("Invalid stored provider")
+            normalize_api_key(config["api_key"])
+            normalize_base_url(config["base_url"])
+        return value
+    except (OSError, ValueError, RuntimeError) as exc:
+        # Neither file contents, filesystem paths nor DPAPI details are public.
+        raise KeyStoreError("AI key store 配置不可用。") from exc
 
 
 def _save_key_store(value: dict) -> None:

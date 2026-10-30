@@ -94,7 +94,8 @@ def isolated_external_services(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKOUT_KEY_STORE", str(tmp_path / "test-only-key-store.enc"))
     original_connect = socket.socket.connect
     def deny_external_network(sock, address):
-        if sock.family == socket.AF_UNIX or (isinstance(address, tuple) and address[0] in ("127.0.0.1", "::1")):
+        unix_family = getattr(socket, "AF_UNIX", object())
+        if sock.family == unix_family or (isinstance(address, tuple) and address[0] in ("127.0.0.1", "::1")):
             return original_connect(sock, address)
         raise RuntimeError("External network disabled in unit/DOM regression tests; mock the transport")
     monkeypatch.setattr(socket.socket, "connect", deny_external_network)

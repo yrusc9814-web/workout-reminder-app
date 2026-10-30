@@ -137,10 +137,17 @@ app.mount("/v25-preview/assets", StaticFiles(directory=V25_ASSETS_DIR), name="v2
 
 
 @app.exception_handler(RequestValidationError)
-async def safe_ai_models_validation(request: FastAPIRequest, exc: RequestValidationError):
+async def safe_ai_provider_validation(request: FastAPIRequest, exc: RequestValidationError):
     if request.method == "POST" and request.url.path == "/api/ai/models":
         return JSONResponse(status_code=422, content={"detail": "AI provider 临时连接信息格式不合法。"})
+    if request.method == "PUT" and request.url.path == "/api/ai/provider":
+        return JSONResponse(status_code=422, content={"detail": "AI provider 配置格式不合法。"})
     return await request_validation_exception_handler(request, exc)
+
+
+@app.exception_handler(ai_service.KeyStoreError)
+async def safe_ai_key_store_error(_request: FastAPIRequest, _exc: ai_service.KeyStoreError):
+    return JSONResponse(status_code=500, content={"detail": "AI provider 配置不可用。"})
 
 
 @app.get("/v25-preview/", include_in_schema=False)
@@ -3268,7 +3275,7 @@ def ai_models() -> dict:
     try:
         return ai_service.provider_models()
     except (OSError, ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail=f"AI provider 配置不可用：{exc}") from exc
+        raise HTTPException(status_code=503, detail="AI provider 配置不可用。") from exc
 
 
 @app.post("/api/ai/models")
@@ -3303,7 +3310,7 @@ def ai_provider() -> dict:
     try:
         return _public_provider_config(ai_service.active_provider_config())
     except (OSError, ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail=f"AI provider 配置不可用：{exc}") from exc
+        raise HTTPException(status_code=503, detail="AI provider 配置不可用。") from exc
 
 
 @app.put("/api/ai/provider")
@@ -3330,7 +3337,7 @@ def ai_chat(payload: AIChatRequest) -> dict:
     try:
         config = ai_service.active_provider_config()
     except (OSError, ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail=f"AI provider 配置不可用：{exc}") from exc
+        raise HTTPException(status_code=503, detail="AI provider 配置不可用。") from exc
     if payload.provider and payload.provider != config["provider"]:
         raise HTTPException(status_code=409, detail="请求 provider 不是当前唯一生效 provider")
     model = payload.model or config["model"]

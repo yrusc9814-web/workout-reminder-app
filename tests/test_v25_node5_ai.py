@@ -200,6 +200,39 @@ def test_ai_chat_provider_models_and_dpapi_key_store(client, app_modules, monkey
     assert persisted.json()["source"] == "api"
 
 
+@pytest.mark.parametrize("envelope", [
+    {"version": 1},
+    [],
+    {"version": 1, "protected": 123},
+    {"version": 1, "protected": ""},
+    {"version": 2, "protected": "encrypted"},
+])
+def test_ai_key_store_envelope_errors_are_controlled(client, app_modules, monkeypatch, tmp_path, envelope):
+    clear_ai_env(monkeypatch)
+    key_store = tmp_path / "malformed-key-store.json"
+    key_store.write_text(json.dumps(envelope), encoding="utf-8")
+    monkeypatch.setenv("WORKOUT_KEY_STORE", str(key_store))
+
+    provider = client.get("/api/ai/provider")
+    assert provider.status_code == 500
+    assert provider.json() == {"detail": "AI provider 配置不可用。"}
+    assert "encrypted" not in provider.text
+    assert "super-secret" not in provider.text
+
+    chat = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hello"}]})
+    assert chat.status_code == 500
+    assert chat.json() == {"detail": "AI provider 配置不可用。"}
+    assert "encrypted" not in chat.text
+    assert "super-secret" not in chat.text
+
+    saved = client.put("/api/ai/provider", json={
+        "provider": "openai", "api_key": "test-only-key",
+        "base_url": "https://mock.invalid/v1", "model": "mock-model",
+    })
+    assert saved.status_code == 500
+    assert saved.json() == {"detail": "AI provider 配置不可用。"}
+
+
 def assert_messages(actual, expected):
     assert actual == expected
     return False
