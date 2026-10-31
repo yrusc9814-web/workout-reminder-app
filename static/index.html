@@ -4251,6 +4251,7 @@
         return node;
       }
       function v25Modal(build) {
+        resetModalBackdropPointer();
         v25ClearChildren(appModalCard);
         if (typeof build === 'function') build(appModalCard);
         appModalLayer.classList.add('show');
@@ -4275,18 +4276,43 @@
         (buttons || []).forEach(function (button) { actions.appendChild(button); });
         return actions;
       }
+      var modalBackdropPointerId = null;
+      var modalBackdropClickPointerId = null;
+      function resetModalBackdropPointer() {
+        modalBackdropPointerId = null;
+        modalBackdropClickPointerId = null;
+      }
       function openModal(content) {
+        resetModalBackdropPointer();
         appModalCard.innerHTML = content;
         appModalLayer.classList.add('show');
         appModalLayer.setAttribute('aria-hidden', 'false');
       }
       function closeModal() {
+        resetModalBackdropPointer();
         if (typeof apiModelRequestToken === 'number') apiModelRequestToken++;
         appModalLayer.classList.remove('show');
         appModalLayer.setAttribute('aria-hidden', 'true');
         appModalCard.innerHTML = '';
       }
-      appModalLayer.addEventListener('click', function(event) { if (event.target === appModalLayer) closeModal(); });
+      appModalLayer.addEventListener('pointerdown', function(event) {
+        resetModalBackdropPointer();
+        if (event.target === appModalLayer && event.button === 0 && event.isPrimary) {
+          modalBackdropPointerId = event.pointerId;
+        }
+      });
+      document.addEventListener('pointerup', function(event) {
+        modalBackdropClickPointerId = event.target === appModalLayer && event.button === 0 &&
+          event.isPrimary && event.pointerId === modalBackdropPointerId ? event.pointerId : null;
+        modalBackdropPointerId = null;
+      });
+      document.addEventListener('pointercancel', resetModalBackdropPointer);
+      appModalLayer.addEventListener('click', function(event) {
+        var shouldClose = event.target === appModalLayer && event.button === 0 &&
+          modalBackdropClickPointerId !== null && event.pointerId === modalBackdropClickPointerId;
+        resetModalBackdropPointer();
+        if (shouldClose) closeModal();
+      });
       document.addEventListener('keydown', function(event) { if (event.key === 'Escape') closeModal(); });
 
       function getCalendarPlan(dateKey) {
